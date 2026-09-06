@@ -172,6 +172,32 @@ void DiskManager::flush() {
   if (!file_) throw IoError("fallo al vaciar " + describe(path_));
 }
 
+void DiskManager::truncate(PageId new_count) {
+  if (new_count > page_count_) {
+    throw IoError("truncate a " + std::to_string(new_count) + " paginas en " + describe(path_) +
+                  ", que tiene " + std::to_string(page_count_) + ": esta operacion solo encoge");
+  }
+  if (new_count == page_count_) return;
+
+  // Se cierra el archivo antes de redimensionarlo y se vuelve a abrir: en
+  // Windows redimensionar un archivo abierto por otro descriptor no es
+  // portable.
+  page_count_ = new_count;
+  write_header();
+  file_.flush();
+  file_.close();
+  if (!file_) throw IoError("fallo al cerrar " + describe(path_) + " para truncarlo");
+
+  std::error_code ec;
+  std::filesystem::resize_file(path_, static_cast<std::uintmax_t>(page_size_) * (new_count + 1),
+                               ec);
+  if (ec) throw IoError("no se pudo truncar " + describe(path_) + ": " + ec.message());
+
+  file_.clear();
+  file_.open(path_, std::ios::in | std::ios::out | std::ios::binary);
+  if (!file_) throw IoError("no se pudo reabrir " + describe(path_) + " despues de truncarlo");
+}
+
 std::uintmax_t DiskManager::file_size() const { return std::filesystem::file_size(path_); }
 
 void DiskManager::seek_to(PageId id) {

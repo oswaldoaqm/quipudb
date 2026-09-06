@@ -72,6 +72,12 @@ class DiskManager {
   /// Fuerza la escritura al sistema operativo de todo lo pendiente.
   void flush();
 
+  /// Deja el archivo con `new_count` paginas de datos, descartando las que
+  /// sobran. Es lo que permite que una reorganizacion (#12) devuelva el
+  /// espacio en vez de dejar paginas muertas al final. Lanza IoError si
+  /// `new_count` es mayor que el actual: esto encoge, no crece.
+  void truncate(PageId new_count);
+
   [[nodiscard]] std::uint64_t reads() const noexcept { return reads_; }
   [[nodiscard]] std::uint64_t writes() const noexcept { return writes_; }
   void reset_counters() noexcept { reads_ = writes_ = 0; }
