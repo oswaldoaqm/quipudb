@@ -150,6 +150,7 @@ class Index {                                      // indice secundario
 | Estructura | Archivo | Estado |
 |---|---|---|
 | Heap File | `core/include/quipudb/storage/heap_file.hpp` | completo: insercion y escaneo (#8), free list y reutilizacion (#9) |
+| Archivo Secuencial Paginado | `core/include/quipudb/storage/sequential_file.hpp` | insercion ordenada con overflow (#10); faltan #11, #12 y #13 |
 
 El heap file guarda slots de tamano fijo (`[1 byte de estado][registro]`) en el
 body de cada pagina, asi que el slot `i` esta siempre en `i * slot_size` y un
@@ -169,3 +170,28 @@ una direccion estable: los indices no agrupados (#16) guardan RIDs, y cada
 eliminacion obligaria a corregir el indice del registro movido. FREE_LIST
 paga con paginas que quedan con huecos hasta reutilizarse; MOVE_THE_LAST
 pagaria con correccion de indices en cada borrado.
+
+### Archivo secuencial: area principal y overflow
+
+Las paginas principales forman una lista enlazada en orden de clave (campo
+`next`), con los registros ordenados dentro de cada una; cada pagina principal
+tiene ademas una pagina de overflow, cuya cabeza vive en los primeros 4 bytes
+del body.
+
+Un registro va al area principal si su pagina tiene sitio, o si su clave es
+mayor que todas y toca abrir pagina al final (por eso una carga ordenada no
+genera overflow). Si la pagina esta llena y la clave cae en medio, va al
+overflow. Cuando la pagina de overflow tambien se llena, el grupo se parte:
+sus registros se juntan, se ordenan y se reparten en paginas principales a
+media carga, empalmadas en la cadena.
+
+Ese limite de una pagina de overflow por grupo no es decorativo. Sin el, el
+area principal deja de crecer en cuanto se llena la primera pagina y todo se
+apila en overflow: medido con 100 000 inserciones aleatorias, 3 paginas
+principales contra 714 de overflow y 93 s de carga, frente a 998 contra 40 y
+0,5 s con la particion activada.
+
+| 100 000 registros | insercion | paginas principales | overflow |
+|---|---|---|---|
+| en orden ascendente | 0,0029 ms/registro | 715 | 0 |
+| en orden aleatorio | 0,0051 ms/registro | 998 | 40 |
