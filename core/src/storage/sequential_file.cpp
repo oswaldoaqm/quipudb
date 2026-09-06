@@ -69,21 +69,42 @@ void SequentialFile::save_meta() {
   disk_.write_meta(buf);
 }
 
+void SequentialFile::tally(std::uint64_t& vivos, std::uint64_t& marcados) const {
+  const std::size_t n = physical_slots();
+  for (std::size_t i = 0; i < n; ++i) {
+    const std::byte estado = slot_state(i);
+    if (estado == kUsed) {
+      ++vivos;
+    } else if (estado == kDeleted) {
+      ++marcados;
+    }
+  }
+}
+
 void SequentialFile::build_directory() {
   // El directorio (que paginas principales hay y con que clave empieza cada
-  // una) se reconstruye al abrir recorriendo la cadena: son tantas lecturas
-  // como paginas principales, y evita persistir una estructura aparte.
+  // una) se reconstruye al abrir recorriendo la cadena, y de paso se recuentan
+  // vivos y marcados para comprobar que el area meta dice la verdad.
   main_pages_.clear();
   first_keys_.clear();
+  std::uint64_t vivos = 0;
+  std::uint64_t marcados = 0;
+  std::size_t leidas = 0;
+
+  const auto comprobar = [&](PageId p, const char* que) {
+    if (p == 0 || p > disk_.page_count()) {
+      throw IoError("la cadena " + std::string(que) + " de '" + disk_.path().string() +
+                    "' apunta a la pagina " + std::to_string(p) + ", que no existe");
+    }
+    if (++leidas > disk_.page_count()) {
+      throw IoError("la cadena " + std::string(que) + " de '" + disk_.path().string() +
+                    "' tiene un ciclo");
+    }
+  };
+
   PageId p = main_head_;
   while (p != kInvalidPage) {
-    if (p == 0 || p > disk_.page_count()) {
-      throw IoError("la cadena principal de '" + disk_.path().string() + "' apunta a la pagina " +
-                    std::to_string(p) + ", que no existe");
-    }
-    if (main_pages_.size() > disk_.page_count()) {
-      throw IoError("la cadena principal de '" + disk_.path().string() + "' tiene un ciclo");
-    }
+    comprobar(p, "principal");
     disk_.read_page(p, scratch_);
     main_pages_.push_back(p);
     if (physical_slots() == 0) {
@@ -91,13 +112,33 @@ void SequentialFile::build_directory() {
                     disk_.path().string() + "' esta vacia");
     }
     first_keys_.push_back(slot_key(0));
-    p = scratch_.next();
+    const PageId siguiente = scratch_.next();
+    const PageId primera_ovf = overflow_head();
+    tally(vivos, marcados);
+
+    PageId q = primera_ovf;
+    while (q != kInvalidPage) {
+      comprobar(q, "de overflow");
+      disk_.read_page(q, scratch_);
+      tally(vivos, marcados);
+      q = scratch_.next();
+    }
+    p = siguiente;
   }
+
   for (std::size_t i = 1; i < first_keys_.size(); ++i) {
     if (compare(first_keys_[i - 1], first_keys_[i]) >= 0) {
       throw IoError("las paginas principales de '" + disk_.path().string() +
                     "' no estan en orden de clave");
     }
+  }
+  if (vivos != live_) {
+    throw IoError("'" + disk_.path().string() + "' declara " + std::to_string(live_) +
+                  " registros vivos y en las paginas hay " + std::to_string(vivos));
+  }
+  if (marcados != deleted_) {
+    throw IoError("'" + disk_.path().string() + "' declara " + std::to_string(deleted_) +
+                  " registros marcados y en las paginas hay " + std::to_string(marcados));
   }
 }
 
@@ -210,9 +251,16 @@ void SequentialFile::split_group(std::size_t g) {
   const PageId siguiente_main = scratch_.next();
   PageId p = mp;
   PageId ovf = overflow_head();
+  std::uint64_t descartados = 0;
   while (true) {
     const std::size_t n = physical_slots();
     for (std::size_t i = 0; i < n; ++i) {
+      if (slot_state(i) == kDeleted) {
+        // Partir el grupo es la unica ocasion en que el espacio marcado se
+        // recupera solo: el registro no se copia a las paginas nuevas.
+        ++descartados;
+        continue;
+      }
       if (slot_state(i) != kUsed) continue;
       const auto bytes = slot_record(i);
       registros.emplace_back(codec_.decode_column(bytes, key_col),
@@ -272,6 +320,9 @@ void SequentialFile::split_group(std::size_t g) {
   first_keys_.erase(first_keys_.begin() + static_cast<std::ptrdiff_t>(g));
   first_keys_.insert(first_keys_.begin() + static_cast<std::ptrdiff_t>(g), claves.begin(),
                      claves.end());
+
+  deleted_ -= descartados;
+  save_meta();
 }
 
 // ---------------------------------------------------------------------------

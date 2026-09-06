@@ -76,10 +76,25 @@
 // agrupados apuntan a heap files, no a este. `read(rid)` sirve dentro de la
 // operacion que lo devolvio, no despues.
 //
-// Lo que llega despues: eliminacion lazy y cuenta del desperdicio (#11),
-// reorganizacion al 30% (#12) y busqueda binaria y por rango (#13). Aqui
-// `search` y `range_search` son un recorrido lineal, correcto pero sin
-// aprovechar el orden todavia.
+// Eliminacion lazy (#11): `remove` no mueve nada. Marca el slot con el estado
+// kDeleted, que deja de contar como vivo pero sigue ocupando su lugar, asi
+// que el archivo no cambia de tamano y los registros que le siguen conservan
+// su posicion. Busquedas y escaneos saltan los marcados.
+//
+//   Espacio desperdiciado = el que ocupan los registros marcados.
+//   `wasted_ratio()` es marcados / (vivos + marcados), o sea la fraccion de
+//   los registros guardados que ya no sirve. Los slots libres al final de una
+//   pagina NO cuentan como desperdicio: son sitio util para las proximas
+//   inserciones, y contarlos haria que un archivo recien partido (paginas a
+//   media carga) pareciera desperdiciar la mitad. Sobre esa razon se dispara
+//   la reorganizacion del #12.
+//
+//   El unico momento en que el desperdicio baja solo es al partir un grupo:
+//   ahi los marcados se quedan fuera y el contador se ajusta.
+//
+// Lo que llega despues: reorganizacion al 30% (#12) y busqueda binaria y por
+// rango (#13). Aqui `search` y `range_search` son un recorrido lineal,
+// correcto pero sin aprovechar el orden todavia.
 
 #include <cstddef>
 #include <cstdint>
@@ -134,6 +149,19 @@ class SequentialFile final : public TableFile {
   /// Paginas del area de overflow, sumando todas las cadenas.
   [[nodiscard]] std::size_t overflow_pages();
 
+  /// Registros marcados como borrados que siguen ocupando su slot.
+  [[nodiscard]] std::uint64_t deleted_records() const noexcept { return deleted_; }
+
+  /// Bytes que ocupan esos registros marcados.
+  [[nodiscard]] std::uint64_t wasted_bytes() const noexcept { return deleted_ * slot_size_; }
+
+  /// Fraccion desperdiciada: marcados / (vivos + marcados). 0 si esta vacio.
+  /// Es la razon que el #12 compara contra el umbral del 30%.
+  [[nodiscard]] double wasted_ratio() const noexcept {
+    const std::uint64_t total = live_ + deleted_;
+    return total == 0 ? 0.0 : static_cast<double>(deleted_) / static_cast<double>(total);
+  }
+
   [[nodiscard]] PageId page_count() const noexcept { return disk_.page_count(); }
   [[nodiscard]] std::uintmax_t file_size() const { return disk_.file_size(); }
 
@@ -154,8 +182,12 @@ class SequentialFile final : public TableFile {
 
   void load_meta();
   void save_meta();
-  /// Recorre la cadena principal y arma el directorio en memoria.
+  /// Recorre la cadena principal (y los overflow) para armar el directorio en
+  /// memoria y comprobar que los contadores del area meta cuadran con lo que
+  /// hay en las paginas.
   void build_directory();
+  /// Suma vivos y marcados de la pagina cargada en scratch_.
+  void tally(std::uint64_t& vivos, std::uint64_t& marcados) const;
 
   void fetch(PageId id);
   void store(PageId id);
