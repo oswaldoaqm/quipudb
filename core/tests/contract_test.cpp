@@ -26,10 +26,6 @@ namespace {
 // Implementaciones en memoria
 // ---------------------------------------------------------------------------
 
-struct KeyLess {
-  bool operator()(const Key& a, const Key& b) const { return compare(a, b) < 0; }
-};
-
 class MemoryTable final : public TableFile {
  public:
   explicit MemoryTable(Schema schema) : schema_(std::move(schema)) {}

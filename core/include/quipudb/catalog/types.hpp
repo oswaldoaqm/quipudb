@@ -118,6 +118,14 @@ using Record = std::vector<Value>;
       a);
 }
 
+/// Orden estricto entre claves, para usar Key como clave de map o set.
+/// Vive aqui (y no como lambda en cada modulo) para que el tipo del contenedor
+/// tenga enlace externo: una lambda hace que la clase que la contiene quede con
+/// enlace interno y GCC avisa con -Wsubobject-linkage.
+struct KeyLess {
+  bool operator()(const Value& a, const Value& b) const { return compare(a, b) < 0; }
+};
+
 // ---------------------------------------------------------------------------
 // Esquema
 // ---------------------------------------------------------------------------
