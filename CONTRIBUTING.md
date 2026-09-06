@@ -77,13 +77,18 @@ Lo que **no** pasa la revision: `cambios varios`, `fix`, `avance`, `final`,
 ## Ramas
 
 ```
-feat/<alcance>-<slug>
+<tipo>/<alcance>-<slug>
 ```
 
-Ejemplos: `feat/storage-heap-file`, `feat/index-bplus-clustered`,
-`fix/external-merge-buffers`.
+El `<tipo>` y el `<alcance>` son los mismos de la tabla de commits, para que la
+rama y sus commits hablen el mismo idioma.
 
-Nunca se trabaja directo sobre `main`.
+Ejemplos: `feat/storage-heap-file`, `feat/index-bplus-clustered`,
+`fix/external-merge-buffers`, `chore/ci-actualizar-actions`,
+`docs/docs-contrato-del-core`.
+
+Nunca se trabaja directo sobre `main`: la rama esta protegida y solo acepta
+cambios por pull request con el CI en verde.
 
 ## Pull requests
 
@@ -91,9 +96,9 @@ Nunca se trabaja directo sobre `main`.
 2. Espera que el CI pase: compilacion del core, lint de Python y validacion de
    los mensajes de commit.
 3. Pide **una** revision a alguien del equipo.
-4. Al mezclar, usa **Squash and merge** solo si tus commits intermedios son
-   ruido. Si cada commit representa un cambio logico limpio, usa merge normal:
-   ese historial es justamente lo que se evalua.
+4. Al mezclar, usa **Create a merge commit** o **Rebase and merge**. El squash
+   esta deshabilitado a proposito: aplastaria tus commits en uno solo y ese
+   detalle del historial es justamente lo que se evalua.
 
 ## Cambios que afectan a otro modulo
 
