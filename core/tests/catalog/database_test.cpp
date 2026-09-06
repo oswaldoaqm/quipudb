@@ -121,9 +121,8 @@ TEST_F(DatabaseTest, RechazaLoQueNoPuedeAbrir) {
   Database db(path_);
   EXPECT_THROW(db.table("noexiste"), SchemaError);
   EXPECT_THROW(db.create_table(alumnos(), "csv"), SchemaError);
-  // El catalogo acepta B+ agrupado como organizacion, pero todavia no existe
-  // (#15): mejor decirlo que devolver otra cosa.
-  EXPECT_THROW(db.create_table(cursos(), kind::kBPlusClustered), Unsupported);
+  // El B+ agrupado ya existe (#15); lo que no, es una organizacion inventada.
+  EXPECT_NO_THROW(db.create_table(cursos(), kind::kBPlusClustered));
 }
 
 TEST_F(DatabaseTest, ElCursorFuncionaAtravesDelHandle) {
