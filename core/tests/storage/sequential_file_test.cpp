@@ -579,5 +579,110 @@ TEST_F(SequentialFileTest, LoReorganizadoSobreviveAlReabrir) {
   EXPECT_EQ(codigo_de(todos.front()), 251);
 }
 
+
+// ---------------------------------------------------------------------------
+// Busqueda binaria y por rango (issue #13)
+// ---------------------------------------------------------------------------
+
+TEST_F(SequentialFileTest, LaBusquedaBinariaCoincideConLaLineal) {
+  // La prueba que pide el issue: mismo resultado que la busqueda lineal.
+  SequentialFile s(path_, alumnos(), 256, 1.0);  // sin reorganizaciones de por medio
+  std::vector<std::int32_t> cs(500);
+  std::iota(cs.begin(), cs.end(), 1);
+  std::shuffle(cs.begin(), cs.end(), std::mt19937{31});
+  for (const auto c : cs) s.insert(alumno(c));
+  for (std::int32_t i = 1; i <= 500; i += 11) s.remove(Value{i});
+  ASSERT_GT(s.overflow_pages(), 0u) << "tiene que haber overflow que consultar";
+
+  for (std::int32_t c = 0; c <= 520; ++c) {
+    EXPECT_EQ(s.search(Value{c}), s.search_linear(Value{c})) << "clave " << c;
+  }
+}
+
+TEST_F(SequentialFileTest, ElRangoBinarioCoincideConElLineal) {
+  SequentialFile s(path_, alumnos(), 256, 1.0);
+  std::vector<std::int32_t> cs(400);
+  std::iota(cs.begin(), cs.end(), 1);
+  std::shuffle(cs.begin(), cs.end(), std::mt19937{17});
+  for (const auto c : cs) s.insert(alumno(c));
+  for (std::int32_t i = 3; i <= 400; i += 7) s.remove(Value{i});
+  ASSERT_GT(s.overflow_pages(), 0u);
+
+  const std::vector<std::pair<std::int32_t, std::int32_t>> rangos{
+      {1, 400},   {50, 60},  {1, 1},     {400, 400}, {0, 0},    {401, 500},
+      {-10, 5},   {199, 201}, {100, 300}, {395, 405}, {60, 50},
+  };
+  for (const auto& [lo, hi] : rangos) {
+    const auto binario = s.range_search(Value{lo}, Value{hi});
+    EXPECT_EQ(binario, s.range_search_linear(Value{lo}, Value{hi}))
+        << "rango [" << lo << ", " << hi << "]";
+    EXPECT_TRUE(ordenado(binario)) << "rango [" << lo << ", " << hi << "]";
+  }
+}
+
+TEST_F(SequentialFileTest, LaBusquedaLeePocasPaginas) {
+  SequentialFile s(path_, alumnos(), 512);
+  for (std::int32_t i = 1; i <= 2000; ++i) s.insert(alumno(i));
+  ASSERT_GT(s.main_pages(), 20u);
+
+  s.reset_stats();
+  ASSERT_EQ(s.search(Value{1}).size(), 1u);
+  const auto primera = s.stats().pages_read;
+  s.reset_stats();
+  ASSERT_EQ(s.search(Value{2000}).size(), 1u);
+  const auto ultima = s.stats().pages_read;
+  EXPECT_LE(primera, 2u) << "una pagina principal y a lo sumo una de overflow";
+  EXPECT_LE(ultima, 2u) << "buscar el ultimo cuesta lo mismo que buscar el primero";
+
+  s.reset_stats();
+  static_cast<void>(s.search_linear(Value{2000}));
+  EXPECT_GT(s.stats().pages_read, s.main_pages() - 1)
+      << "la version lineal si recorre el archivo entero";
+}
+
+TEST_F(SequentialFileTest, EncuentraUnaClaveBorradaYVueltaAInsertar) {
+  // Puede quedar el slot marcado y el vivo con la misma clave en la misma
+  // pagina: la busqueda tiene que dar con el vivo.
+  SequentialFile s(path_, alumnos(), 512, 1.0);
+  for (std::int32_t i = 1; i <= 100; ++i) s.insert(alumno(i));
+  ASSERT_EQ(s.remove(Value{42}), 1u);
+  EXPECT_TRUE(s.search(Value{42}).empty());
+
+  s.insert(alumno(42));
+  const auto out = s.search(Value{42});
+  ASSERT_EQ(out.size(), 1u) << "el registro reinsertado tiene que aparecer";
+  EXPECT_EQ(out[0], alumno(42));
+  EXPECT_EQ(s.search(Value{42}), s.search_linear(Value{42}));
+  EXPECT_EQ(s.range_search(Value{41}, Value{43}).size(), 3u);
+  EXPECT_EQ(s.remove(Value{42}), 1u) << "y remove tambien encuentra el vivo";
+}
+
+TEST_F(SequentialFileTest, RangoQueEmpiezaAntesDelPrimerRegistro) {
+  SequentialFile s(path_, alumnos(), 256, 1.0);
+  for (std::int32_t i = 100; i <= 400; ++i) s.insert(alumno(i));
+  EXPECT_EQ(s.range_search(Value{1}, Value{99}).size(), 0u);
+  EXPECT_EQ(s.range_search(Value{1}, Value{105}).size(), 6u);
+  EXPECT_EQ(s.range_search(Value{1}, Value{9999}).size(), 301u);
+  EXPECT_EQ(s.range_search(Value{1}, Value{9999}), s.range_search_linear(Value{1}, Value{9999}));
+}
+
+TEST_F(SequentialFileTest, BusquedaConClaveDeTexto) {
+  const Schema cursos{
+      .table_name = "cursos",
+      .columns = {{"codigo", DataType::Varchar, 8}, {"creditos", DataType::Int}},
+      .key_column = 0,
+  };
+  SequentialFile s(dir_ / "cursos.seq", cursos, 256, 1.0);
+  for (const auto* c : {"CS2032", "BD2", "MA1101", "AI501", "ZZ999", "FI203", "QU100"}) {
+    s.insert(Record{std::string{c}, 3});
+  }
+  EXPECT_EQ(s.search(Value{std::string{"MA1101"}}).size(), 1u);
+  EXPECT_TRUE(s.search(Value{std::string{"NOEXISTE"}}).empty());
+  EXPECT_EQ(s.search(Value{std::string{"BD2"}}), s.search_linear(Value{std::string{"BD2"}}));
+  const auto rango = s.range_search(Value{std::string{"B"}}, Value{std::string{"N"}});
+  EXPECT_EQ(rango, s.range_search_linear(Value{std::string{"B"}}, Value{std::string{"N"}}));
+  EXPECT_EQ(rango.size(), 4u) << "BD2, CS2032, FI203, MA1101";
+}
+
 }  // namespace
 }  // namespace quipudb
