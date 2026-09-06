@@ -1,0 +1,12 @@
+[project]
+name = "quipudb-engine"
+version = "0.1.0"
+description = "Capa Python de QuipuDB: parser SQL, transacciones, planner y API"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["engine", "benchmarks"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
