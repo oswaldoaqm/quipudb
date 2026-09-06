@@ -78,6 +78,16 @@ class MemoryTable final : public TableFile {
     return out;
   }
 
+  std::size_t update(const Key& key, const Record& record) override {
+    schema_.validate(record);
+    if (compare(schema_.key_of(record), key) != 0) throw SchemaError("cambia la clave");
+    auto it = by_key_.find(key);
+    if (it == by_key_.end()) return 0;
+    slots_[it->second.slot] = record;
+    stats_.pages_written += 1;
+    return 1;
+  }
+
   std::vector<Record> scan() override {
     std::vector<Record> out;
     for (const auto& s : slots_) {
@@ -87,6 +97,30 @@ class MemoryTable final : public TableFile {
     stats_.pages_read += 1;
     stats_.records_returned += out.size();
     return out;
+  }
+
+  std::unique_ptr<RecordCursor> cursor() override {
+    // Cursor de juguete sobre el vector: fija la semantica que las
+    // implementaciones de verdad tienen que respetar.
+    class C final : public RecordCursor {
+     public:
+      explicit C(MemoryTable& t) : t_(t) {}
+      bool next(Record& out) override {
+        while (i_ < t_.slots_.size()) {
+          const auto& s = t_.slots_[i_++];
+          if (s) {
+            out = *s;
+            return true;
+          }
+        }
+        return false;
+      }
+
+     private:
+      MemoryTable& t_;
+      std::size_t i_ = 0;
+    };
+    return std::make_unique<C>(*this);
   }
 
   std::optional<Record> read(RID rid) override {
@@ -359,6 +393,38 @@ TEST_F(TablaMemoria, StatsSeAcumulanYReinician) {
   t.reset_stats();
   EXPECT_EQ(t.stats().pages_read, 0u);
   EXPECT_EQ(t.kind(), kind::kHeap);
+}
+
+TEST_F(TablaMemoria, UpdateReemplazaSinMoverYExigeLaMismaClave) {
+  t.insert(alumno(1, "ana", 15.0));
+  t.insert(alumno(2, "beto", 12.0));
+  EXPECT_EQ(t.update(Value{1}, alumno(1, "ana maria", 18.0)), 1u);
+  const auto out = t.search(Value{1});
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(std::get<std::string>(out[0][1]), "ana maria");
+  EXPECT_EQ(t.size(), 2u) << "actualizar no agrega ni quita filas";
+
+  EXPECT_EQ(t.update(Value{404}, alumno(404, "nadie", 0.0)), 0u);
+  EXPECT_THROW(t.update(Value{1}, alumno(9, "otra", 1.0)), SchemaError)
+      << "cambiar la clave es remove mas insert";
+  EXPECT_THROW(t.update(Value{1}, Record{1, std::string{"x"}}), InvalidRecord);
+}
+
+TEST_F(TablaMemoria, ElCursorRecorreLoMismoQueScan) {
+  for (std::int32_t i = 1; i <= 20; ++i) t.insert(alumno(i, "n" + std::to_string(i), i * 1.0));
+  t.remove(Value{7});
+  t.remove(Value{13});
+
+  std::vector<Record> del_cursor;
+  auto c = t.cursor();
+  Record r;
+  while (c->next(r)) del_cursor.push_back(r);
+  EXPECT_EQ(del_cursor, t.scan());
+  EXPECT_EQ(del_cursor.size(), 18u);
+
+  // Un cursor agotado sigue diciendo que no hay mas.
+  EXPECT_FALSE(c->next(r));
+  EXPECT_FALSE(c->next(r));
 }
 
 // ---------------------------------------------------------------------------
