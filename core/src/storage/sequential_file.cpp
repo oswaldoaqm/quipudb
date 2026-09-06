@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstring>
 #include <string>
 
@@ -9,8 +10,12 @@
 
 namespace quipudb {
 
-SequentialFile::SequentialFile(std::filesystem::path path, Schema schema, std::size_t page_size)
-    : codec_(std::move(schema)), disk_(std::move(path), page_size), scratch_(disk_.page_size()) {
+SequentialFile::SequentialFile(std::filesystem::path path, Schema schema, std::size_t page_size,
+                               double waste_threshold)
+    : codec_(std::move(schema)),
+      disk_(std::move(path), page_size),
+      scratch_(disk_.page_size()),
+      waste_threshold_(waste_threshold) {
   slot_size_ = codec_.size() + 1;
   if (scratch_.body_size() <= kBodyHeader) {
     throw SchemaError("la pagina es demasiado chica para el area secuencial");
@@ -452,7 +457,68 @@ std::size_t SequentialFile::remove(const Key& key) {
   --live_;
   ++deleted_;
   save_meta();
+
+  // El enunciado (2.1.1) pide reorganizar cuando el desperdicio pasa del
+  // umbral. Se comprueba aqui porque es la unica operacion que lo sube.
+  if (deleted_ > 0 && wasted_ratio() > waste_threshold_) reorganize();
   return 1;
+}
+
+// ---------------------------------------------------------------------------
+// Reorganizacion (#12)
+// ---------------------------------------------------------------------------
+
+double SequentialFile::reorganize() {
+  const auto t0 = std::chrono::steady_clock::now();
+
+  // 1. Juntar los registros vivos en orden. `scan` ya los devuelve ordenados
+  //    (ordena grupo por grupo), asi que no hay que volver a ordenar.
+  const std::size_t key_col = codec_.schema().key_column;
+  std::vector<Record> vivos = scan();
+
+  // 2. Repartirlos en paginas consecutivas desde la 1, sin overflow.
+  const std::size_t por_pagina = std::max<std::size_t>(
+      1, static_cast<std::size_t>(static_cast<double>(slots_per_page_) * kFillFactor));
+  const std::size_t necesarias = (vivos.size() + por_pagina - 1) / por_pagina;
+
+  while (disk_.page_count() < necesarias) disk_.allocate_page();
+
+  std::size_t escritos = 0;
+  for (std::size_t i = 0; i < necesarias; ++i) {
+    const PageId destino = static_cast<PageId>(i + 1);
+    const std::size_t cuantos = std::min(por_pagina, vivos.size() - escritos);
+    scratch_.clear();
+    set_overflow_head(kInvalidPage);
+    scratch_.set_next(i + 1 < necesarias ? static_cast<PageId>(i + 2) : kInvalidPage);
+    scratch_.set_record_count(static_cast<std::uint16_t>(cuantos));
+    scratch_.set_free_space(static_cast<std::uint16_t>((slots_per_page_ - cuantos) * slot_size_));
+    std::vector<std::byte> slot(slot_size_);
+    for (std::size_t j = 0; j < cuantos; ++j) {
+      slot[0] = kUsed;
+      codec_.encode(vivos[escritos + j], std::span<std::byte>(slot).subspan(1));
+      scratch_.write_bytes(slot_offset(j), slot);
+    }
+    store(destino);
+    escritos += cuantos;
+  }
+
+  // 3. Devolver las paginas que sobran y rehacer el estado.
+  disk_.truncate(static_cast<PageId>(necesarias));
+  main_head_ = necesarias == 0 ? kInvalidPage : 1;
+  deleted_ = 0;
+  save_meta();
+
+  main_pages_.clear();
+  first_keys_.clear();
+  for (std::size_t i = 0; i < necesarias; ++i) {
+    main_pages_.push_back(static_cast<PageId>(i + 1));
+    first_keys_.push_back(vivos[i * por_pagina][key_col]);
+  }
+
+  ++reorganizations_;
+  last_reorganize_ms_ =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  return last_reorganize_ms_;
 }
 
 // ---------------------------------------------------------------------------
