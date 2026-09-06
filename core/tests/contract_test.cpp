@@ -110,15 +110,19 @@ class MemoryTable final : public TableFile {
           const auto& s = t_.slots_[i_++];
           if (s) {
             out = *s;
+            rid_ = RID{0, static_cast<SlotId>(i_ - 1)};
             return true;
           }
         }
         return false;
       }
 
+      [[nodiscard]] RID rid() const override { return rid_; }
+
      private:
       MemoryTable& t_;
       std::size_t i_ = 0;
+      RID rid_;
     };
     return std::make_unique<C>(*this);
   }

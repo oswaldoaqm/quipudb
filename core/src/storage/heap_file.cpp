@@ -265,15 +265,19 @@ class HeapFile::Cursor final : public RecordCursor {
       ++duenio_.stats_.records_examined;
       if (vivo) {
         out = duenio_.codec_.decode(pagina_.read_bytes(offset + 1, duenio_.codec_.size()));
+        actual_rid_ = RID{actual_, static_cast<SlotId>(slot_ - 1)};
         ++duenio_.stats_.records_returned;
         return true;
       }
     }
   }
 
+  [[nodiscard]] RID rid() const override { return actual_rid_; }
+
  private:
   HeapFile& duenio_;
   Page pagina_;              // buffer propio: no comparte scratch_ con el archivo
+  RID actual_rid_;
   PageId actual_ = 1;
   std::size_t slot_ = 0;
   bool cargada_ = false;
