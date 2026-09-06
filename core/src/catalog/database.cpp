@@ -1,6 +1,7 @@
 #include "quipudb/catalog/database.hpp"
 
 #include "quipudb/error.hpp"
+#include "quipudb/index/bplus_clustered_table.hpp"
 #include "quipudb/storage/heap_file.hpp"
 #include "quipudb/storage/sequential_file.hpp"
 
@@ -16,10 +17,11 @@ std::unique_ptr<TableFile> Database::abrir(const TableInfo& info) const {
   if (info.storage == kind::kSequential) {
     return std::make_unique<SequentialFile>(ruta, info.schema, info.page_size);
   }
-  // El catalogo acepta kBPlusClustered como organizacion, pero todavia no
-  // existe (issue #15). Mejor decirlo que devolver algo que no es.
+  if (info.storage == kind::kBPlusClustered) {
+    return std::make_unique<BPlusClusteredTable>(ruta, info.schema, info.page_size);
+  }
   throw Unsupported("la organizacion '" + info.storage + "' de la tabla " +
-                    info.schema.table_name + " todavia no esta implementada");
+                    info.schema.table_name + " no esta implementada");
 }
 
 TableFile& Database::create_table(const Schema& schema, std::string_view storage,
@@ -56,6 +58,8 @@ void Database::flush() {
       h->flush();
     } else if (auto* s = dynamic_cast<SequentialFile*>(handle.get())) {
       s->flush();
+    } else if (auto* b = dynamic_cast<BPlusClusteredTable*>(handle.get())) {
+      b->flush();
     }
   }
 }
