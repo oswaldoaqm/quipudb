@@ -164,9 +164,11 @@ class SequentialFile final : public TableFile {
 
   RID insert(const Record& record) override;
   std::size_t remove(const Key& key) override;
+  std::size_t update(const Key& key, const Record& record) override;
   [[nodiscard]] std::vector<Record> search(const Key& key) override;
   [[nodiscard]] std::vector<Record> range_search(const Key& lo, const Key& hi) override;
   [[nodiscard]] std::vector<Record> scan() override;
+  [[nodiscard]] std::unique_ptr<RecordCursor> cursor() override;
   [[nodiscard]] std::optional<Record> read(RID rid) override;
   [[nodiscard]] std::size_t size() const override { return live_; }
 
@@ -229,6 +231,8 @@ class SequentialFile final : public TableFile {
   [[nodiscard]] double last_reorganize_ms() const noexcept { return last_reorganize_ms_; }
 
  private:
+  class Cursor;
+
   static constexpr std::uint32_t kMetaVersion = 1;
 
   struct Meta {
@@ -295,6 +299,10 @@ class SequentialFile final : public TableFile {
   /// Recorre el overflow del grupo cargado agregando lo que cae en [lo, hi].
   void collect_overflow_in_range(PageId head, const Key& lo, const Key& hi,
                                  std::vector<Record>& out);
+  /// Registros vivos del grupo `g` (pagina principal y su overflow), ya
+  /// ordenados por clave. Es la unidad que carga el cursor: memoria acotada a
+  /// un grupo, no a la tabla entera.
+  void read_group(std::size_t g, std::vector<Record>& out);
   /// Junta el grupo `g` (pagina principal y su overflow), lo ordena y lo
   /// reparte en paginas principales a media carga, empalmadas en la cadena.
   void split_group(std::size_t g);

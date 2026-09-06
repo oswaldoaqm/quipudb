@@ -87,9 +87,11 @@ class HeapFile final : public TableFile {
 
   RID insert(const Record& record) override;
   std::size_t remove(const Key& key) override;
+  std::size_t update(const Key& key, const Record& record) override;
   [[nodiscard]] std::vector<Record> search(const Key& key) override;
   [[nodiscard]] std::vector<Record> range_search(const Key& lo, const Key& hi) override;
   [[nodiscard]] std::vector<Record> scan() override;
+  [[nodiscard]] std::unique_ptr<RecordCursor> cursor() override;
   [[nodiscard]] std::optional<Record> read(RID rid) override;
   [[nodiscard]] std::size_t size() const override { return live_; }
 
@@ -117,6 +119,8 @@ class HeapFile final : public TableFile {
   void flush();
 
  private:
+  class Cursor;
+
   /// Version 1 (#8) guardaba una pagina sugerida en vez de la free list. Un
   /// archivo de esa version se rechaza al abrir con un mensaje explicito en
   /// vez de interpretarse mal: hay que recrearlo.
