@@ -54,8 +54,23 @@
 //   ocupa `Column::byte_size()` bytes fijos: un INT 4, un VARCHAR(n) n. Eso
 //   permite direccionar la entrada `i` sin recorrer las anteriores.
 //
-//   Las claves son unicas. El indice no agrupado (#16), que si admite
-//   repetidas, tendra que resolverlo por su cuenta.
+// Claves repetidas
+// ----------------
+//
+//   Un arbol puede ser unico (la clave primaria de una tabla) o admitir
+//   repetidas (un indice secundario sobre una columna cualquiera). Se elige al
+//   crearlo y queda grabado.
+//
+//   La diferencia esta en como se baja. Con claves unicas, una separadora
+//   igual a la buscada significa que la clave vive a la derecha, asi que se
+//   baja por ahi. Con repetidas eso no vale: un split puede partir una corrida
+//   de claves iguales, y entonces quedan a los dos lados de la separadora. Con
+//   repetidas se baja por la IZQUIERDA en caso de empate -- la primera hoja
+//   que podria contenerla -- y desde ahi se sigue la cadena de hojas mientras
+//   las claves sigan siendo iguales.
+//
+//   Por eso las busquedas con repetidas usan `entries_from`, que es
+//   justamente bajar una vez y seguir la cadena.
 
 #include <cstddef>
 #include <cstdint>
@@ -80,6 +95,10 @@ class EntryCursor {
  public:
   virtual ~EntryCursor() = default;
   virtual bool next(Key& key, std::vector<std::byte>& payload) = 0;
+
+  /// Hoja y posicion de la entrada que acaba de devolver `next`. Solo vale
+  /// inmediatamente despues de un `next` que devolvio true.
+  [[nodiscard]] virtual RID position() const = 0;
 };
 
 class BPlusTree {
@@ -93,7 +112,10 @@ class BPlusTree {
   /// que entre en una pagina. Lanza SchemaError si el orden pedido no entra o
   /// es menor que 2 (con menos de 2 claves por nodo un split no termina).
   BPlusTree(std::filesystem::path path, Column key_column, std::size_t payload_size,
-            std::size_t page_size = kDefaultPageSize, std::size_t order = 0);
+            std::size_t page_size = kDefaultPageSize, std::size_t order = 0, bool unique = true);
+
+  /// Si el arbol rechaza claves repetidas.
+  [[nodiscard]] bool unique() const noexcept { return unique_; }
 
   [[nodiscard]] const Column& key_column() const noexcept { return key_column_; }
   [[nodiscard]] std::size_t key_size() const noexcept { return key_size_; }
@@ -113,9 +135,10 @@ class BPlusTree {
   [[nodiscard]] PageId page_count() const noexcept { return disk_.page_count(); }
   [[nodiscard]] std::uintmax_t file_size() const { return disk_.file_size(); }
 
-  /// Inserta la clave con su payload. Lanza DuplicateKey si ya existe, y
-  /// SchemaError si la clave no es del tipo de la columna o el payload no
-  /// mide `payload_size`.
+  /// Inserta la clave con su payload. En un arbol unico, lanza DuplicateKey si
+  /// la clave ya esta; en uno con repetidas, la agrega despues de las iguales.
+  /// Lanza SchemaError si la clave no es del tipo de la columna o el payload
+  /// no mide `payload_size`.
   void insert(const Key& key, std::span<const std::byte> payload);
 
   /// Payload de esa clave, o nullopt si no esta.
@@ -131,6 +154,14 @@ class BPlusTree {
   /// correcto -- ordenado, balanceado en altura y con la cadena completa --
   /// pero desperdicia espacio. La fusion y la redistribucion son el #17.
   bool erase(const Key& key);
+
+  /// Quita todas las entradas con esa clave. Devuelve cuantas quito.
+  std::size_t erase_all(const Key& key);
+
+  /// Quita la entrada que tiene esa clave Y ese payload. Devuelve si existia.
+  /// Es lo que necesita un indice secundario para borrar un puntero concreto
+  /// sin tocar los demas registros que comparten la clave.
+  bool erase_one(const Key& key, std::span<const std::byte> payload);
 
   /// Donde vive una clave: la hoja y su posicion dentro de ella. Es lo que
   /// usa el indice agrupado (#15) para devolver un RID. Ojo: la posicion
@@ -168,10 +199,12 @@ class BPlusTree {
  private:
   class Cursor;
 
-  static constexpr std::uint32_t kMetaVersion = 1;
+  // La version 1 (#14, #15) no guardaba si el arbol admite repetidas.
+  static constexpr std::uint32_t kMetaVersion = 2;
 
   struct Meta {
     std::uint32_t version = kMetaVersion;
+    std::uint32_t unique = 1;
     std::uint32_t key_type = 0;
     std::uint32_t key_size = 0;
     std::uint32_t payload_size = 0;
@@ -214,10 +247,21 @@ class BPlusTree {
 
   /// Primera posicion del nodo cargado con clave >= `key`.
   [[nodiscard]] std::size_t lower_bound(const Key& key) const;
+  /// Primera posicion del nodo cargado con clave > `key`.
+  [[nodiscard]] std::size_t upper_bound(const Key& key) const;
+  /// Quita de las hojas las entradas con esa clave que cumplan el filtro.
+  std::size_t erase_matching(const Key& key, const std::vector<std::byte>* payload);
 
   /// Baja desde la raiz hasta la hoja donde deberia estar `key`, dejando en
   /// `camino` los nodos internos recorridos.
-  PageId descend(const Key& key, std::vector<PageId>* camino);
+  ///
+  /// `por_la_derecha` decide que hacer cuando un separador es igual a la
+  /// clave. Con claves unicas siempre se va a la derecha, porque ahi vive.
+  /// Con repetidas depende: al INSERTAR se va a la derecha, para que la nueva
+  /// quede despues de las iguales y la corrida conserve el orden de
+  /// insercion; al BUSCAR se va a la izquierda, a la primera hoja que podria
+  /// contenerla, y desde ahi se sigue la cadena.
+  PageId descend(const Key& key, std::vector<PageId>* camino, bool por_la_derecha = true);
 
   void write_leaf(PageId id, const std::vector<std::pair<Key, std::vector<std::byte>>>& entradas,
                   PageId siguiente);
@@ -236,6 +280,7 @@ class BPlusTree {
   std::size_t key_size_ = 0;
   std::size_t payload_size_ = 0;
   std::size_t order_ = 0;
+  bool unique_ = true;
   DiskManager disk_;
   Page scratch_;
   PageId root_ = kInvalidPage;
