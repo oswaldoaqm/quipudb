@@ -26,5 +26,7 @@ se implementa en Python y consume el core a traves de bindings pybind11.
   core, los bindings se compilan solo con `-DQUIPUDB_BUILD_PYTHON=ON` y el resto
   del equipo trabaja contra una interfaz Python estable.
 - El contrato entre core y capa Python (firmas de scan, search, range_search,
-  insert, delete y la forma del plan de ejecucion) pasa a ser un artefacto de
-  diseno explicito, no un detalle de implementacion.
+  insert, remove y la forma del plan de ejecucion) pasa a ser un artefacto de
+  diseno explicito, no un detalle de implementacion. Se llama `remove` y no
+  `delete` porque `delete` es palabra reservada de C++ y no puede ser nombre
+  de metodo.
