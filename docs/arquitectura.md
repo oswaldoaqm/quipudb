@@ -150,7 +150,7 @@ class Index {                                      // indice secundario
 | Estructura | Archivo | Estado |
 |---|---|---|
 | Heap File | `core/include/quipudb/storage/heap_file.hpp` | completo: insercion y escaneo (#8), free list y reutilizacion (#9) |
-| Archivo Secuencial Paginado | `core/include/quipudb/storage/sequential_file.hpp` | insercion ordenada con overflow (#10), eliminacion lazy (#11) y reorganizacion (#12); falta #13 |
+| Archivo Secuencial Paginado | `core/include/quipudb/storage/sequential_file.hpp` | completo: #10, #11, #12 y #13 |
 
 El heap file guarda slots de tamano fijo (`[1 byte de estado][registro]`) en el
 body de cada pagina, asi que el slot `i` esta siempre en `i * slot_size` y un
@@ -231,3 +231,22 @@ metricas que pide comparar el 2.1.6):
 | 700 | 0,2 ms | 8 | 7 |
 | 7 000 | 2,1 ms | 72 | 63 |
 | 70 000 | 20,8 ms | 715 | 625 |
+
+**Busqueda.** Dos niveles de busqueda binaria: primero sobre `first_keys_` (la
+primera clave de cada pagina principal, que vive en memoria) para dar con el
+grupo, despues dentro de la pagina para dar con la posicion. Solo entonces se
+recorre el overflow de ese grupo, que es como mucho una pagina. El resultado
+es que una busqueda puntual cuesta lo mismo con 1 000 registros que con
+100 000.
+
+Busqueda puntual, promedio de 100 consultas con claves al azar sobre datos
+insertados en orden aleatorio:
+
+| registros | secuencial binaria | secuencial lineal | heap (lineal) |
+|---|---|---|---|
+| 1 000 | 0,0034 ms · 1,3 paginas | 0,21 ms · 8 paginas | 0,014 ms · 3,7 paginas |
+| 10 000 | 0,0022 ms · 1,1 paginas | 2,62 ms · 111 paginas | 0,160 ms · 37 paginas |
+| 100 000 | 0,0025 ms · 1,0 paginas | 24,1 ms · 1 019 paginas | 1,995 ms · 345 paginas |
+
+Esa ultima fila es el resumen de la comparacion que pide el 2.1.6: el heap
+lee media tabla en promedio, el secuencial lee una pagina.

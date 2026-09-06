@@ -218,11 +218,13 @@ std::size_t SequentialFile::lower_bound_in_page(const Key& key) const {
 std::optional<RID> SequentialFile::find_in_group(PageId mp, const Key& key) {
   fetch(mp);
   const std::size_t n = physical_slots();
-  const std::size_t pos = lower_bound_in_page(key);
-  if (pos < n && compare(slot_key(pos), key) == 0 && slot_state(pos) == kUsed) {
-    return RID{mp, static_cast<SlotId>(pos)};
+  // Una clave puede aparecer dos veces en la pagina: el slot marcado de un
+  // borrado anterior y el vivo de la reinsercion. Se recorre la corrida de
+  // claves iguales hasta dar con uno vivo.
+  for (std::size_t i = lower_bound_in_page(key); i < n && compare(slot_key(i), key) == 0; ++i) {
+    ++stats_.records_examined;
+    if (slot_state(i) == kUsed) return RID{mp, static_cast<SlotId>(i)};
   }
-  stats_.records_examined += n;
 
   PageId ovf = overflow_head();
   while (ovf != kInvalidPage) {
@@ -565,9 +567,89 @@ std::vector<Record> SequentialFile::scan() {
   return out;
 }
 
+void SequentialFile::collect_overflow_in_range(PageId head, const Key& lo, const Key& hi,
+                                               std::vector<Record>& out) {
+  // El overflow no esta ordenado: toca mirarlo entero. Es como mucho una
+  // pagina por grupo.
+  PageId p = head;
+  while (p != kInvalidPage) {
+    fetch(p);
+    const std::size_t n = physical_slots();
+    for (std::size_t i = 0; i < n; ++i) {
+      ++stats_.records_examined;
+      if (slot_state(i) != kUsed) continue;
+      const Key k = slot_key(i);
+      if (compare(k, lo) >= 0 && compare(k, hi) <= 0) {
+        out.push_back(codec_.decode(slot_record(i)));
+        ++stats_.records_returned;
+      }
+    }
+    p = scratch_.next();
+  }
+}
+
 std::vector<Record> SequentialFile::search(const Key& key) {
-  // Recorrido lineal a proposito: aprovechar el orden con busqueda binaria es
-  // el issue #13, que ademas compara su resultado contra esta version.
+  if (main_pages_.empty()) return {};
+
+  // Nivel 1: busqueda binaria en memoria sobre la primera clave de cada
+  // pagina principal. Nivel 2: busqueda binaria dentro de la pagina.
+  const std::size_t g = group_of(key);
+  const PageId mp = main_pages_[g];
+  fetch(mp);
+  const std::size_t n = physical_slots();
+  const PageId ovf = overflow_head();
+
+  for (std::size_t i = lower_bound_in_page(key); i < n && compare(slot_key(i), key) == 0; ++i) {
+    ++stats_.records_examined;
+    if (slot_state(i) == kUsed) {
+      ++stats_.records_returned;
+      return {codec_.decode(slot_record(i))};
+    }
+  }
+
+  // Nivel 3: el overflow de ese grupo, que no esta ordenado.
+  std::vector<Record> out;
+  collect_overflow_in_range(ovf, key, key, out);
+  return out;
+}
+
+std::vector<Record> SequentialFile::range_search(const Key& lo, const Key& hi) {
+  std::vector<Record> out;
+  if (main_pages_.empty() || compare(lo, hi) > 0) return out;
+
+  const std::size_t key_col = codec_.schema().key_column;
+  const std::size_t primero = group_of(lo);
+  for (std::size_t g = primero; g < main_pages_.size(); ++g) {
+    // Los grupos estan ordenados: en cuanto uno empieza mas alla de `hi`, no
+    // queda nada por mirar.
+    if (g > primero && compare(first_keys_[g], hi) > 0) break;
+
+    fetch(main_pages_[g]);
+    const std::size_t n = physical_slots();
+    const PageId ovf = overflow_head();
+
+    std::vector<Record> grupo;
+    for (std::size_t i = (g == primero ? lower_bound_in_page(lo) : 0); i < n; ++i) {
+      const Key k = slot_key(i);
+      if (compare(k, hi) > 0) break;  // la pagina esta ordenada
+      ++stats_.records_examined;
+      if (slot_state(i) != kUsed || compare(k, lo) < 0) continue;
+      grupo.push_back(codec_.decode(slot_record(i)));
+      ++stats_.records_returned;
+    }
+    if (ovf != kInvalidPage) {
+      collect_overflow_in_range(ovf, lo, hi, grupo);
+      std::sort(grupo.begin(), grupo.end(), [&](const Record& a, const Record& b) {
+        return compare(a[key_col], b[key_col]) < 0;
+      });
+    }
+    out.insert(out.end(), std::make_move_iterator(grupo.begin()),
+               std::make_move_iterator(grupo.end()));
+  }
+  return out;
+}
+
+std::vector<Record> SequentialFile::search_linear(const Key& key) {
   std::vector<Record> out;
   const std::size_t key_col = codec_.schema().key_column;
   for (const Record& r : scan()) {
@@ -576,11 +658,10 @@ std::vector<Record> SequentialFile::search(const Key& key) {
       break;
     }
   }
-  stats_.records_returned = out.size();
   return out;
 }
 
-std::vector<Record> SequentialFile::range_search(const Key& lo, const Key& hi) {
+std::vector<Record> SequentialFile::range_search_linear(const Key& lo, const Key& hi) {
   std::vector<Record> out;
   const std::size_t key_col = codec_.schema().key_column;
   for (Record& r : scan()) {
@@ -588,7 +669,6 @@ std::vector<Record> SequentialFile::range_search(const Key& lo, const Key& hi) {
       out.push_back(std::move(r));
     }
   }
-  stats_.records_returned = out.size();
   return out;
 }
 
