@@ -10,7 +10,7 @@ comparar las estructuras propias contra PostgreSQL (secciones 2.1.6, 2.2.4,
 2.3.2 y 2.4.4). Al mismo tiempo, cuatro de las cinco secciones de la Parte 1
 (parser SQL, transacciones, frontend y benchmarks) se desarrollan mas rapido en
 Python, y el equipo ya tiene experiencia previa en Python con los laboratorios
-02 y 03 del curso.
+01, 02 y 03 del curso.
 
 ## Decision
 
