@@ -434,5 +434,150 @@ TEST_F(SequentialFileTest, DetectaContadoresQueNoCuadran) {
   EXPECT_THROW(SequentialFile(path_, alumnos(), 512), IoError);
 }
 
+
+// ---------------------------------------------------------------------------
+// Reorganizacion al superar el umbral (issue #12)
+// ---------------------------------------------------------------------------
+
+TEST_F(SequentialFileTest, SeReorganizaSolaAlPasarElUmbralYMantieneElOrden) {
+  // La prueba que pide el issue: llenar, borrar hasta pasar el umbral y
+  // verificar que reorganiza y que el orden se mantiene.
+  SequentialFile s(path_, alumnos(), 512);
+  for (std::int32_t i = 1; i <= 1000; ++i) s.insert(alumno(i));
+  const auto bytes_llenos = s.file_size();
+  ASSERT_EQ(s.reorganizations(), 0u);
+
+  // 300 de 1000 = 0,30 exacto, que todavia no supera el umbral.
+  for (std::int32_t i = 1; i <= 300; ++i) s.remove(Value{i});
+  EXPECT_EQ(s.reorganizations(), 0u) << "el umbral es estricto: 0,30 no lo supera";
+  EXPECT_DOUBLE_EQ(s.wasted_ratio(), 0.30);
+
+  s.remove(Value{301});  // 301/1000: ahora si
+  EXPECT_EQ(s.reorganizations(), 1u);
+  EXPECT_EQ(s.deleted_records(), 0u) << "reorganizar deja el desperdicio en cero";
+  EXPECT_DOUBLE_EQ(s.wasted_ratio(), 0.0);
+  EXPECT_EQ(s.size(), 699u);
+  EXPECT_EQ(s.overflow_pages(), 0u) << "el overflow quedo fusionado";
+  EXPECT_LT(s.file_size(), bytes_llenos) << "el archivo devolvio el espacio";
+
+  const auto todos = s.scan();
+  ASSERT_EQ(todos.size(), 699u);
+  EXPECT_TRUE(ordenado(todos));
+  EXPECT_EQ(codigo_de(todos.front()), 302);
+  EXPECT_EQ(codigo_de(todos.back()), 1000);
+  for (std::int32_t i = 302; i <= 1000; i += 43) {
+    ASSERT_EQ(s.search(Value{i}).size(), 1u) << i;
+  }
+  for (std::int32_t i = 1; i <= 301; i += 37) {
+    EXPECT_TRUE(s.search(Value{i}).empty()) << i;
+  }
+}
+
+TEST_F(SequentialFileTest, LaReorganizacionRegistraCuantoTardo) {
+  SequentialFile s(path_, alumnos(), 512);
+  for (std::int32_t i = 1; i <= 2000; ++i) s.insert(alumno(i));
+  EXPECT_DOUBLE_EQ(s.last_reorganize_ms(), 0.0) << "todavia no se reorganizo";
+
+  const double ms = s.reorganize();
+  EXPECT_GT(ms, 0.0);
+  EXPECT_DOUBLE_EQ(s.last_reorganize_ms(), ms);
+  EXPECT_EQ(s.reorganizations(), 1u);
+}
+
+TEST_F(SequentialFileTest, ReorganizarFusionaElOverflowYDejaElArchivoSecuencial) {
+  SequentialFile s(path_, alumnos(), 256);
+  std::vector<std::int32_t> cs(400);
+  std::iota(cs.begin(), cs.end(), 1);
+  std::shuffle(cs.begin(), cs.end(), std::mt19937{5});
+  for (const auto c : cs) s.insert(alumno(c));
+  ASSERT_GT(s.overflow_pages(), 0u);
+  const auto antes = s.scan();
+
+  s.reorganize();
+  EXPECT_EQ(s.overflow_pages(), 0u);
+  EXPECT_EQ(s.scan(), antes) << "mismos registros, mismo orden";
+  EXPECT_EQ(s.size(), 400u);
+
+  // Y sigue aceptando inserciones normalmente.
+  s.insert(alumno(401));
+  EXPECT_EQ(s.size(), 401u);
+  EXPECT_TRUE(ordenado(s.scan()));
+}
+
+TEST_F(SequentialFileTest, LasPaginasQuedanConHolguraDespuesDeReorganizar) {
+  SequentialFile s(path_, alumnos(), 512);
+  for (std::int32_t i = 1; i <= 1000; ++i) s.insert(alumno(i));
+  s.reorganize();
+  const auto por_pagina = s.slots_per_page();
+  const auto esperadas =
+      (1000u + static_cast<std::size_t>(por_pagina * 0.8) - 1) / static_cast<std::size_t>(por_pagina * 0.8);
+  EXPECT_EQ(s.main_pages(), esperadas) << "se llenan al 80%, no al tope";
+
+  // La holgura sirve: insertar en medio no manda nada al overflow.
+  for (std::int32_t i = 1; i <= 20; ++i) s.insert(alumno(i * 10 + 1000000));
+  EXPECT_EQ(s.overflow_pages(), 0u);
+}
+
+TEST_F(SequentialFileTest, ElUmbralEsConfigurable) {
+  SequentialFile s(path_, alumnos(), 512, 0.50);
+  EXPECT_DOUBLE_EQ(s.waste_threshold(), 0.50);
+  for (std::int32_t i = 1; i <= 100; ++i) s.insert(alumno(i));
+  for (std::int32_t i = 1; i <= 40; ++i) s.remove(Value{i});
+  EXPECT_EQ(s.reorganizations(), 0u) << "0,40 no pasa un umbral de 0,50";
+  for (std::int32_t i = 41; i <= 51; ++i) s.remove(Value{i});
+  EXPECT_EQ(s.reorganizations(), 1u);
+  EXPECT_EQ(s.size(), 49u);
+
+  s.set_waste_threshold(0.10);
+  EXPECT_DOUBLE_EQ(s.waste_threshold(), 0.10);
+  for (std::int32_t i = 52; i <= 58; ++i) s.remove(Value{i});
+  EXPECT_EQ(s.reorganizations(), 2u);
+}
+
+TEST_F(SequentialFileTest, ReorganizarUnArchivoVacioOTodoBorrado) {
+  SequentialFile s(path_, alumnos(), 512);
+  EXPECT_NO_THROW(s.reorganize());
+  EXPECT_EQ(s.size(), 0u);
+  EXPECT_EQ(s.main_pages(), 0u);
+  EXPECT_TRUE(s.scan().empty());
+
+  for (std::int32_t i = 1; i <= 50; ++i) s.insert(alumno(i));
+  for (std::int32_t i = 1; i <= 50; ++i) s.remove(Value{i});
+  EXPECT_EQ(s.size(), 0u);
+  EXPECT_EQ(s.deleted_records(), 0u) << "se reorganizo por el camino";
+  EXPECT_TRUE(s.scan().empty());
+  EXPECT_EQ(s.file_size(), 512u) << "sin registros vivos no queda ninguna pagina de datos";
+
+  // Y despues de eso el archivo sigue sirviendo.
+  s.insert(alumno(7));
+  EXPECT_EQ(s.size(), 1u);
+  EXPECT_EQ(s.search(Value{7}).size(), 1u);
+}
+
+TEST_F(SequentialFileTest, LoReorganizadoSobreviveAlReabrir) {
+  std::uint64_t marcados_al_cerrar = 0;
+  {
+    SequentialFile s(path_, alumnos(), 512);
+    std::vector<std::int32_t> cs(600);
+    std::iota(cs.begin(), cs.end(), 1);
+    std::shuffle(cs.begin(), cs.end(), std::mt19937{13});
+    for (const auto c : cs) s.insert(alumno(c));
+    for (std::int32_t i = 1; i <= 250; ++i) s.remove(Value{i});
+    ASSERT_GE(s.reorganizations(), 1u);
+    // Los borrados posteriores a la ultima reorganizacion siguen marcados:
+    // vuelven a acumularse hasta el proximo umbral.
+    marcados_al_cerrar = s.deleted_records();
+    EXPECT_LE(s.wasted_ratio(), s.waste_threshold());
+    s.flush();
+  }
+  SequentialFile s(path_, alumnos(), 512);
+  EXPECT_EQ(s.size(), 350u);
+  EXPECT_EQ(s.deleted_records(), marcados_al_cerrar);
+  const auto todos = s.scan();
+  ASSERT_EQ(todos.size(), 350u);
+  EXPECT_TRUE(ordenado(todos));
+  EXPECT_EQ(codigo_de(todos.front()), 251);
+}
+
 }  // namespace
 }  // namespace quipudb
