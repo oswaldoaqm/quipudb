@@ -149,10 +149,23 @@ class Index {                                      // indice secundario
 
 | Estructura | Archivo | Estado |
 |---|---|---|
-| Heap File | `core/include/quipudb/storage/heap_file.hpp` | insercion y escaneo (#8); free list en #9 |
+| Heap File | `core/include/quipudb/storage/heap_file.hpp` | completo: insercion y escaneo (#8), free list y reutilizacion (#9) |
 
 El heap file guarda slots de tamano fijo (`[1 byte de estado][registro]`) en el
 body de cada pagina, asi que el slot `i` esta siempre en `i * slot_size` y un
 RID se resuelve sin recorrer nada. Medido sobre 1k / 10k / 100k registros: la
 insercion es constante por registro y la busqueda crece lineal, que es
 exactamente el perfil que el 2.1.6 compara contra el archivo secuencial.
+
+**Reutilizacion de espacio: FREE_LIST.** Las paginas con al menos un slot
+libre se encadenan por el campo `next` de la cabecera de pagina; la cabeza
+vive en el area meta y persiste entre sesiones. Insertar toma la cabeza y,
+si la pagina se llena, la desenlaza; eliminar libera el slot y, si la pagina
+estaba llena, la mete a la lista. Las dos operaciones son O(1).
+
+Se descarto **MOVE_THE_LAST** (traer el ultimo registro al hueco para dejar el
+archivo compacto) porque mueve un registro de sitio y en este motor un RID es
+una direccion estable: los indices no agrupados (#16) guardan RIDs, y cada
+eliminacion obligaria a corregir el indice del registro movido. FREE_LIST
+paga con paginas que quedan con huecos hasta reutilizarse; MOVE_THE_LAST
+pagaria con correccion de indices en cada borrado.
