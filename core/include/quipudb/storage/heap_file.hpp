@@ -1,6 +1,6 @@
 #pragma once
 
-// Heap File (issue #8).
+// Heap File (issues #8 y #9).
 //
 // Guarda los registros en orden de llegada sobre paginas de disco. Es la
 // organizacion mas simple del enunciado (2.1.1) y la linea base contra la que
@@ -11,7 +11,7 @@
 //   cabecera de Page (8 bytes)
 //     record_count  registros vivos en esta pagina
 //     free_space    bytes libres = slots libres * slot_size
-//     next          sin usar en #8; lo usa la free list en #9
+//     next          siguiente pagina de la free list, o kInvalidPage
 //   body: arreglo de slots, todos del mismo tamano
 //     slot = [1 byte de estado][record_size bytes de registro]
 //     estado 0 = libre, 1 = ocupado
@@ -21,9 +21,29 @@
 // recorrer nada. Esa es la razon de que un RID de heap file sea estable: el
 // registro no se mueve nunca de donde se escribio.
 //
+// Reutilizacion de espacio (#9): FREE_LIST, no MOVE_THE_LAST.
+//
+//   Se encadenan las PAGINAS con al menos un slot libre, usando el campo
+//   `next` de la cabecera de pagina y guardando la cabeza en el area meta.
+//   Insertar toma la cabeza de la lista; si la pagina se llena, sale de la
+//   lista. Eliminar libera el slot y, si la pagina estaba llena, la mete a la
+//   lista. Ambas operaciones son O(1) y no recorren el archivo.
+//
+//   Se descarto MOVE_THE_LAST (traer el ultimo registro al hueco para que el
+//   archivo quede siempre compacto) porque mueve un registro de sitio, y en
+//   este motor un RID es una direccion estable: los indices no agrupados
+//   (#16) guardan RIDs, y cada eliminacion obligaria a corregir el indice del
+//   registro movido. FREE_LIST cuesta paginas con huecos hasta que se
+//   reutilizan; MOVE_THE_LAST costaria correccion de indices en cada borrado.
+//
+//   La lista es LIFO: se reutiliza la pagina liberada mas recientemente. Es
+//   O(1) y ademas suele seguir en la cache del sistema operativo. "Primer
+//   hueco" significa la cabeza de la lista, no la pagina de menor numero.
+//
 // El area meta del DiskManager (pagina 0) guarda el estado del archivo entre
-// sesiones: tamano de registro con el que se creo, cuantos registros vivos
-// hay, y por que pagina conviene empezar a buscar espacio.
+// sesiones: version de formato, tamano de registro, registros vivos y la
+// cabeza de la free list. La lista persiste; al abrir se valida contra las
+// paginas, pero no se reconstruye.
 //
 // Unicidad de la clave primaria: el contrato (#3) dice que insertar una clave
 // repetida lanza DuplicateKey. Comprobarlo recorriendo el archivo haria que
@@ -90,22 +110,32 @@ class HeapFile final : public TableFile {
   /// Tamano del archivo en bytes. Es el "espacio en disco" del 2.1.6.
   [[nodiscard]] std::uintmax_t file_size() const { return disk_.file_size(); }
 
+  /// Paginas que tienen al menos un slot libre (largo de la free list).
+  [[nodiscard]] std::uint32_t free_pages() const noexcept { return free_pages_; }
+
   /// Escribe a disco el estado pendiente (area meta).
   void flush();
 
  private:
+  /// Version 1 (#8) guardaba una pagina sugerida en vez de la free list. Un
+  /// archivo de esa version se rechaza al abrir con un mensaje explicito en
+  /// vez de interpretarse mal: hay que recrearlo.
+  static constexpr std::uint32_t kMetaVersion = 2;
+
   struct Meta {
+    std::uint32_t version = kMetaVersion;
     std::uint32_t record_size = 0;
-    std::uint32_t insert_hint = kInvalidPage;  // primera pagina donde probar
     std::uint64_t live = 0;
-    std::uint32_t free_head = kInvalidPage;  // reservado para la free list (#9)
-    std::uint32_t reserved = 0;
+    std::uint32_t free_head = kInvalidPage;  // cabeza de la free list
+    std::uint32_t free_pages = 0;            // cuantas paginas hay en la lista
   };
   static_assert(sizeof(Meta) <= DiskManager::kMetaSize);
 
   void load_meta();
   void save_meta();
   void rebuild_keys();
+  /// Recorre la free list y comprueba que sea consistente con las paginas.
+  void check_free_list();
 
   /// Lee la pagina `id` en `scratch_` contando la lectura en las estadisticas.
   void fetch(PageId id);
@@ -128,8 +158,8 @@ class HeapFile final : public TableFile {
   std::size_t slot_size_ = 0;
   std::size_t slots_per_page_ = 0;
   std::uint64_t live_ = 0;
-  PageId insert_hint_ = kInvalidPage;
   PageId free_head_ = kInvalidPage;
+  std::uint32_t free_pages_ = 0;
   /// Claves vivas -> donde estan. Solo para detectar duplicados en insert.
   std::map<Key, RID, KeyLess> keys_;
   OpStats stats_;

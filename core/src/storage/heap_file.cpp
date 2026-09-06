@@ -19,6 +19,7 @@ HeapFile::HeapFile(std::filesystem::path path, Schema schema, std::size_t page_s
   }
   load_meta();
   rebuild_keys();
+  check_free_list();
 }
 
 // ---------------------------------------------------------------------------
@@ -31,16 +32,18 @@ void HeapFile::load_meta() {
   disk_.read_meta(buf);
   std::memcpy(&m, buf.data(), sizeof(Meta));
 
-  if (m.record_size == 0 && m.live == 0 && disk_.page_count() == 0) {
+  if (m.version == 0 && m.record_size == 0 && disk_.page_count() == 0) {
     // Archivo recien creado: se inicializa con el esquema actual.
-    m.record_size = static_cast<std::uint32_t>(codec_.size());
-    m.insert_hint = kInvalidPage;
-    m.free_head = kInvalidPage;
     live_ = 0;
-    insert_hint_ = kInvalidPage;
     free_head_ = kInvalidPage;
+    free_pages_ = 0;
     save_meta();
     return;
+  }
+  if (m.version != kMetaVersion) {
+    throw IoError("'" + disk_.path().string() + "' usa el formato de heap file " +
+                  std::to_string(m.version) + " y este core escribe el " +
+                  std::to_string(kMetaVersion) + "; hay que recrear el archivo");
   }
   if (m.record_size != codec_.size()) {
     throw SchemaError("'" + disk_.path().string() + "' guarda registros de " +
@@ -48,19 +51,47 @@ void HeapFile::load_meta() {
                       std::to_string(codec_.size()));
   }
   live_ = m.live;
-  insert_hint_ = m.insert_hint;
   free_head_ = m.free_head;
+  free_pages_ = m.free_pages;
 }
 
 void HeapFile::save_meta() {
   Meta m;
+  m.version = kMetaVersion;
   m.record_size = static_cast<std::uint32_t>(codec_.size());
-  m.insert_hint = insert_hint_;
   m.live = live_;
   m.free_head = free_head_;
+  m.free_pages = free_pages_;
   std::vector<std::byte> buf(sizeof(Meta));
   std::memcpy(buf.data(), &m, sizeof(Meta));
   disk_.write_meta(buf);
+}
+
+void HeapFile::check_free_list() {
+  // La lista se persiste, no se reconstruye; aqui solo se comprueba que lo
+  // que dice el area meta coincida con lo que hay en las paginas. Detecta un
+  // archivo corrupto o un ciclo antes de que corrompa una insercion.
+  std::uint32_t vistas = 0;
+  PageId p = free_head_;
+  while (p != kInvalidPage) {
+    if (p == 0 || p > disk_.page_count()) {
+      throw IoError("la free list de '" + disk_.path().string() + "' apunta a la pagina " +
+                    std::to_string(p) + ", que no existe");
+    }
+    disk_.read_page(p, scratch_);
+    if (scratch_.free_space() == 0) {
+      throw IoError("la pagina " + std::to_string(p) + " esta en la free list de '" +
+                    disk_.path().string() + "' pero no tiene espacio");
+    }
+    if (++vistas > disk_.page_count()) {
+      throw IoError("la free list de '" + disk_.path().string() + "' tiene un ciclo");
+    }
+    p = scratch_.next();
+  }
+  if (vistas != free_pages_) {
+    throw IoError("'" + disk_.path().string() + "' declara " + std::to_string(free_pages_) +
+                  " paginas con espacio y la free list tiene " + std::to_string(vistas));
+  }
 }
 
 void HeapFile::rebuild_keys() {
@@ -109,21 +140,19 @@ RID HeapFile::insert(const Record& record) {
     throw DuplicateKey("la clave primaria ya existe en " + codec_.schema().table_name);
   }
 
-  // Se prueba la pagina sugerida; si esta llena (o no hay), se agrega una al
-  // final. Sin eliminaciones, la sugerida es siempre la ultima, asi que
-  // insertar es O(1). Reutilizar huecos de registros borrados es el issue #9.
-  PageId target = insert_hint_;
-  if (target == kInvalidPage || target > disk_.page_count()) {
-    target = kInvalidPage;
-  } else {
-    fetch(target);
-    if (scratch_.free_space() < slot_size_) target = kInvalidPage;
-  }
+  // Primero la free list: reutilizar un hueco antes de hacer crecer el
+  // archivo es justamente lo que pide el enunciado (2.1.1). Si la lista esta
+  // vacia, todas las paginas estan llenas y toca una nueva.
+  PageId target = free_head_;
   if (target == kInvalidPage) {
     target = disk_.allocate_page();
     scratch_.clear();
     scratch_.set_free_space(static_cast<std::uint16_t>(slots_per_page_ * slot_size_));
-    insert_hint_ = target;
+    scratch_.set_next(kInvalidPage);
+    free_head_ = target;
+    ++free_pages_;
+  } else {
+    fetch(target);
   }
 
   // Primer slot libre de la pagina.
@@ -135,7 +164,7 @@ RID HeapFile::insert(const Record& record) {
     }
   }
   if (slot == slots_per_page_) {
-    throw IoError("la pagina " + std::to_string(target) + " dice tener espacio y no lo tiene");
+    throw IoError("la pagina " + std::to_string(target) + " esta en la free list y no tiene huecos");
   }
 
   std::vector<std::byte> bytes(slot_size_);
@@ -144,6 +173,14 @@ RID HeapFile::insert(const Record& record) {
   scratch_.write_bytes(slot_offset(slot), bytes);
   scratch_.set_record_count(static_cast<std::uint16_t>(scratch_.record_count() + 1));
   scratch_.set_free_space(static_cast<std::uint16_t>(scratch_.free_space() - slot_size_));
+
+  // Si se lleno, sale de la free list. Como siempre se inserta en la cabeza,
+  // desenlazarla es O(1).
+  if (scratch_.free_space() == 0) {
+    free_head_ = scratch_.next();
+    scratch_.set_next(kInvalidPage);
+    --free_pages_;
+  }
   store(target);
 
   const RID rid{target, static_cast<SlotId>(slot)};
@@ -159,10 +196,20 @@ std::size_t HeapFile::remove(const Key& key) {
   const RID rid = it->second;
 
   fetch(rid.page);
+  const bool estaba_llena = scratch_.free_space() == 0;
+
   std::array<std::byte, 1> libre{kFree};
   scratch_.write_bytes(slot_offset(rid.slot), libre);
   scratch_.set_record_count(static_cast<std::uint16_t>(scratch_.record_count() - 1));
   scratch_.set_free_space(static_cast<std::uint16_t>(scratch_.free_space() + slot_size_));
+
+  // Solo entra a la free list si estaba llena: si ya tenia espacio, ya estaba
+  // en la lista y volver a encadenarla crearia un ciclo.
+  if (estaba_llena) {
+    scratch_.set_next(free_head_);
+    free_head_ = rid.page;
+    ++free_pages_;
+  }
   store(rid.page);
 
   keys_.erase(it);
