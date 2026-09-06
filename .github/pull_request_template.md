@@ -11,7 +11,7 @@ Closes #
 ## Checklist
 
 - [ ] Los commits siguen `tipo(alcance): descripcion`
-- [ ] La rama sigue `feat/<alcance>-<slug>`
+- [ ] La rama sigue `<tipo>/<alcance>-<slug>`
 - [ ] Compila (`cmake --build build`) y/o pasa `ruff check`
 - [ ] Se agregaron pruebas o se explica por que no aplican
 - [ ] Si cambia una interfaz que usa otro modulo, esta avisado en el issue
