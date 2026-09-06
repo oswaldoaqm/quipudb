@@ -382,6 +382,110 @@ bool BPlusTree::set_payload(const Key& key, std::span<const std::byte> payload) 
   return true;
 }
 
+bool BPlusTree::erase(const Key& key) {
+  if (root_ == kInvalidPage) return false;
+  const PageId hoja = descend(key, nullptr);
+  const std::size_t n = key_count();
+  const std::size_t pos = lower_bound(key);
+  if (pos >= n || compare(key_at(pos), key) != 0) return false;
+
+  std::vector<std::pair<Key, std::vector<std::byte>>> entradas;
+  entradas.reserve(n - 1);
+  for (std::size_t i = 0; i < n; ++i) {
+    if (i != pos) entradas.emplace_back(key_at(i), payload_at(i));
+  }
+  const PageId siguiente = scratch_.next();
+  write_leaf(hoja, entradas, siguiente);
+  --count_;
+
+  // Si la raiz era la unica hoja y quedo vacia, el arbol vuelve a estar
+  // vacio. En cualquier otro caso la hoja se queda como esta, aunque quede
+  // por debajo de la mitad: fusionarla o redistribuirla es el #17.
+  if (entradas.empty() && hoja == root_) {
+    root_ = kInvalidPage;
+    first_leaf_ = kInvalidPage;
+    height_ = 0;
+  }
+  save_meta();
+  return true;
+}
+
+std::optional<RID> BPlusTree::locate(const Key& key) {
+  if (root_ == kInvalidPage) return std::nullopt;
+  const PageId hoja = descend(key, nullptr);
+  const std::size_t pos = lower_bound(key);
+  if (pos >= key_count() || compare(key_at(pos), key) != 0) return std::nullopt;
+  return RID{hoja, static_cast<SlotId>(pos)};
+}
+
+std::optional<std::vector<std::byte>> BPlusTree::payload_at_rid(RID rid) {
+  if (rid.page == kInvalidPage || rid.page == 0 || rid.page > disk_.page_count()) {
+    return std::nullopt;
+  }
+  fetch(rid.page);
+  if (!is_leaf() || rid.slot >= key_count()) return std::nullopt;
+  ++stats_.records_returned;
+  return payload_at(rid.slot);
+}
+
+// ---------------------------------------------------------------------------
+// Recorrido incremental
+// ---------------------------------------------------------------------------
+
+class BPlusTree::Cursor final : public EntryCursor {
+ public:
+  Cursor(BPlusTree& duenio, PageId hoja, std::size_t desde)
+      : duenio_(duenio), pagina_(duenio.disk_.page_size()), actual_(hoja), i_(desde) {}
+
+  bool next(Key& key, std::vector<std::byte>& payload) override {
+    while (actual_ != kInvalidPage) {
+      if (!cargada_) {
+        duenio_.disk_.read_page(actual_, pagina_);
+        ++duenio_.stats_.pages_read;
+        cargada_ = true;
+        if (++leidas_ > duenio_.disk_.page_count()) {
+          throw IoError("la cadena de hojas de '" + duenio_.disk_.path().string() +
+                        "' tiene un ciclo");
+        }
+      }
+      const std::size_t n = pagina_.record_count();
+      if (i_ < n) {
+        const std::size_t off = 1 + i_ * (duenio_.key_size_ + duenio_.payload_size_);
+        key = RecordCodec::decode_value(duenio_.key_column_,
+                                        pagina_.read_bytes(off, duenio_.key_size_));
+        const auto bytes =
+            pagina_.read_bytes(off + duenio_.key_size_, duenio_.payload_size_);
+        payload.assign(bytes.begin(), bytes.end());
+        ++i_;
+        ++duenio_.stats_.records_returned;
+        return true;
+      }
+      actual_ = pagina_.next();
+      i_ = 0;
+      cargada_ = false;
+    }
+    return false;
+  }
+
+ private:
+  BPlusTree& duenio_;
+  Page pagina_;  // buffer propio: no comparte scratch_ con el arbol
+  PageId actual_ = kInvalidPage;
+  std::size_t i_ = 0;
+  std::size_t leidas_ = 0;
+  bool cargada_ = false;
+};
+
+std::unique_ptr<EntryCursor> BPlusTree::entries() {
+  return std::make_unique<Cursor>(*this, first_leaf_, 0);
+}
+
+std::unique_ptr<EntryCursor> BPlusTree::entries_from(const Key& lo) {
+  if (root_ == kInvalidPage) return std::make_unique<Cursor>(*this, kInvalidPage, 0);
+  const PageId hoja = descend(lo, nullptr);
+  return std::make_unique<Cursor>(*this, hoja, lower_bound(lo));
+}
+
 std::vector<std::pair<Key, std::vector<std::byte>>> BPlusTree::scan() {
   std::vector<std::pair<Key, std::vector<std::byte>>> out;
   out.reserve(count_);
@@ -448,8 +552,10 @@ std::string BPlusTree::check_node(PageId id, std::size_t profundidad, const Key*
     return "el nodo " + std::to_string(id) + " tiene " + std::to_string(n) +
            " claves y el orden es " + std::to_string(order_);
   }
-  if (id != root_ && n < 1) {
-    return "el nodo " + std::to_string(id) + " no tiene claves y no es la raiz";
+  // Un nodo interno sin claves no tiene como guiar la busqueda. Una hoja si
+  // puede quedar vacia: `erase` no rebalancea, eso llega en el #17.
+  if (!hoja && n < 1) {
+    return "el nodo interno " + std::to_string(id) + " no tiene claves";
   }
   // Las claves de un nodo estan ordenadas y caen dentro del rango que le
   // asignan sus separadores.

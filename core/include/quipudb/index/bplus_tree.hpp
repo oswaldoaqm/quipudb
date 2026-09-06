@@ -60,6 +60,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -72,6 +73,14 @@
 #include "quipudb/storage/page.hpp"
 
 namespace quipudb {
+
+/// Recorre las entradas del arbol de a una, siguiendo la cadena de hojas.
+/// Deja de valer en cuanto el arbol se modifica.
+class EntryCursor {
+ public:
+  virtual ~EntryCursor() = default;
+  virtual bool next(Key& key, std::vector<std::byte>& payload) = 0;
+};
 
 class BPlusTree {
  public:
@@ -115,9 +124,32 @@ class BPlusTree {
   /// Reemplaza el payload de una clave existente. Devuelve false si no esta.
   bool set_payload(const Key& key, std::span<const std::byte> payload);
 
+  /// Quita la clave. Devuelve false si no estaba.
+  ///
+  /// No rebalancea: la hoja puede quedar por debajo de la mitad, e incluso
+  /// vacia, y sigue en el arbol y en la cadena. El arbol se mantiene
+  /// correcto -- ordenado, balanceado en altura y con la cadena completa --
+  /// pero desperdicia espacio. La fusion y la redistribucion son el #17.
+  bool erase(const Key& key);
+
+  /// Donde vive una clave: la hoja y su posicion dentro de ella. Es lo que
+  /// usa el indice agrupado (#15) para devolver un RID. Ojo: la posicion
+  /// cambia si el nodo se parte, asi que no se persiste.
+  [[nodiscard]] std::optional<RID> locate(const Key& key);
+
+  /// Payload que hay en esa posicion, o nullopt si el RID no apunta a una
+  /// entrada viva.
+  [[nodiscard]] std::optional<std::vector<std::byte>> payload_at_rid(RID rid);
+
   /// Todas las entradas en orden de clave, recorriendo la cadena de hojas sin
-  /// volver a bajar por el arbol.
+  /// volver a bajar por el arbol. Materializa todo: para recorridos grandes,
+  /// `entries()`.
   [[nodiscard]] std::vector<std::pair<Key, std::vector<std::byte>>> scan();
+
+  /// Recorrido incremental de la cadena de hojas, con memoria acotada a una
+  /// hoja. `entries_from` empieza en la primera clave >= `lo`.
+  [[nodiscard]] std::unique_ptr<EntryCursor> entries();
+  [[nodiscard]] std::unique_ptr<EntryCursor> entries_from(const Key& lo);
 
   /// Entradas con clave en [lo, hi], ambos inclusive.
   [[nodiscard]] std::vector<std::pair<Key, std::vector<std::byte>>> range(const Key& lo,
@@ -134,6 +166,8 @@ class BPlusTree {
   void flush();
 
  private:
+  class Cursor;
+
   static constexpr std::uint32_t kMetaVersion = 1;
 
   struct Meta {
