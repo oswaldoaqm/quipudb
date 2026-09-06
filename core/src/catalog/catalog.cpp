@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "quipudb/catalog/table.hpp"
+#include "quipudb/storage/page.hpp"
 #include "quipudb/error.hpp"
 
 namespace quipudb {
@@ -14,7 +15,7 @@ namespace quipudb {
 namespace {
 
 constexpr std::string_view kMagic = "quipudb-catalog";
-constexpr int kVersion = 1;
+constexpr int kVersion = 2;
 
 bool is_table_storage(std::string_view s) noexcept {
   return s == kind::kHeap || s == kind::kSequential || s == kind::kBPlusClustered;
@@ -109,7 +110,8 @@ Catalog::Catalog(std::filesystem::path path) : path_(std::move(path)) {
   if (std::filesystem::exists(path_)) load();
 }
 
-const TableInfo& Catalog::create_table(const Schema& schema, std::string_view storage) {
+const TableInfo& Catalog::create_table(const Schema& schema, std::string_view storage,
+                                       std::size_t page_size) {
   validate(schema);
   if (!is_table_storage(storage)) {
     throw SchemaError("'" + std::string(storage) + "' no es una organizacion de tabla (" +
@@ -119,10 +121,15 @@ const TableInfo& Catalog::create_table(const Schema& schema, std::string_view st
   if (tables_.contains(schema.table_name)) {
     throw SchemaError("la tabla " + schema.table_name + " ya existe");
   }
+  if (page_size < Page::kMinSize || page_size > Page::kMaxSize) {
+    throw SchemaError("tamano de pagina invalido para " + schema.table_name + ": " +
+                      std::to_string(page_size));
+  }
   TableInfo info;
   info.schema = schema;
   info.storage = std::string(storage);
   info.file = schema.table_name + "." + std::string(storage);
+  info.page_size = page_size;
   auto [it, _] = tables_.emplace(schema.table_name, std::move(info));
   save();
   return it->second;
@@ -218,7 +225,8 @@ void Catalog::save() const {
   out << kMagic << ' ' << kVersion << '\n';
   for (const auto& [name, info] : tables_) {
     out << "table " << name << ' ' << info.storage << ' ' << info.file << ' '
-        << info.schema.key_column << ' ' << info.schema.columns.size() << '\n';
+        << info.schema.key_column << ' ' << info.page_size << ' '
+        << info.schema.columns.size() << '\n';
     for (const auto& c : info.schema.columns) {
       out << "column " << c.name << ' ' << to_string(c.type);
       if (c.type == DataType::Varchar) out << ' ' << c.length;
@@ -286,8 +294,12 @@ void Catalog::load() {
       if (pending_columns != 0) throw bad(n, "faltan columnas de la tabla anterior");
       TableInfo info;
       std::size_t ncols = 0;
-      in >> info.schema.table_name >> info.storage >> info.file >> info.schema.key_column >> ncols;
+      in >> info.schema.table_name >> info.storage >> info.file >> info.schema.key_column >>
+          info.page_size >> ncols;
       if (!in) throw bad(n, "linea 'table' incompleta");
+      if (info.page_size < Page::kMinSize || info.page_size > Page::kMaxSize) {
+        throw bad(n, "tamano de pagina invalido: " + std::to_string(info.page_size));
+      }
       if (!is_identifier(info.schema.table_name)) throw bad(n, "nombre de tabla invalido");
       if (!is_table_storage(info.storage)) throw bad(n, "storage desconocido: " + info.storage);
       if (ncols == 0) throw bad(n, "tabla sin columnas");

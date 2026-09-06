@@ -122,8 +122,8 @@ TEST_F(CatalogTest, ElArchivoEsLegible) {
   std::getline(f, l2);
   std::getline(f, l3);
   std::getline(f, l4);
-  EXPECT_EQ(l1, "quipudb-catalog 1");
-  EXPECT_EQ(l2, "table cursos heap cursos.heap 0 2");
+  EXPECT_EQ(l1, "quipudb-catalog 2");
+  EXPECT_EQ(l2, "table cursos heap cursos.heap 0 4096 2");
   EXPECT_EQ(l3, "column codigo VARCHAR 8");
   EXPECT_EQ(l4, "column creditos INT");
 }
@@ -203,19 +203,21 @@ TEST_F(CatalogTest, ArchivoCorruptoLanzaAlAbrir) {
   EXPECT_THROW(Catalog{path_}, IoError);
   escribir("otro-formato 1\n");
   EXPECT_THROW(Catalog{path_}, IoError);
-  escribir("quipudb-catalog 2\n");
+  escribir("quipudb-catalog 3\n");
   EXPECT_THROW(Catalog{path_}, IoError);
-  escribir("quipudb-catalog 1\ntable t heap t.heap 0 2\ncolumn a INT\n");  // falta una columna
+  escribir("quipudb-catalog 2\ntable t heap t.heap 0 4096 2\ncolumn a INT\n");  // falta una
   EXPECT_THROW(Catalog{path_}, IoError);
-  escribir("quipudb-catalog 1\ntable t heap t.heap 0 1\ncolumn a TEXTO\n");
+  escribir("quipudb-catalog 2\ntable t heap t.heap 0 4096 1\ncolumn a TEXTO\n");
   EXPECT_THROW(Catalog{path_}, IoError);
-  escribir("quipudb-catalog 1\ntable t heap t.heap 3 1\ncolumn a INT\n");  // clave fuera de rango
+  escribir("quipudb-catalog 2\ntable t heap t.heap 3 4096 1\ncolumn a INT\n");  // clave mala
   EXPECT_THROW(Catalog{path_}, IoError);
-  escribir("quipudb-catalog 1\nindex ix t a bplus_unclustered f\n");  // tabla inexistente
+  escribir("quipudb-catalog 2\nindex ix t a bplus_unclustered f\n");  // tabla inexistente
   EXPECT_THROW(Catalog{path_}, IoError);
-  escribir("quipudb-catalog 1\nbasura\n");
+  escribir("quipudb-catalog 2\nbasura\n");
   EXPECT_THROW(Catalog{path_}, IoError);
-  escribir("quipudb-catalog 1\ntable t heap t.heap 0 1\ncolumn a INT\n\n");  // valido
+  escribir("quipudb-catalog 2\ntable t heap t.heap 0 99 1\ncolumn a INT\n");  // page_size malo
+  EXPECT_THROW(Catalog{path_}, IoError);
+  escribir("quipudb-catalog 2\ntable t heap t.heap 0 4096 1\ncolumn a INT\n\n");  // valido
   EXPECT_NO_THROW(Catalog{path_});
 }
 

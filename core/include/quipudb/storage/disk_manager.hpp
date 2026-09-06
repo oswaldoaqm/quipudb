@@ -72,6 +72,13 @@ class DiskManager {
   /// Fuerza la escritura al sistema operativo de todo lo pendiente.
   void flush();
 
+  /// Reemplaza este archivo por el de `otro`, que tiene que usar el mismo
+  /// tamano de pagina. El archivo anterior se descarta y este objeto pasa a
+  /// trabajar sobre el contenido nuevo. Es lo que permite reescribir un
+  /// archivo entero (una reorganizacion) sin pisar paginas que todavia no se
+  /// leyeron, y de paso deja el original intacto si algo falla en el camino.
+  void replace_with(const std::filesystem::path& otro);
+
   /// Deja el archivo con `new_count` paginas de datos, descartando las que
   /// sobran. Es lo que permite que una reorganizacion (#12) devuelva el
   /// espacio en vez de dejar paginas muertas al final. Lanza IoError si

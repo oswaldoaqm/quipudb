@@ -9,8 +9,8 @@
 //
 // Persiste en un archivo de texto con una linea por entidad:
 //
-//   quipudb-catalog 1
-//   table <nombre> <storage> <archivo> <indice_columna_clave> <n_columnas>
+//   quipudb-catalog 2
+//   table <nombre> <storage> <archivo> <indice_columna_clave> <page_size> <n_columnas>
 //   column <nombre> <TIPO> [longitud]        (n_columnas veces)
 //   index <nombre> <tabla> <columna> <kind> <archivo>
 //
@@ -43,6 +43,10 @@ struct TableInfo {
   Schema schema;
   std::string storage;  // kind::kHeap, kSequential o kBPlusClustered
   std::string file;     // relativo al directorio del catalogo
+  /// Tamano de pagina con el que se creo el archivo. Sin esto no se puede
+  /// reabrir una tabla creada con un tamano distinto del que este por
+  /// defecto, que es lo que necesita variar la comparacion del 2.1.6.
+  std::size_t page_size = kDefaultPageSize;
   std::vector<IndexInfo> indexes;
 
   /// Primer indice secundario sobre esa columna, o nullptr.
@@ -70,7 +74,8 @@ class Catalog {
 
   /// Registra una tabla. Lanza SchemaError si ya existe, si el esquema es
   /// invalido o si `storage` no es una organizacion de tabla conocida.
-  const TableInfo& create_table(const Schema& schema, std::string_view storage);
+  const TableInfo& create_table(const Schema& schema, std::string_view storage,
+                                std::size_t page_size = kDefaultPageSize);
 
   /// Quita la tabla y sus indices del catalogo. No borra los archivos de
   /// datos: eso lo decide quien llama, que sabe si los tiene abiertos.

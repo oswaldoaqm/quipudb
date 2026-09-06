@@ -32,6 +32,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string_view>
 #include <utility>
@@ -77,6 +78,33 @@ inline constexpr std::string_view kExtendibleHash = "extendible_hash";
 }  // namespace kind
 
 // ---------------------------------------------------------------------------
+// Recorrido incremental
+// ---------------------------------------------------------------------------
+
+/// Recorre los registros de una tabla de a uno, sin materializarlos todos.
+///
+/// `scan()` devuelve el vector completo, y eso no escala: 100 000 registros
+/// ocupan unos 4 MB en disco pero 15 MB en memoria, asi que un k-way merge de
+/// k runs (el external sorting del #20) necesitaria k veces eso antes de
+/// comparar la primera clave. Con un cursor la memoria queda acotada a una
+/// pagina (heap file) o a un grupo (secuencial).
+///
+/// El orden es el mismo que el de `scan()`: de llegada en el heap file, de
+/// clave en el secuencial.
+///
+/// Un cursor deja de valer en cuanto la tabla se modifica. No es un iterador
+/// de la STL a proposito: leer del disco puede lanzar, y `operator++` no es
+/// buen sitio para eso.
+class RecordCursor {
+ public:
+  virtual ~RecordCursor() = default;
+
+  /// Escribe el siguiente registro en `out` y devuelve true; false cuando ya
+  /// no quedan.
+  virtual bool next(Record& out) = 0;
+};
+
+// ---------------------------------------------------------------------------
 // TableFile: organizacion fisica de una tabla
 // ---------------------------------------------------------------------------
 
@@ -103,6 +131,18 @@ class TableFile {
   /// marca lazy, merge) es de cada implementacion.
   virtual std::size_t remove(const Key& key) = 0;
 
+  /// Reemplaza el registro que tiene esa clave primaria. Devuelve cuantos se
+  /// actualizaron (0 o 1). El registro nuevo tiene que traer la MISMA clave;
+  /// cambiarla es `remove` mas `insert`, porque mueve el registro de sitio.
+  /// Lanza SchemaError si la clave no coincide.
+  ///
+  /// Como los registros son de longitud fija, la actualizacion reescribe el
+  /// mismo slot: el RID se conserva y los indices secundarios que lo apuntan
+  /// siguen valiendo. Por eso es una operacion propia y no dos: un
+  /// `remove` mas `insert` deja una ventana donde la fila no existe, cambia
+  /// el RID, y en el secuencial puede disparar una reorganizacion.
+  virtual std::size_t update(const Key& key, const Record& record) = 0;
+
   /// Registros cuya clave primaria es igual a `key`. Vacio si no hay.
   /// (Devuelve vector y no optional para que search y range_search tengan la
   /// misma forma y el planner los trate igual.)
@@ -114,7 +154,11 @@ class TableFile {
   [[nodiscard]] virtual std::vector<Record> range_search(const Key& lo, const Key& hi) = 0;
 
   /// Todos los registros vivos, en el orden natural de la estructura.
+  /// Materializa todo: para recorridos grandes usar `cursor()`.
   [[nodiscard]] virtual std::vector<Record> scan() = 0;
+
+  /// Recorrido incremental, en el mismo orden que `scan()`.
+  [[nodiscard]] virtual std::unique_ptr<RecordCursor> cursor() = 0;
 
   /// Lee un registro por su direccion fisica. Es la operacion que usan los
   /// indices no agrupados para resolver un RID. nullopt si el slot esta libre
@@ -154,6 +198,7 @@ class Index {
 
   /// Quita todas las entradas con esa clave. Devuelve cuantas quito.
   virtual std::size_t remove(const Key& key) = 0;
+
 
   /// Quita solo la entrada (key, rid). Devuelve si existia.
   virtual bool remove(const Key& key, RID rid) = 0;

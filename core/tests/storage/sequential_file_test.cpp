@@ -768,5 +768,75 @@ TEST_F(SequentialFileTest, UnaPaginaIncoherenteLanzaIoError) {
   }
 }
 
+
+// --- cursor y update (#56) ---
+
+TEST_F(SequentialFileTest, UpdateReescribeEnSuSitioYMantieneElOrden) {
+  SequentialFile s(path_, alumnos(), 512, 1.0);
+  for (std::int32_t i = 1; i <= 200; ++i) s.insert(alumno(i));
+
+  Record nuevo = alumno(100);
+  nuevo[1] = std::string("cambiado");
+  EXPECT_EQ(s.update(Value{100}, nuevo), 1u);
+  EXPECT_EQ(s.size(), 200u);
+  EXPECT_EQ(s.search(Value{100})[0], nuevo);
+  EXPECT_TRUE(ordenado(s.scan()));
+  EXPECT_EQ(s.deleted_records(), 0u) << "no genera desperdicio, a diferencia de remove+insert";
+
+  EXPECT_EQ(s.update(Value{404}, alumno(404)), 0u);
+  EXPECT_THROW(s.update(Value{100}, alumno(101)), SchemaError);
+}
+
+TEST_F(SequentialFileTest, UpdateTambienEncuentraEnElOverflow) {
+  SequentialFile s(path_, alumnos(), 256, 1.0);
+  std::vector<std::int32_t> cs(200);
+  std::iota(cs.begin(), cs.end(), 1);
+  std::shuffle(cs.begin(), cs.end(), std::mt19937{3});
+  for (const auto c : cs) s.insert(alumno(c));
+  ASSERT_GT(s.overflow_pages(), 0u);
+
+  for (std::int32_t i = 1; i <= 200; i += 17) {
+    Record nuevo = alumno(i);
+    nuevo[2] = -1.0;
+    ASSERT_EQ(s.update(Value{i}, nuevo), 1u) << i;
+    EXPECT_DOUBLE_EQ(std::get<double>(s.search(Value{i})[0][2]), -1.0) << i;
+  }
+  EXPECT_TRUE(ordenado(s.scan()));
+}
+
+TEST_F(SequentialFileTest, ElCursorDevuelveLoMismoQueScan) {
+  SequentialFile s(path_, alumnos(), 256, 1.0);
+  std::vector<std::int32_t> cs(400);
+  std::iota(cs.begin(), cs.end(), 1);
+  std::shuffle(cs.begin(), cs.end(), std::mt19937{21});
+  for (const auto c : cs) s.insert(alumno(c));
+  for (std::int32_t i = 1; i <= 400; i += 5) s.remove(Value{i});
+  ASSERT_GT(s.overflow_pages(), 0u);
+
+  std::vector<Record> del_cursor;
+  auto c = s.cursor();
+  Record r;
+  while (c->next(r)) del_cursor.push_back(r);
+  EXPECT_EQ(del_cursor, s.scan());
+  EXPECT_TRUE(ordenado(del_cursor)) << "el cursor tambien sale ordenado";
+  EXPECT_FALSE(c->next(r));
+
+  SequentialFile vacia(dir_ / "vacia.seq", alumnos(), 256);
+  EXPECT_FALSE(vacia.cursor()->next(r));
+}
+
+TEST_F(SequentialFileTest, ReorganizarNoDejaElArchivoTemporal) {
+  SequentialFile s(path_, alumnos(), 512);
+  for (std::int32_t i = 1; i <= 500; ++i) s.insert(alumno(i));
+  const auto antes = s.scan();
+  s.reorganize();
+  EXPECT_EQ(s.scan(), antes);
+  EXPECT_FALSE(fs::exists(path_.string() + ".reorg")) << "el temporal se reemplazo, no quedo suelto";
+  // Y el archivo reemplazado se puede reabrir.
+  s.flush();
+  SequentialFile r(path_, alumnos(), 512);
+  EXPECT_EQ(r.scan(), antes);
+}
+
 }  // namespace
 }  // namespace quipudb

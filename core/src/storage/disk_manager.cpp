@@ -173,6 +173,30 @@ void DiskManager::flush() {
   if (!file_) throw IoError("fallo al vaciar " + describe(path_));
 }
 
+void DiskManager::replace_with(const std::filesystem::path& otro) {
+  if (!std::filesystem::exists(otro)) {
+    throw IoError("no existe " + describe(otro) + " para reemplazar a " + describe(path_));
+  }
+  file_.flush();
+  file_.close();
+  file_.clear();
+
+  std::error_code ec;
+  std::filesystem::remove(path_, ec);
+  std::filesystem::rename(otro, path_, ec);
+  if (ec) {
+    // Se reabre lo que haya quedado para no dejar el objeto inservible.
+    file_.open(path_, std::ios::in | std::ios::out | std::ios::binary);
+    throw IoError("no se pudo reemplazar " + describe(path_) + ": " + ec.message());
+  }
+
+  // `open_existing` es quien abre: llamarlo con el fstream ya abierto falla.
+  const std::size_t esperado = page_size_;
+  page_size_ = 0;
+  page_count_ = 0;
+  open_existing(esperado);  // abre, relee y valida la cabecera nueva
+}
+
 void DiskManager::truncate(PageId new_count) {
   if (new_count > page_count_) {
     throw IoError("truncate a " + std::to_string(new_count) + " paginas en " + describe(path_) +
