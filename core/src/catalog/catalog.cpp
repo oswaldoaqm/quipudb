@@ -152,8 +152,8 @@ std::vector<std::string> Catalog::table_names() const {
   return out;
 }
 
-const IndexInfo& Catalog::create_index(std::string_view table, std::string_view index_name,
-                                       std::string_view column, std::string_view kind) {
+IndexInfo Catalog::create_index(std::string_view table, std::string_view index_name,
+                                std::string_view column, std::string_view kind) {
   const auto it = tables_.find(std::string(table));
   if (it == tables_.end()) throw SchemaError("la tabla " + std::string(table) + " no existe");
   TableInfo& info = it->second;
@@ -173,11 +173,22 @@ const IndexInfo& Catalog::create_index(std::string_view table, std::string_view 
                       std::string(kind::kBPlusUnclustered) + ", " +
                       std::string(kind::kExtendibleHash) + ")");
   }
+  // Un indice secundario guarda RIDs y los resuelve con TableFile::read, asi
+  // que solo sirve sobre una organizacion cuyos RIDs no se muevan. Hoy eso es
+  // el heap file: en el secuencial y en el B+ agrupado, insertar corre los
+  // registros de sitio y el indice apuntaria al vecino sin lanzar nada.
+  if (info.storage != kind::kHeap) {
+    throw SchemaError("no se puede indexar " + std::string(table) + ", que se almacena como " +
+                      info.storage + ": los RID de esa organizacion no son estables");
+  }
   IndexInfo ix;
   ix.name = std::string(index_name);
   ix.column = *col;
   ix.kind = std::string(kind);
-  ix.file = std::string(table) + "." + std::string(column) + "." + std::string(kind);
+  // El nombre del indice es lo unico unico dentro de la tabla: si el archivo
+  // se nombrara por la columna, dos indices sobre la misma columna se
+  // pisarian en disco.
+  ix.file = std::string(table) + "." + std::string(index_name) + "." + std::string(kind);
   info.indexes.push_back(std::move(ix));
   save();
   return info.indexes.back();

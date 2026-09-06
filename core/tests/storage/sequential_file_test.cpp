@@ -684,5 +684,89 @@ TEST_F(SequentialFileTest, BusquedaConClaveDeTexto) {
   EXPECT_EQ(rango.size(), 4u) << "BD2, CS2032, FI203, MA1101";
 }
 
+
+// ---------------------------------------------------------------------------
+// Regresiones de la auditoria de 2.1.1 (#55)
+// ---------------------------------------------------------------------------
+
+TEST_F(SequentialFileTest, InsertarEnUnGrupoEnteramenteBorrado) {
+  // C1: si todos los registros de un grupo estan marcados, no hay nada que
+  // repartir y `split_group` indexaba un vector vacio. El umbral es global y
+  // el vaciado es local, asi que la reorganizacion no salva del caso.
+  SequentialFile s(path_, alumnos(), 512, 0.99);  // umbral alto: sin reorganizar
+  const auto sp = static_cast<std::int32_t>(s.slots_per_page());
+  for (std::int32_t i = 0; i < sp * 20; ++i) s.insert(alumno(i * 100));
+  for (std::int32_t i = 0; i < sp; ++i) s.insert(alumno(i * 100 + 1));  // llena su overflow
+  const auto grupos_antes = s.main_pages();
+
+  for (std::int32_t i = 0; i < sp; ++i) {
+    ASSERT_EQ(s.remove(Value{i * 100}), 1u);
+    ASSERT_EQ(s.remove(Value{i * 100 + 1}), 1u);
+  }
+  ASSERT_LT(s.wasted_ratio(), s.waste_threshold()) << "no se reorganizo por el camino";
+
+  // Insertar en el rango del grupo vacio: antes reventaba aqui.
+  ASSERT_NO_THROW(s.insert(alumno(50)));
+  EXPECT_EQ(s.main_pages(), grupos_antes - 1) << "el grupo vacio salio de la cadena";
+  EXPECT_TRUE(ordenado(s.scan()));
+  EXPECT_EQ(s.search(Value{50}).size(), 1u);
+
+  // Y el archivo se puede reabrir, que es donde una pagina sin registros
+  // haria fallar a build_directory.
+  s.flush();
+  SequentialFile r(path_, alumnos(), 512, 0.99);
+  EXPECT_EQ(r.size(), s.size());
+  EXPECT_TRUE(ordenado(r.scan()));
+}
+
+TEST_F(SequentialFileTest, BorrarElPrimerGrupoEnteroYSeguirUsandoElArchivo) {
+  // El mismo caso pero en el grupo 0, donde hay que mover main_head_.
+  SequentialFile s(path_, alumnos(), 512, 0.99);
+  const auto sp = static_cast<std::int32_t>(s.slots_per_page());
+  for (std::int32_t i = 0; i < sp * 3; ++i) s.insert(alumno(i * 100));
+  for (std::int32_t i = 0; i < sp; ++i) s.insert(alumno(i * 100 + 1));
+  for (std::int32_t i = 0; i < sp; ++i) {
+    s.remove(Value{i * 100});
+    s.remove(Value{i * 100 + 1});
+  }
+  ASSERT_NO_THROW(s.insert(alumno(50)));
+  EXPECT_TRUE(ordenado(s.scan()));
+  s.flush();
+  SequentialFile r(path_, alumnos(), 512, 0.99);
+  EXPECT_EQ(r.size(), s.size());
+  EXPECT_TRUE(ordenado(r.scan()));
+}
+
+TEST_F(SequentialFileTest, UnaPaginaIncoherenteLanzaIoError) {
+  // I6: physical_slots() restaba sin signo y devolvia SIZE_MAX, de donde
+  // salia un std::out_of_range en vez de un error del contrato.
+  {
+    SequentialFile s(path_, alumnos(), 512);
+    for (std::int32_t i = 1; i <= 20; ++i) s.insert(alumno(i));
+    s.flush();
+  }
+  {  // se miente en el free_space de la pagina 1 (offset 6 de la cabecera)
+    DiskManager dm(path_, 512);
+    Page p(512);
+    dm.read_page(1, p);
+    // Tiene que pasar de slots_per_page * slot_size (17 * 29 = 493) por mas
+    // de un slot entero, o la resta no llega a desbordar.
+    p.set_free_space(600);
+    dm.write_page(1, p);
+    dm.flush();
+  }
+  // Sin la comprobacion, physical_slots() devuelve SIZE_MAX y el error sale
+  // como std::out_of_range al leer fuera del body, rompiendo la promesa de
+  // error.hpp de que todo hereda de quipudb::Error.
+  try {
+    SequentialFile s(path_, alumnos(), 512);
+    FAIL() << "tendria que haber lanzado";
+  } catch (const Error& e) {
+    EXPECT_NE(std::string(e.what()).find("incoherente"), std::string::npos) << e.what();
+  } catch (const std::exception& e) {
+    FAIL() << "lanzo fuera de la jerarquia de quipudb: " << e.what();
+  }
+}
+
 }  // namespace
 }  // namespace quipudb

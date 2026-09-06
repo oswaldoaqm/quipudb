@@ -82,7 +82,8 @@ void DiskManager::open_existing(std::size_t expected_page_size) {
 
   // Defensa contra un archivo truncado: la cabecera promete mas paginas de las
   // que hay. Se prefiere fallar al abrir que leer basura despues.
-  const auto expected_bytes = static_cast<std::uintmax_t>(page_size_) * (page_count_ + 1u);
+  const auto expected_bytes =
+      static_cast<std::uintmax_t>(page_size_) * (static_cast<std::uintmax_t>(page_count_) + 1);
   if (std::filesystem::file_size(path_) < expected_bytes) {
     throw IoError(describe(path_) + " esta truncado: la cabecera declara " +
                   std::to_string(page_count_) + " paginas");

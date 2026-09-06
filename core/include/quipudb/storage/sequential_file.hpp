@@ -132,6 +132,7 @@
 #include <vector>
 
 #include "quipudb/catalog/record_codec.hpp"
+#include "quipudb/error.hpp"
 #include "quipudb/catalog/table.hpp"
 #include "quipudb/storage/disk_manager.hpp"
 #include "quipudb/storage/page.hpp"
@@ -266,9 +267,19 @@ class SequentialFile final : public TableFile {
   [[nodiscard]] Key slot_key(std::size_t slot) const {
     return codec_.decode_column(slot_record(slot), codec_.schema().key_column);
   }
-  /// Slots ocupados o borrados, siempre contiguos desde el 0.
-  [[nodiscard]] std::size_t physical_slots() const noexcept {
-    return slots_per_page_ - scratch_.free_space() / slot_size_;
+  /// Slots ocupados o borrados, siempre contiguos desde el 0. La resta es sin
+  /// signo, asi que una pagina con `free_space` incoherente (un archivo
+  /// corrupto) daria SIZE_MAX y de ahi saldria un std::out_of_range al leer
+  /// fuera del body. Se comprueba antes para que salga un IoError, que es lo
+  /// que promete `error.hpp`.
+  [[nodiscard]] std::size_t physical_slots() const {
+    const std::size_t libres = scratch_.free_space() / slot_size_;
+    if (libres > slots_per_page_) {
+      throw IoError("pagina incoherente en '" + disk_.path().string() + "': declara " +
+                    std::to_string(scratch_.free_space()) + " bytes libres y caben " +
+                    std::to_string(slots_per_page_ * slot_size_));
+    }
+    return slots_per_page_ - libres;
   }
   [[nodiscard]] PageId overflow_head() const;
   void set_overflow_head(PageId p);

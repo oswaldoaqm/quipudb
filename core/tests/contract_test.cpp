@@ -13,6 +13,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
+#include <limits>
 #include <map>
 #include <string>
 #include <vector>
@@ -253,6 +255,46 @@ TEST(Esquema, ValidateDetectaRegistrosMalFormados) {
                InvalidRecord);  // codigo no es Int
   EXPECT_THROW(s.validate(alumno(1, std::string(21, 'x'), 15.5)),
                InvalidRecord);  // supera VARCHAR(20)
+}
+
+// --- regresiones de la auditoria de 2.1.1 (#55) ---
+
+TEST(Tipos, NaNTieneUnLugarEnElOrden) {
+  // Con `<` a secas un NaN seria "igual" a todo y KeyLess dejaria de ser un
+  // orden estricto, que es comportamiento indefinido para los std::map y
+  // std::sort del core. Va despues de todo y solo es igual a otro NaN.
+  const Value nan{std::nan("")};
+  EXPECT_GT(compare(nan, Value{1.0}), 0);
+  EXPECT_LT(compare(Value{1.0}, nan), 0);
+  EXPECT_GT(compare(nan, Value{1e308}), 0);
+  EXPECT_EQ(compare(nan, nan), 0);
+  // Y sigue siendo un orden estricto: a<b y b<c implica a<c.
+  EXPECT_LT(compare(Value{1.0}, Value{2.0}), 0);
+  EXPECT_LT(compare(Value{2.0}, nan), 0);
+  EXPECT_LT(compare(Value{1.0}, nan), 0);
+}
+
+TEST(Esquema, RechazaUnNaNComoValor) {
+  const Schema s{.table_name = "t",
+                 .columns = {{"k", DataType::Int}, {"d", DataType::Double}},
+                 .key_column = 0};
+  EXPECT_NO_THROW(s.validate(Record{1, 1.5}));
+  EXPECT_NO_THROW(s.validate(Record{1, std::numeric_limits<double>::infinity()}))
+      << "el infinito si tiene lugar en el orden";
+  EXPECT_THROW(s.validate(Record{1, std::nan("")}), InvalidRecord);
+}
+
+TEST(Esquema, RechazaUnTextoConByteNuloAdentro) {
+  // Al serializar se guarda tal cual, pero al leer se corta en el nulo, asi
+  // que "ab\0cd" volveria como "ab": perdida silenciosa, y dos claves
+  // distintas podrian colapsar en una.
+  const Schema s{.table_name = "t",
+                 .columns = {{"k", DataType::Int}, {"t", DataType::Varchar, 10}},
+                 .key_column = 0};
+  EXPECT_NO_THROW(s.validate(Record{1, std::string("hola")}));
+  EXPECT_NO_THROW(s.validate(Record{1, std::string{}}));
+  EXPECT_THROW(s.validate(Record{1, std::string("ab\0cd", 5)}), InvalidRecord);
+  EXPECT_THROW(s.validate(Record{1, std::string("\0", 1)}), InvalidRecord);
 }
 
 // ---------------------------------------------------------------------------
