@@ -83,6 +83,8 @@ class BPlusClusteredTable::Cursor final : public RecordCursor {
     return true;
   }
 
+  [[nodiscard]] RID rid() const override { return entradas_->position(); }
+
  private:
   const RecordCodec& codec_;
   std::unique_ptr<EntryCursor> entradas_;

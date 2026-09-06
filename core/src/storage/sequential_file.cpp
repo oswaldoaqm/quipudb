@@ -580,24 +580,44 @@ void SequentialFile::collect_live(std::vector<Record>& out) {
   }
 }
 
-void SequentialFile::read_group(std::size_t g, std::vector<Record>& out) {
+void SequentialFile::read_group(std::size_t g, std::vector<Record>& out,
+                                std::vector<RID>* rids) {
   out.clear();
+  if (rids != nullptr) rids->clear();
   const std::size_t key_col = codec_.schema().key_column;
+
+  // Se juntan registro y direccion a la vez para poder ordenarlos juntos.
+  std::vector<std::pair<Record, RID>> juntos;
+  const auto recoger = [&](PageId pagina) {
+    const std::size_t n = physical_slots();
+    for (std::size_t s = 0; s < n; ++s) {
+      ++stats_.records_examined;
+      if (slot_state(s) != kUsed) continue;
+      juntos.emplace_back(codec_.decode(slot_record(s)), RID{pagina, static_cast<SlotId>(s)});
+      ++stats_.records_returned;
+    }
+  };
+
   fetch(main_pages_[g]);
   const PageId ovf = overflow_head();
-  collect_live(out);
+  recoger(main_pages_[g]);
   PageId p = ovf;
   while (p != kInvalidPage) {
     fetch(p);
-    collect_live(out);
+    recoger(p);
     p = scratch_.next();
   }
   if (ovf != kInvalidPage) {
     // El overflow no esta ordenado, pero sus claves caen dentro del rango del
     // grupo, asi que ordenarlo aqui alcanza para que el total salga ordenado.
-    std::sort(out.begin(), out.end(), [&](const Record& a, const Record& b) {
-      return compare(a[key_col], b[key_col]) < 0;
+    std::sort(juntos.begin(), juntos.end(), [&](const auto& a, const auto& b) {
+      return compare(a.first[key_col], b.first[key_col]) < 0;
     });
+  }
+  out.reserve(juntos.size());
+  for (auto& [r, rid] : juntos) {
+    out.push_back(std::move(r));
+    if (rids != nullptr) rids->push_back(rid);
   }
 }
 
@@ -612,16 +632,22 @@ class SequentialFile::Cursor final : public RecordCursor {
   bool next(Record& out) override {
     while (i_ >= grupo_.size()) {
       if (g_ >= duenio_.main_pages_.size()) return false;
-      duenio_.read_group(g_++, grupo_);
+      duenio_.read_group(g_++, grupo_, &rids_);
       i_ = 0;
     }
-    out = grupo_[i_++];
+    out = grupo_[i_];
+    actual_rid_ = rids_[i_];
+    ++i_;
     return true;
   }
+
+  [[nodiscard]] RID rid() const override { return actual_rid_; }
 
  private:
   SequentialFile& duenio_;
   std::vector<Record> grupo_;  // un grupo a la vez, no la tabla entera
+  std::vector<RID> rids_;
+  RID actual_rid_;
   std::size_t g_ = 0;
   std::size_t i_ = 0;
 };

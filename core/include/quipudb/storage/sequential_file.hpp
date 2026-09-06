@@ -302,7 +302,7 @@ class SequentialFile final : public TableFile {
   /// Registros vivos del grupo `g` (pagina principal y su overflow), ya
   /// ordenados por clave. Es la unidad que carga el cursor: memoria acotada a
   /// un grupo, no a la tabla entera.
-  void read_group(std::size_t g, std::vector<Record>& out);
+  void read_group(std::size_t g, std::vector<Record>& out, std::vector<RID>* rids = nullptr);
   /// Junta el grupo `g` (pagina principal y su overflow), lo ordena y lo
   /// reparte en paginas principales a media carga, empalmadas en la cadena.
   void split_group(std::size_t g);
