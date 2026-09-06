@@ -174,6 +174,7 @@ podia reabrir.
 |---|---|---|
 | Heap File | `core/include/quipudb/storage/heap_file.hpp` | completo: insercion y escaneo (#8), free list y reutilizacion (#9) |
 | Archivo Secuencial Paginado | `core/include/quipudb/storage/sequential_file.hpp` | completo: #10, #11, #12 y #13 |
+| B+ Tree (maquinaria comun) | `core/include/quipudb/index/bplus_tree.hpp` | nodos, split e insercion (#14); los indices #15, #16 y #17 se construyen encima |
 
 El heap file guarda slots de tamano fijo (`[1 byte de estado][registro]`) en el
 body de cada pagina, asi que el slot `i` esta siempre en `i * slot_size` y un
@@ -273,3 +274,37 @@ insertados en orden aleatorio:
 
 Esa ultima fila es el resumen de la comparacion que pide el 2.1.6: el heap
 lee media tabla en promedio, el secuencial lee una pagina.
+
+### B+ Tree
+
+`BPlusTree` es la maquinaria que comparten el B+ agrupado (#15) y el no
+agrupado (#16). No sabe que hay dentro de una entrada: guarda `payload_size`
+bytes opacos por clave, y cada indice decide si eso es un registro completo o
+un RID.
+
+Cada nodo es una pagina. Las hojas guardan `[clave][payload]` y estan
+encadenadas por el campo `next` de la cabecera, asi que recorrerlas en orden
+no cuesta bajar por el arbol. Los internos guardan `[hijo izquierdo]` seguido
+de pares `[clave][hijo]`: n claves y n+1 hijos.
+
+La diferencia entre los dos splits es la que se suele equivocar: al partir una
+**hoja** la clave separadora se **copia** hacia arriba y sigue viviendo abajo,
+porque las hojas guardan todas las claves; al partir un **nodo interno** la
+clave del medio se **mueve** y deja de estar abajo, porque los internos solo
+guian la busqueda.
+
+El orden (claves maximas por nodo) se calcula por omision como el maximo que
+entra en la pagina, y se puede fijar a mano para forzar arboles altos con
+pocas claves, que es lo que hacen las pruebas.
+
+| claves | altura | orden | insercion | busqueda | paginas leidas | espacio |
+|---|---|---|---|---|---|---|
+| 1 000 | 2 | 510 | 0,0235 ms | 0,0018 ms | 2 | 20 KB |
+| 10 000 | 2 | 510 | 0,0273 ms | 0,0021 ms | 2 | 136 KB |
+| 100 000 | 2 | 510 | 0,0286 ms | 0,0037 ms | 2 | 1 036 KB |
+
+Con paginas de 4 KB caben 510 claves por nodo, asi que 100 000 claves entran
+en un arbol de altura 2: dos paginas leidas por busqueda, igual que con 1 000.
+`check_invariants()` comprueba balanceo, orden, rangos de cada subarbol y que
+la cadena de hojas recorra exactamente las mismas claves; las pruebas la
+llaman despues de cada insercion en los arboles chicos.
