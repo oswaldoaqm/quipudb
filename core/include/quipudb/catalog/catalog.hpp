@@ -86,11 +86,18 @@ class Catalog {
 
   // --- indices ----------------------------------------------------------
 
-  /// Registra un indice secundario sobre una columna de la tabla. Lanza
-  /// SchemaError si la tabla o la columna no existen, si el nombre ya esta
-  /// usado en esa tabla, o si `kind` no es un indice secundario conocido.
-  const IndexInfo& create_index(std::string_view table, std::string_view index_name,
-                                std::string_view column, std::string_view kind);
+  /// Registra un indice secundario sobre una columna de la tabla, y devuelve
+  /// una copia de lo que quedo registrado. Lanza SchemaError si la tabla o la
+  /// columna no existen, si el nombre ya esta usado en esa tabla, si `kind` no
+  /// es un indice secundario conocido, o si la tabla no se almacena como heap
+  /// file (las demas organizaciones mueven sus registros de sitio y los RID
+  /// guardados en el indice dejarian de valer).
+  ///
+  /// Devuelve por valor y no por referencia a proposito: los indices viven en
+  /// un vector dentro de la tabla, asi que una segunda llamada lo reubica y
+  /// dejaria colgada cualquier referencia que alguien hubiera guardado.
+  IndexInfo create_index(std::string_view table, std::string_view index_name,
+                         std::string_view column, std::string_view kind);
 
   void drop_index(std::string_view table, std::string_view index_name);
 
