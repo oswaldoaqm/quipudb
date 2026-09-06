@@ -218,6 +218,69 @@ std::size_t HeapFile::remove(const Key& key) {
   return 1;
 }
 
+std::size_t HeapFile::update(const Key& key, const Record& record) {
+  codec_.schema().validate(record);
+  if (compare(codec_.schema().key_of(record), key) != 0) {
+    throw SchemaError("update no puede cambiar la clave primaria de " +
+                      codec_.schema().table_name + ": eso es remove mas insert");
+  }
+  const auto it = keys_.find(key);
+  if (it == keys_.end()) return 0;
+  const RID rid = it->second;
+
+  // Longitud fija: se reescribe el mismo slot y el RID se conserva.
+  fetch(rid.page);
+  std::vector<std::byte> bytes(slot_size_);
+  bytes[0] = kUsed;
+  codec_.encode(record, std::span<std::byte>(bytes).subspan(1));
+  scratch_.write_bytes(slot_offset(rid.slot), bytes);
+  store(rid.page);
+  return 1;
+}
+
+// ---------------------------------------------------------------------------
+// Cursor
+// ---------------------------------------------------------------------------
+
+class HeapFile::Cursor final : public RecordCursor {
+ public:
+  explicit Cursor(HeapFile& duenio) : duenio_(duenio), pagina_(duenio.disk_.page_size()) {}
+
+  bool next(Record& out) override {
+    while (true) {
+      if (slot_ >= duenio_.slots_per_page_) {
+        slot_ = 0;
+        ++actual_;
+        cargada_ = false;
+      }
+      if (actual_ > duenio_.disk_.page_count()) return false;
+      if (!cargada_) {
+        duenio_.disk_.read_page(actual_, pagina_);
+        ++duenio_.stats_.pages_read;
+        cargada_ = true;
+      }
+      const std::size_t offset = slot_ * duenio_.slot_size_;
+      const bool vivo = pagina_.read_bytes(offset, 1)[0] == kUsed;
+      ++slot_;
+      ++duenio_.stats_.records_examined;
+      if (vivo) {
+        out = duenio_.codec_.decode(pagina_.read_bytes(offset + 1, duenio_.codec_.size()));
+        ++duenio_.stats_.records_returned;
+        return true;
+      }
+    }
+  }
+
+ private:
+  HeapFile& duenio_;
+  Page pagina_;              // buffer propio: no comparte scratch_ con el archivo
+  PageId actual_ = 1;
+  std::size_t slot_ = 0;
+  bool cargada_ = false;
+};
+
+std::unique_ptr<RecordCursor> HeapFile::cursor() { return std::make_unique<Cursor>(*this); }
+
 std::vector<Record> HeapFile::search(const Key& key) {
   // Busqueda lineal: es lo que define a un heap file y la linea base del 2.1.6.
   const std::size_t key_col = codec_.schema().key_column;
