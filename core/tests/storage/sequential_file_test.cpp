@@ -3,6 +3,8 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
+#include <cstring>
 #include <filesystem>
 #include <numeric>
 #include <random>
@@ -10,6 +12,7 @@
 #include <vector>
 
 #include "quipudb/error.hpp"
+#include "quipudb/storage/disk_manager.hpp"
 #include "quipudb/storage/sequential_file.hpp"
 
 namespace quipudb {
@@ -292,6 +295,143 @@ TEST_F(SequentialFileTest, LasEstadisticasCuentanPaginas) {
   s.reset_stats();
   s.insert(alumno(101));
   EXPECT_GT(s.stats().pages_written, 0u);
+}
+
+
+// ---------------------------------------------------------------------------
+// Eliminacion lazy y cuenta del desperdicio (issue #11)
+// ---------------------------------------------------------------------------
+
+TEST_F(SequentialFileTest, BorrarNoCambiaElTamanoDelArchivo) {
+  // La prueba que pide el issue.
+  SequentialFile s(path_, alumnos(), 512);
+  for (std::int32_t i = 1; i <= 500; ++i) s.insert(alumno(i));
+  const auto bytes = s.file_size();
+  const auto paginas = s.page_count();
+
+  for (std::int32_t i = 1; i <= 100; ++i) s.remove(Value{i});
+  EXPECT_EQ(s.size(), 400u);
+  EXPECT_EQ(s.file_size(), bytes) << "la eliminacion lazy no encoge el archivo";
+  EXPECT_EQ(s.page_count(), paginas);
+
+  // Y ninguno de los borrados aparece por ningun camino.
+  const auto todos = s.scan();
+  ASSERT_EQ(todos.size(), 400u);
+  EXPECT_TRUE(ordenado(todos));
+  EXPECT_EQ(codigo_de(todos.front()), 101);
+  for (std::int32_t i = 1; i <= 100; i += 7) {
+    EXPECT_TRUE(s.search(Value{i}).empty()) << i;
+  }
+  EXPECT_TRUE(s.range_search(Value{1}, Value{100}).empty());
+  EXPECT_EQ(s.range_search(Value{95}, Value{105}).size(), 5u);
+}
+
+TEST_F(SequentialFileTest, LaCuentaDelDesperdicioSubeConCadaBorrado) {
+  SequentialFile s(path_, alumnos(), 512);
+  EXPECT_EQ(s.deleted_records(), 0u);
+  EXPECT_EQ(s.wasted_bytes(), 0u);
+  EXPECT_DOUBLE_EQ(s.wasted_ratio(), 0.0) << "un archivo vacio no desperdicia nada";
+
+  for (std::int32_t i = 1; i <= 100; ++i) s.insert(alumno(i));
+  EXPECT_DOUBLE_EQ(s.wasted_ratio(), 0.0);
+
+  for (std::int32_t i = 1; i <= 30; ++i) s.remove(Value{i});
+  EXPECT_EQ(s.deleted_records(), 30u);
+  EXPECT_EQ(s.wasted_bytes(), 30u * s.slot_size());
+  EXPECT_DOUBLE_EQ(s.wasted_ratio(), 0.30) << "30 marcados de 100 guardados";
+
+  // Borrar algo que no existe no mueve la cuenta.
+  EXPECT_EQ(s.remove(Value{999}), 0u);
+  EXPECT_EQ(s.deleted_records(), 30u);
+}
+
+TEST_F(SequentialFileTest, LaCuentaDelDesperdicioPersiste) {
+  {
+    SequentialFile s(path_, alumnos(), 512);
+    for (std::int32_t i = 1; i <= 200; ++i) s.insert(alumno(i));
+    for (std::int32_t i = 1; i <= 50; ++i) s.remove(Value{i});
+    s.flush();
+  }
+  SequentialFile s(path_, alumnos(), 512);
+  EXPECT_EQ(s.size(), 150u);
+  EXPECT_EQ(s.deleted_records(), 50u);
+  EXPECT_DOUBLE_EQ(s.wasted_ratio(), 0.25);
+}
+
+TEST_F(SequentialFileTest, PartirUnGrupoRecuperaElEspacioMarcado) {
+  // Al partir, los marcados no se copian a las paginas nuevas: es el unico
+  // momento en que el desperdicio baja solo, y el contador tiene que seguirlo.
+  SequentialFile s(path_, alumnos(), 512);
+  const auto por_pagina = s.slots_per_page();
+  for (std::size_t i = 0; i < por_pagina * 2; ++i) {
+    s.insert(alumno(static_cast<std::int32_t>(i * 10)));
+  }
+  ASSERT_EQ(s.remove(Value{10}), 1u);
+  ASSERT_EQ(s.remove(Value{20}), 1u);
+  ASSERT_EQ(s.deleted_records(), 2u);
+
+  // Se llena el overflow del primer grupo hasta que parta, metiendo claves
+  // intercaladas dentro de su rango (las que no son multiplo de 10).
+  const auto grupos_antes = s.main_pages();
+  const std::int32_t tope = static_cast<std::int32_t>(por_pagina) * 10;
+  for (std::int32_t k = 1; k < tope; ++k) {
+    if (k % 10 != 0) s.insert(alumno(k));
+  }
+  ASSERT_GT(s.main_pages(), grupos_antes) << "el grupo tuvo que partirse";
+  EXPECT_EQ(s.deleted_records(), 0u) << "los marcados del grupo partido se descontaron";
+
+  // Y el archivo sigue coherente al reabrirlo, que es lo que valida los
+  // contadores contra las paginas.
+  const auto vivos = s.size();
+  const auto marcados = s.deleted_records();
+  s.flush();
+  SequentialFile r(path_, alumnos(), 512);
+  EXPECT_EQ(r.size(), vivos);
+  EXPECT_EQ(r.deleted_records(), marcados);
+  EXPECT_TRUE(ordenado(r.scan()));
+}
+
+TEST_F(SequentialFileTest, DesperdicioConBorradosEnOverflow) {
+  SequentialFile s(path_, alumnos(), 256);
+  std::vector<std::int32_t> cs(300);
+  std::iota(cs.begin(), cs.end(), 1);
+  std::shuffle(cs.begin(), cs.end(), std::mt19937{11});
+  for (const auto c : cs) s.insert(alumno(c));
+  ASSERT_GT(s.overflow_pages(), 0u);
+
+  for (std::int32_t i = 1; i <= 60; ++i) s.remove(Value{i * 5});
+  EXPECT_EQ(s.size(), 240u);
+  EXPECT_EQ(s.deleted_records(), 60u);
+  const auto todos = s.scan();
+  EXPECT_EQ(todos.size(), 240u);
+  EXPECT_TRUE(ordenado(todos));
+  for (const auto& r : todos) EXPECT_NE(codigo_de(r) % 5, 0);
+
+  s.flush();
+  SequentialFile r(path_, alumnos(), 256);
+  EXPECT_EQ(r.deleted_records(), 60u) << "tambien se cuentan los marcados del overflow";
+}
+
+TEST_F(SequentialFileTest, DetectaContadoresQueNoCuadran) {
+  {
+    SequentialFile s(path_, alumnos(), 512);
+    for (std::int32_t i = 1; i <= 50; ++i) s.insert(alumno(i));
+    s.remove(Value{1});
+    s.flush();
+  }
+  // Meta = version(4) + record_size(4) + live(8) + deleted(8): se miente en
+  // la cantidad de marcados.
+  {
+    DiskManager dm(path_, 512);
+    constexpr std::size_t kOffsetDeleted = 16;
+    std::array<std::byte, kOffsetDeleted + sizeof(std::uint64_t)> meta{};
+    dm.read_meta(meta);
+    const std::uint64_t mentira = 99;
+    std::memcpy(meta.data() + kOffsetDeleted, &mentira, sizeof mentira);
+    dm.write_meta(meta);
+    dm.flush();
+  }
+  EXPECT_THROW(SequentialFile(path_, alumnos(), 512), IoError);
 }
 
 }  // namespace
