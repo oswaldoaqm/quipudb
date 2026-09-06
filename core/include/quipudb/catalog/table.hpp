@@ -102,6 +102,15 @@ class RecordCursor {
   /// Escribe el siguiente registro en `out` y devuelve true; false cuando ya
   /// no quedan.
   virtual bool next(Record& out) = 0;
+
+  /// Donde estaba el registro que acaba de devolver `next`. Solo vale
+  /// inmediatamente despues de un `next` que devolvio true.
+  ///
+  /// Existe porque construir un indice secundario sobre una tabla que ya
+  /// tiene datos necesita recorrerla sabiendo la direccion de cada registro,
+  /// y sin esto no habia forma: `insert` devuelve un RID y `read` lo resuelve,
+  /// pero nada los enumeraba.
+  [[nodiscard]] virtual RID rid() const = 0;
 };
 
 // ---------------------------------------------------------------------------

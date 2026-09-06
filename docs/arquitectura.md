@@ -176,6 +176,7 @@ podia reabrir.
 | Archivo Secuencial Paginado | `core/include/quipudb/storage/sequential_file.hpp` | completo: #10, #11, #12 y #13 |
 | B+ Tree (maquinaria comun) | `core/include/quipudb/index/bplus_tree.hpp` | nodos, split e insercion (#14); los indices #15, #16 y #17 se construyen encima |
 | B+ agrupado | `core/include/quipudb/index/bplus_clustered_table.hpp` | tercera organizacion de tabla (#15); falta el rebalanceo al borrar (#17) |
+| B+ no agrupado | `core/include/quipudb/index/bplus_unclustered_index.hpp` | indice secundario sobre un heap file (#16) |
 
 El heap file guarda slots de tamano fijo (`[1 byte de estado][registro]`) en el
 body de cada pagina, asi que el slot `i` esta siempre en `i * slot_size` y un
@@ -343,3 +344,35 @@ magnitud en busqueda; el secuencial y el B+ agrupado buscan practicamente
 igual de rapido, pero el B+ paga el triple en insercion a cambio de no tener
 overflow que revisar ni reorganizaciones que disparar. El espacio del B+
 incluye los nodos internos y las hojas a media carga tras los splits.
+
+### B+ no agrupado: el indice apunta a la tabla
+
+Las hojas guardan pares `(clave, RID)` y el registro se lee despues del
+archivo de datos con `TableFile::read(rid)`. Por eso implementa `Index` y no
+`TableFile`: se cuelga de una tabla en vez de serla.
+
+Solo se puede montar sobre un **heap file**. Un RID guardado en el indice
+tiene que seguir apuntando al mismo registro manana, y eso solo lo garantiza
+el heap file: en el secuencial y en el B+ agrupado los registros se corren de
+sitio al insertar. Lo comprueban tanto `Catalog::create_index` como la clase.
+
+**Claves repetidas.** Es el caso normal: se indexa una columna que no es la
+clave primaria, asi que muchos registros comparten valor. `BPlusTree` admite
+repetidas desde este issue, y la diferencia esta en como se baja por el arbol:
+
+- al **insertar** se va a la derecha en el empate con un separador, para que
+  la entrada nueva quede despues de las iguales y la corrida conserve el orden
+  de insercion;
+- al **buscar** se va a la izquierda, a la primera hoja que podria contenerla,
+  y desde ahi se sigue la cadena de hojas mientras la clave repita.
+
+Y una regla que no es obvia: al partir un nodo, la rama nueva se coloca segun
+**cual hijo se partio**, no comparando su clave separadora. Con separadores
+repetidos, buscar por clave la insertaba antes de sus hermanas iguales y
+dejaba los hijos desordenados; el arbol seguia pareciendo correcto en un
+`scan` y fallaba la comprobacion de rangos por subarbol.
+
+El costo de resolver los punteros es la desventaja del indice no agrupado
+frente al agrupado, y es lo que compara el 2.1.6: encontrar los RID cuesta la
+altura del arbol mas la cadena de hojas, pero traer los registros cuesta una
+lectura de pagina por registro, porque estan repartidos por todo el heap.

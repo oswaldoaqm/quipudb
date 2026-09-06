@@ -29,10 +29,11 @@ std::array<std::byte, sizeof(PageId)> bytes_de(PageId p) {
 // ---------------------------------------------------------------------------
 
 BPlusTree::BPlusTree(std::filesystem::path path, Column key_column, std::size_t payload_size,
-                     std::size_t page_size, std::size_t order)
+                     std::size_t page_size, std::size_t order, bool unique)
     : key_column_(std::move(key_column)),
       key_size_(key_column_.byte_size()),
       payload_size_(payload_size),
+      unique_(unique),
       disk_(std::move(path), page_size),
       scratch_(disk_.page_size()) {
   if (key_size_ == 0) {
@@ -87,6 +88,11 @@ void BPlusTree::load_meta() {
                       std::to_string(key_size_) + " y payload de " +
                       std::to_string(payload_size_));
   }
+  if ((m.unique != 0) != unique_) {
+    throw SchemaError("'" + disk_.path().string() + "' se creo " +
+                      (m.unique != 0 ? "con claves unicas" : "admitiendo claves repetidas") +
+                      " y se pidio abrirlo al reves");
+  }
   if (m.order != order_) {
     throw SchemaError("'" + disk_.path().string() + "' se creo con orden " +
                       std::to_string(m.order) + " y se pidio abrirlo con " +
@@ -104,6 +110,7 @@ void BPlusTree::save_meta() {
   m.key_size = static_cast<std::uint32_t>(key_size_);
   m.payload_size = static_cast<std::uint32_t>(payload_size_);
   m.order = static_cast<std::uint32_t>(order_);
+  m.unique = unique_ ? 1u : 0u;
   m.root = root_;
   m.first_leaf = first_leaf_;
   m.height = static_cast<std::uint32_t>(height_);
@@ -172,6 +179,20 @@ std::size_t BPlusTree::lower_bound(const Key& key) const {
   return lo;
 }
 
+std::size_t BPlusTree::upper_bound(const Key& key) const {
+  std::size_t lo = 0;
+  std::size_t hi = key_count();
+  while (lo < hi) {
+    const std::size_t mid = lo + (hi - lo) / 2;
+    if (compare(key_at(mid), key) <= 0) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
 // ---------------------------------------------------------------------------
 // Escritura de nodos
 // ---------------------------------------------------------------------------
@@ -213,17 +234,18 @@ void BPlusTree::write_internal(PageId id, PageId hijo_izq, const std::vector<Bra
 // Descenso
 // ---------------------------------------------------------------------------
 
-PageId BPlusTree::descend(const Key& key, std::vector<PageId>* camino) {
+PageId BPlusTree::descend(const Key& key, std::vector<PageId>* camino, bool por_la_derecha) {
   PageId actual = root_;
   while (true) {
     fetch(actual);
     if (is_leaf()) return actual;
     if (camino != nullptr) camino->push_back(actual);
-    // El hijo i cuelga a la izquierda de la clave i. Se baja por el primer
-    // separador mayor que la clave buscada.
+    // El hijo i cuelga a la izquierda de la clave i. En el empate con un
+    // separador se sigue de largo (<= 0) o se para (< 0) segun `por_la_derecha`.
+    const int limite = (unique_ || por_la_derecha) ? 0 : -1;
     const std::size_t n = key_count();
     std::size_t i = 0;
-    while (i < n && compare(key_at(i), key) <= 0) ++i;
+    while (i < n && compare(key_at(i), key) <= limite) ++i;
     actual = child_at(i);
   }
 }
@@ -258,10 +280,15 @@ void BPlusTree::insert(const Key& key, std::span<const std::byte> payload) {
   const PageId hoja = descend(key, &camino);
   // scratch_ tiene la hoja cargada.
   const std::size_t n = key_count();
-  const std::size_t pos = lower_bound(key);
-  if (pos < n && compare(key_at(pos), key) == 0) {
-    throw DuplicateKey("la clave ya esta en el indice");
+  if (unique_) {
+    const std::size_t existente = lower_bound(key);
+    if (existente < n && compare(key_at(existente), key) == 0) {
+      throw DuplicateKey("la clave ya esta en el indice");
+    }
   }
+  // Con repetidas la nueva va despues de las iguales, para que el orden de
+  // insercion se conserve dentro de la corrida.
+  const std::size_t pos = unique_ ? lower_bound(key) : upper_bound(key);
 
   // Se arma la hoja completa en memoria: como mucho order+1 entradas.
   std::vector<std::pair<Key, std::vector<std::byte>>> entradas;
@@ -321,11 +348,24 @@ void BPlusTree::insert_in_parent(std::vector<PageId>& camino, const Key& separad
     ramas.reserve(n + 1);
     for (std::size_t i = 0; i < n; ++i) ramas.push_back(Branch{key_at(i), child_at(i + 1)});
 
-    // La rama nueva va justo despues del hijo que se partio.
-    const std::size_t pos = static_cast<std::size_t>(
-        std::lower_bound(ramas.begin(), ramas.end(), sep,
-                         [](const Branch& b, const Key& k) { return compare(b.key, k) < 0; }) -
-        ramas.begin());
+    // La rama nueva va justo despues del hijo que se partio, y esa posicion se
+    // deduce del hijo, no de la clave: con separadores repetidos (un indice
+    // con claves repetidas) buscar por clave la pondria antes de sus hermanas
+    // iguales y dejaria los hijos desordenados.
+    std::size_t pos = 0;
+    if (izq != hijo_izq) {
+      pos = ramas.size() + 1;  // centinela: tiene que aparecer
+      for (std::size_t i = 0; i < ramas.size(); ++i) {
+        if (ramas[i].child == izq) {
+          pos = i + 1;
+          break;
+        }
+      }
+      if (pos > ramas.size()) {
+        throw IoError("el nodo " + std::to_string(padre) + " no reconoce al hijo " +
+                      std::to_string(izq) + " que se acaba de partir");
+      }
+    }
     ramas.insert(ramas.begin() + static_cast<std::ptrdiff_t>(pos), Branch{sep, der});
 
     if (ramas.size() <= order_) {
@@ -360,7 +400,7 @@ std::optional<std::vector<std::byte>> BPlusTree::find(const Key& key) {
   if (type_of(key) != key_column_.type) {
     throw SchemaError("la clave es de otro tipo que la columna " + key_column_.name);
   }
-  descend(key, nullptr);
+  descend(key, nullptr, /*por_la_derecha=*/false);
   const std::size_t pos = lower_bound(key);
   ++stats_.records_examined;
   if (pos >= key_count() || compare(key_at(pos), key) != 0) return std::nullopt;
@@ -374,7 +414,7 @@ bool BPlusTree::set_payload(const Key& key, std::span<const std::byte> payload) 
                       " bytes y el arbol guarda " + std::to_string(payload_size_));
   }
   if (root_ == kInvalidPage) return false;
-  const PageId hoja = descend(key, nullptr);
+  const PageId hoja = descend(key, nullptr, /*por_la_derecha=*/false);
   const std::size_t pos = lower_bound(key);
   if (pos >= key_count() || compare(key_at(pos), key) != 0) return false;
   scratch_.write_bytes(leaf_offset(pos) + key_size_, payload);
@@ -410,9 +450,72 @@ bool BPlusTree::erase(const Key& key) {
   return true;
 }
 
+std::size_t BPlusTree::erase_matching(const Key& key, const std::vector<std::byte>* payload) {
+  if (root_ == kInvalidPage) return 0;
+
+  // Una corrida de claves iguales puede abarcar varias hojas, asi que se
+  // recorre la cadena desde la primera que podria contenerla.
+  std::size_t quitadas = 0;
+  PageId p = descend(key, nullptr, /*por_la_derecha=*/false);
+  std::size_t vueltas = 0;
+  while (p != kInvalidPage) {
+    if (++vueltas > disk_.page_count()) {
+      throw IoError("la cadena de hojas de '" + disk_.path().string() + "' tiene un ciclo");
+    }
+    fetch(p);
+    const std::size_t n = key_count();
+    const PageId siguiente = scratch_.next();
+
+    std::vector<std::pair<Key, std::vector<std::byte>>> quedan;
+    quedan.reserve(n);
+    bool cambio = false;
+    bool paso_de_largo = false;
+    for (std::size_t i = 0; i < n; ++i) {
+      const Key k = key_at(i);
+      const int c = compare(k, key);
+      if (c > 0) paso_de_largo = true;
+      auto carga = payload_at(i);
+      const bool coincide = c == 0 && (payload == nullptr || carga == *payload);
+      if (coincide) {
+        ++quitadas;
+        cambio = true;
+        if (payload != nullptr) {
+          // erase_one quita una sola: el resto de la hoja se conserva.
+          for (std::size_t j = i + 1; j < n; ++j) quedan.emplace_back(key_at(j), payload_at(j));
+          paso_de_largo = true;
+          break;
+        }
+        continue;
+      }
+      quedan.emplace_back(k, std::move(carga));
+    }
+    if (cambio) write_leaf(p, quedan, siguiente);
+    if (paso_de_largo) break;
+    p = siguiente;
+  }
+
+  if (quitadas > 0) {
+    count_ -= quitadas;
+    if (count_ == 0) {
+      root_ = kInvalidPage;
+      first_leaf_ = kInvalidPage;
+      height_ = 0;
+    }
+    save_meta();
+  }
+  return quitadas;
+}
+
+std::size_t BPlusTree::erase_all(const Key& key) { return erase_matching(key, nullptr); }
+
+bool BPlusTree::erase_one(const Key& key, std::span<const std::byte> payload) {
+  const std::vector<std::byte> buscado(payload.begin(), payload.end());
+  return erase_matching(key, &buscado) > 0;
+}
+
 std::optional<RID> BPlusTree::locate(const Key& key) {
   if (root_ == kInvalidPage) return std::nullopt;
-  const PageId hoja = descend(key, nullptr);
+  const PageId hoja = descend(key, nullptr, /*por_la_derecha=*/false);
   const std::size_t pos = lower_bound(key);
   if (pos >= key_count() || compare(key_at(pos), key) != 0) return std::nullopt;
   return RID{hoja, static_cast<SlotId>(pos)};
@@ -456,6 +559,7 @@ class BPlusTree::Cursor final : public EntryCursor {
         const auto bytes =
             pagina_.read_bytes(off + duenio_.key_size_, duenio_.payload_size_);
         payload.assign(bytes.begin(), bytes.end());
+        posicion_ = RID{actual_, static_cast<SlotId>(i_)};
         ++i_;
         ++duenio_.stats_.records_returned;
         return true;
@@ -467,9 +571,12 @@ class BPlusTree::Cursor final : public EntryCursor {
     return false;
   }
 
+  [[nodiscard]] RID position() const override { return posicion_; }
+
  private:
   BPlusTree& duenio_;
   Page pagina_;  // buffer propio: no comparte scratch_ con el arbol
+  RID posicion_;
   PageId actual_ = kInvalidPage;
   std::size_t i_ = 0;
   std::size_t leidas_ = 0;
@@ -482,7 +589,7 @@ std::unique_ptr<EntryCursor> BPlusTree::entries() {
 
 std::unique_ptr<EntryCursor> BPlusTree::entries_from(const Key& lo) {
   if (root_ == kInvalidPage) return std::make_unique<Cursor>(*this, kInvalidPage, 0);
-  const PageId hoja = descend(lo, nullptr);
+  const PageId hoja = descend(lo, nullptr, /*por_la_derecha=*/false);
   return std::make_unique<Cursor>(*this, hoja, lower_bound(lo));
 }
 
@@ -513,7 +620,7 @@ std::vector<std::pair<Key, std::vector<std::byte>>> BPlusTree::range(const Key& 
   if (root_ == kInvalidPage || compare(lo, hi) > 0) return out;
 
   // Se baja una sola vez y despues se sigue la cadena de hojas.
-  PageId p = descend(lo, nullptr);
+  PageId p = descend(lo, nullptr, /*por_la_derecha=*/false);
   std::size_t desde = lower_bound(lo);
   std::size_t leidas = 0;
   while (p != kInvalidPage) {
@@ -561,13 +668,18 @@ std::string BPlusTree::check_node(PageId id, std::size_t profundidad, const Key*
   // asignan sus separadores.
   for (std::size_t i = 0; i < n; ++i) {
     const Key k = key_at(i);
-    if (i > 0 && compare(key_at(i - 1), k) >= 0) {
+    // Con claves unicas las de un nodo crecen estrictamente; con repetidas
+    // pueden repetirse, tanto en una hoja como entre separadores cuando una
+    // corrida de iguales abarca mas de dos hojas.
+    if (i > 0 && compare(key_at(i - 1), k) > (unique_ ? -1 : 0)) {
       return "las claves del nodo " + std::to_string(id) + " no estan ordenadas";
     }
     if (lo != nullptr && compare(k, *lo) < 0) {
       return "el nodo " + std::to_string(id) + " tiene una clave menor que su separador izquierdo";
     }
-    if (hi != nullptr && compare(k, *hi) >= 0) {
+    // Con claves unicas el rango de un hijo es [lo, hi); con repetidas es
+    // [lo, hi], porque un split puede partir una corrida de iguales.
+    if (hi != nullptr && compare(k, *hi) > (unique_ ? -1 : 0)) {
       return "el nodo " + std::to_string(id) + " tiene una clave que le toca a su hermano derecho";
     }
   }
@@ -632,7 +744,7 @@ std::string BPlusTree::check_invariants() {
     const std::size_t n = key_count();
     for (std::size_t i = 0; i < n; ++i) {
       const Key k = key_at(i);
-      if (anterior && compare(*anterior, k) >= 0) {
+      if (anterior && compare(*anterior, k) > (unique_ ? -1 : 0)) {
         return "la cadena de hojas no sale ordenada";
       }
       anterior = k;
