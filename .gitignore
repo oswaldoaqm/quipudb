@@ -1,0 +1,48 @@
+# ---- C++ / CMake ----
+build/
+cmake-build-*/
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.pdb
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- Datos y artefactos del motor ----
+# Los datasets y los archivos de paginas generados por el motor NO van al repo.
+benchmarks/datasets/*
+!benchmarks/datasets/.gitkeep
+benchmarks/results/*.csv
+data/
+*.dat
+*.idx
+*.heap
+*.seq
+
+# ---- Frontend ----
+node_modules/
+dist/
+.next/
+
+# ---- Editores / SO ----
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
