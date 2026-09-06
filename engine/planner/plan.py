@@ -37,6 +37,7 @@ class Op(StrEnum):
     LIMIT = "limit"  # corta la salida
     INSERT = "insert"
     REMOVE = "remove"
+    UPDATE = "update"  # reescribe el registro en su sitio, sin cambiar el RID
 
 
 class Structure(StrEnum):
