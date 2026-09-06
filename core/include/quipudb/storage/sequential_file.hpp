@@ -92,9 +92,27 @@
 //   El unico momento en que el desperdicio baja solo es al partir un grupo:
 //   ahi los marcados se quedan fuera y el contador se ajusta.
 //
-// Lo que llega despues: reorganizacion al 30% (#12) y busqueda binaria y por
-// rango (#13). Aqui `search` y `range_search` son un recorrido lineal,
-// correcto pero sin aprovechar el orden todavia.
+// Reorganizacion (#12): cuando la razon de desperdicio pasa del umbral (30%
+// por defecto, configurable), `remove` dispara `reorganize()`, que reescribe
+// el archivo entero: junta los registros vivos en orden, los reparte en
+// paginas principales consecutivas sin huecos ni overflow, y devuelve al
+// sistema las paginas que sobran. Despues de reorganizar el desperdicio es
+// cero y el archivo vuelve a ser puramente secuencial.
+//
+//   Las paginas nuevas se llenan al kFillFactor (80%), no al 100%: empacar
+//   del todo dejaria que la siguiente insercion de cada rango se fuera
+//   derecho al overflow. El 20% de holgura se recupera igual en la proxima
+//   reorganizacion.
+//
+//   La reorganizacion materializa los registros vivos en memoria antes de
+//   reescribir. Es O(N) de memoria, aceptable para los 100 000 registros del
+//   2.1.6, y evita el riesgo de pisar paginas que todavia no se leyeron al
+//   reescribir sobre el mismo archivo. Una version que no cargue todo en
+//   memoria tendria que apoyarse en el external sorting del #20.
+//
+// Lo que llega despues: busqueda binaria y por rango (#13). Aqui `search` y
+// `range_search` son un recorrido lineal, correcto pero sin aprovechar el
+// orden todavia.
 
 #include <cstddef>
 #include <cstdint>
@@ -119,8 +137,14 @@ class SequentialFile final : public TableFile {
   /// Bytes del body reservados para la cabeza del overflow.
   static constexpr std::size_t kBodyHeader = 4;
 
+  /// Razon de desperdicio a partir de la cual se reorganiza sola.
+  static constexpr double kDefaultWasteThreshold = 0.30;
+  /// Que tan llenas quedan las paginas al reorganizar.
+  static constexpr double kFillFactor = 0.80;
+
   SequentialFile(std::filesystem::path path, Schema schema,
-                 std::size_t page_size = kDefaultPageSize);
+                 std::size_t page_size = kDefaultPageSize,
+                 double waste_threshold = kDefaultWasteThreshold);
 
   // --- TableFile ----------------------------------------------------------
 
@@ -166,6 +190,24 @@ class SequentialFile final : public TableFile {
   [[nodiscard]] std::uintmax_t file_size() const { return disk_.file_size(); }
 
   void flush();
+
+  // --- reorganizacion (#12) -----------------------------------------------
+
+  /// Reescribe el archivo sin huecos ni overflow. Devuelve cuanto tardo, en
+  /// milisegundos. Se puede llamar a mano; ademas se dispara sola cuando
+  /// `wasted_ratio()` supera el umbral.
+  double reorganize();
+
+  /// Umbral de desperdicio a partir del cual `remove` reorganiza.
+  [[nodiscard]] double waste_threshold() const noexcept { return waste_threshold_; }
+  void set_waste_threshold(double t) noexcept { waste_threshold_ = t; }
+
+  /// Cuantas veces se reorganizo este archivo en esta sesion.
+  [[nodiscard]] std::uint64_t reorganizations() const noexcept { return reorganizations_; }
+
+  /// Milisegundos que tardo la ultima reorganizacion. Es una de las metricas
+  /// que el 2.1.6 compara.
+  [[nodiscard]] double last_reorganize_ms() const noexcept { return last_reorganize_ms_; }
 
  private:
   static constexpr std::uint32_t kMetaVersion = 1;
@@ -236,6 +278,9 @@ class SequentialFile final : public TableFile {
   /// Paginas principales en orden de clave, y la primera clave de cada una.
   std::vector<PageId> main_pages_;
   std::vector<Key> first_keys_;
+  double waste_threshold_ = kDefaultWasteThreshold;
+  std::uint64_t reorganizations_ = 0;
+  double last_reorganize_ms_ = 0.0;
   OpStats stats_;
 };
 

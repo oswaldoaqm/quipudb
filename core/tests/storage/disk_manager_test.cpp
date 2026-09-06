@@ -184,5 +184,44 @@ TEST_F(DiskManagerTest, LosContadoresSoloCuentanPaginasDeDatos) {
   EXPECT_EQ(dm.reads() + dm.writes(), 0u);
 }
 
+
+TEST_F(DiskManagerTest, TruncateDevuelveElEspacioYConservaLoQueQueda) {
+  const Page original = random_page(512, 3);
+  {
+    DiskManager dm(path_, 512);
+    for (int i = 0; i < 10; ++i) dm.allocate_page();
+    dm.write_page(3, original);
+    EXPECT_EQ(dm.file_size(), 512u * 11);
+
+    dm.truncate(5);
+    EXPECT_EQ(dm.page_count(), 5u);
+    EXPECT_EQ(dm.file_size(), 512u * 6);
+    Page leida(512);
+    dm.read_page(3, leida);
+    EXPECT_EQ(leida, original) << "lo que sobrevive al truncado no se toca";
+    EXPECT_THROW(dm.read_page(6, leida), IoError);
+    EXPECT_THROW(dm.truncate(9), IoError) << "truncate solo encoge";
+    EXPECT_NO_THROW(dm.truncate(5)) << "truncar al mismo tamano no hace nada";
+  }
+  DiskManager dm(path_, 512);
+  EXPECT_EQ(dm.page_count(), 5u);
+  Page leida(512);
+  dm.read_page(3, leida);
+  EXPECT_EQ(leida, original);
+  const PageId nueva = dm.allocate_page();
+  EXPECT_EQ(nueva, 6u) << "despues de truncar se sigue creciendo desde ahi";
+}
+
+TEST_F(DiskManagerTest, TruncateACeroDejaSoloLaCabecera) {
+  DiskManager dm(path_, 512);
+  dm.allocate_page();
+  dm.allocate_page();
+  dm.truncate(0);
+  EXPECT_EQ(dm.page_count(), 0u);
+  EXPECT_EQ(dm.file_size(), 512u);
+  Page p(512);
+  EXPECT_THROW(dm.read_page(1, p), IoError);
+}
+
 }  // namespace
 }  // namespace quipudb

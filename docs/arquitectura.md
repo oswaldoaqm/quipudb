@@ -150,7 +150,7 @@ class Index {                                      // indice secundario
 | Estructura | Archivo | Estado |
 |---|---|---|
 | Heap File | `core/include/quipudb/storage/heap_file.hpp` | completo: insercion y escaneo (#8), free list y reutilizacion (#9) |
-| Archivo Secuencial Paginado | `core/include/quipudb/storage/sequential_file.hpp` | insercion ordenada con overflow (#10) y eliminacion lazy (#11); faltan #12 y #13 |
+| Archivo Secuencial Paginado | `core/include/quipudb/storage/sequential_file.hpp` | insercion ordenada con overflow (#10), eliminacion lazy (#11) y reorganizacion (#12); falta #13 |
 
 El heap file guarda slots de tamano fijo (`[1 byte de estado][registro]`) en el
 body de cada pagina, asi que el slot `i` esta siempre en `i * slot_size` y un
@@ -208,3 +208,26 @@ pareciera desperdiciar la mitad. Sobre esa razon dispara la reorganizacion del
 El desperdicio solo baja solo al partir un grupo, donde los marcados se quedan
 fuera de las paginas nuevas. Al abrir el archivo se recuentan vivos y marcados
 recorriendo las cadenas y se comparan con lo que declara el area meta.
+
+**Reorganizacion.** Cuando la razon de desperdicio supera el umbral (30% por
+defecto, configurable por archivo), `remove` dispara `reorganize()`: junta los
+registros vivos en orden, los reparte en paginas consecutivas desde la primera
+sin huecos ni overflow, y devuelve al sistema las paginas que sobran
+(`DiskManager::truncate`). Al terminar, el desperdicio es cero y el archivo
+vuelve a ser puramente secuencial.
+
+Las paginas quedan llenas al 80% y no al tope: empacar del todo mandaria la
+siguiente insercion de cada rango derecho al overflow. La reorganizacion
+materializa los registros vivos en memoria, lo que es aceptable para los
+100 000 del 2.1.6 y evita pisar paginas todavia no leidas al reescribir sobre
+el mismo archivo; una version que no cargue todo tendria que apoyarse en el
+external sorting del #20.
+
+Tiempo de reorganizacion, borrando el 30% de los registros (una de las
+metricas que pide comparar el 2.1.6):
+
+| registros vivos | tiempo | paginas antes | paginas despues |
+|---|---|---|---|
+| 700 | 0,2 ms | 8 | 7 |
+| 7 000 | 2,1 ms | 72 | 63 |
+| 70 000 | 20,8 ms | 715 | 625 |
