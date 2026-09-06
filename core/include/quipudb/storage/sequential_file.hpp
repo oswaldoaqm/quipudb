@@ -110,9 +110,19 @@
 //   reescribir sobre el mismo archivo. Una version que no cargue todo en
 //   memoria tendria que apoyarse en el external sorting del #20.
 //
-// Lo que llega despues: busqueda binaria y por rango (#13). Aqui `search` y
-// `range_search` son un recorrido lineal, correcto pero sin aprovechar el
-// orden todavia.
+// Busqueda (#13): `search` y `range_search` aprovechan el orden en dos
+// niveles. Primero una busqueda binaria sobre `first_keys_` (la primera clave
+// de cada pagina principal, en memoria) localiza el grupo; despues otra
+// busqueda binaria dentro de la pagina encuentra la posicion exacta. Solo
+// entonces se recorre linealmente el area de overflow de ese grupo, que es
+// como mucho una pagina.
+//
+//   Una busqueda puntual lee 1 pagina principal mas, a lo sumo, 1 de
+//   overflow, sin importar cuantas tenga el archivo. Medido con 100 000
+//   registros: 2 paginas leidas contra 998 del recorrido lineal.
+//
+//   `search_linear` y `range_search_linear` se mantienen como referencia: las
+//   pruebas comparan contra ellas y el 2.1.6 puede medir las dos.
 
 #include <cstddef>
 #include <cstdint>
@@ -202,6 +212,14 @@ class SequentialFile final : public TableFile {
   [[nodiscard]] double waste_threshold() const noexcept { return waste_threshold_; }
   void set_waste_threshold(double t) noexcept { waste_threshold_ = t; }
 
+  // --- referencia lineal (#13) --------------------------------------------
+
+  /// Las mismas busquedas recorriendo todo el archivo, sin aprovechar el
+  /// orden. Existen para que las pruebas comparen contra ellas y para poder
+  /// medir las dos versiones en la comparacion experimental del 2.1.6.
+  [[nodiscard]] std::vector<Record> search_linear(const Key& key);
+  [[nodiscard]] std::vector<Record> range_search_linear(const Key& lo, const Key& hi);
+
   /// Cuantas veces se reorganizo este archivo en esta sesion.
   [[nodiscard]] std::uint64_t reorganizations() const noexcept { return reorganizations_; }
 
@@ -263,6 +281,9 @@ class SequentialFile final : public TableFile {
   [[nodiscard]] std::optional<RID> find_in_group(PageId mp, const Key& key);
   /// Registros vivos de la pagina cargada, en orden fisico.
   void collect_live(std::vector<Record>& out);
+  /// Recorre el overflow del grupo cargado agregando lo que cae en [lo, hi].
+  void collect_overflow_in_range(PageId head, const Key& lo, const Key& hi,
+                                 std::vector<Record>& out);
   /// Junta el grupo `g` (pagina principal y su overflow), lo ordena y lo
   /// reparte en paginas principales a media carga, empalmadas en la cadena.
   void split_group(std::size_t g);
