@@ -133,8 +133,14 @@ class Index {                                      // indice secundario
 - La forma del plan de ejecucion: resuelta en
   [ADR 0002](adr/0002-plan-de-ejecucion.md) e implementada en
   `engine/planner/plan.py`. `OpStats` y `kind()` son sus insumos.
-- El formato en bytes de un registro: issue #7. El de una pagina ya esta en
-  `core/include/quipudb/storage/page.hpp` (#6): cabecera de 8 bytes (`next`,
-  `record_count`, `free_space`) y body libre para cada estructura; el archivo
-  lo administra `DiskManager`, con la pagina 0 como cabecera y area meta.
+- El formato de una pagina esta en `core/include/quipudb/storage/page.hpp`
+  (#6): cabecera de 8 bytes (`next`, `record_count`, `free_space`) y body
+  libre para cada estructura; el archivo lo administra `DiskManager`, con la
+  pagina 0 como cabecera y area meta.
+- El formato de un registro esta en `core/include/quipudb/catalog/record_codec.hpp`
+  (#7): columnas concatenadas en el orden del esquema, cada una con su tamano
+  fijo (INT 4, DOUBLE 8, VARCHAR n rellenado con `\0`, BOOL 1, DATE 4), sin
+  cabecera ni separadores. El catalogo (`catalog.hpp`) guarda los esquemas,
+  la organizacion de cada tabla y sus indices en un archivo de texto que se
+  reescribe atomicamente en cada cambio.
 - Como se crea o abre un `TableFile` desde un path: lo define el catalogo (#7).
