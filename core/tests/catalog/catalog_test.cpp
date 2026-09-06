@@ -101,7 +101,8 @@ TEST_F(CatalogTest, PersisteYSeRecargaIgual) {
   EXPECT_EQ(a.indexes[0].name, "por_promedio");
   EXPECT_EQ(a.indexes[0].column, 2u);
   EXPECT_EQ(a.indexes[0].kind, kind::kBPlusUnclustered);
-  EXPECT_EQ(a.indexes[0].file, "alumnos.promedio.bplus_unclustered");
+  EXPECT_EQ(a.indexes[0].file, "alumnos.por_promedio.bplus_unclustered")
+      << "el archivo se nombra por el indice, no por la columna";
   EXPECT_EQ(a.index_on(1)->name, "por_nombre");
   EXPECT_EQ(a.index_on(0), nullptr);
   EXPECT_EQ(a.index("por_nombre")->kind, kind::kExtendibleHash);
@@ -216,6 +217,42 @@ TEST_F(CatalogTest, ArchivoCorruptoLanzaAlAbrir) {
   EXPECT_THROW(Catalog{path_}, IoError);
   escribir("quipudb-catalog 1\ntable t heap t.heap 0 1\ncolumn a INT\n\n");  // valido
   EXPECT_NO_THROW(Catalog{path_});
+}
+
+
+// --- regresiones de la auditoria de 2.1.1 (#55) ---
+
+TEST_F(CatalogTest, DosIndicesSobreLaMismaColumnaNoCompartenArchivo) {
+  // I5: el archivo se nombraba por la columna, que no es unica dentro de la
+  // tabla, asi que dos indices se pisaban en disco.
+  Catalog c(path_);
+  c.create_table(alumnos(), kind::kHeap);
+  const auto a = c.create_index("alumnos", "por_promedio_bmas", "promedio", kind::kBPlusUnclustered);
+  const auto b = c.create_index("alumnos", "por_promedio_hash", "promedio", kind::kExtendibleHash);
+  EXPECT_NE(a.file, b.file);
+  EXPECT_EQ(a.file, "alumnos.por_promedio_bmas.bplus_unclustered");
+  EXPECT_EQ(b.file, "alumnos.por_promedio_hash.extendible_hash");
+}
+
+TEST_F(CatalogTest, SoloSePuedeIndexarUnHeapFile) {
+  // Un indice secundario guarda RIDs; en el secuencial y en el B+ agrupado
+  // los registros se mueven de sitio y el indice apuntaria al vecino sin
+  // lanzar nada, que es el peor modo de fallo para el 2.1.6.
+  Catalog c(path_);
+  c.create_table(alumnos(), kind::kHeap);
+  auto s = cursos();
+  s.table_name = "cursos_seq";
+  c.create_table(s, kind::kSequential);
+  auto b = cursos();
+  b.table_name = "cursos_bmas";
+  c.create_table(b, kind::kBPlusClustered);
+
+  EXPECT_NO_THROW(c.create_index("alumnos", "ix", "promedio", kind::kBPlusUnclustered));
+  EXPECT_THROW(c.create_index("cursos_seq", "ix", "creditos", kind::kBPlusUnclustered),
+               SchemaError);
+  EXPECT_THROW(c.create_index("cursos_bmas", "ix", "creditos", kind::kExtendibleHash),
+               SchemaError);
+  EXPECT_TRUE(c.table("cursos_seq").indexes.empty());
 }
 
 }  // namespace

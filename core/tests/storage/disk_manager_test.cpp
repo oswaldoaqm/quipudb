@@ -223,5 +223,24 @@ TEST_F(DiskManagerTest, TruncateACeroDejaSoloLaCabecera) {
   EXPECT_THROW(dm.read_page(1, p), IoError);
 }
 
+
+TEST_F(DiskManagerTest, DetectaUnTruncadoAunConElContadorAlMaximo) {
+  // I3: `page_count_ + 1u` se evaluaba en 32 bits, asi que con el contador al
+  // maximo daba 0 y la defensa contra archivos truncados no se aplicaba justo
+  // en el caso peor.
+  {
+    DiskManager dm(path_, 512);
+    dm.allocate_page();
+  }
+  {  // se miente en page_count (offset 12 de la cabecera del archivo)
+    std::fstream f(path_, std::ios::in | std::ios::out | std::ios::binary);
+    const std::uint32_t maximo = 0xFFFFFFFFu;
+    f.seekp(12);
+    f.write(reinterpret_cast<const char*>(&maximo), sizeof maximo);
+  }
+  EXPECT_THROW(DiskManager(path_, 512), IoError)
+      << "un archivo de 1 KB no puede tener 4 294 967 295 paginas";
+}
+
 }  // namespace
 }  // namespace quipudb
