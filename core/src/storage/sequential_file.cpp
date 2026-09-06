@@ -280,6 +280,24 @@ void SequentialFile::split_group(std::size_t g) {
     ovf = scratch_.next();
   }
 
+  // Si el grupo entero estaba marcado no hay nada que repartir, y una pagina
+  // principal sin registros no es representable (`build_directory` la
+  // rechaza al reabrir). Se saca el grupo de la cadena y del directorio.
+  if (registros.empty()) {
+    if (g == 0) {
+      main_head_ = siguiente_main;
+    } else {
+      fetch(main_pages_[g - 1]);
+      scratch_.set_next(siguiente_main);
+      store(main_pages_[g - 1]);
+    }
+    main_pages_.erase(main_pages_.begin() + static_cast<std::ptrdiff_t>(g));
+    first_keys_.erase(first_keys_.begin() + static_cast<std::ptrdiff_t>(g));
+    deleted_ -= descartados;
+    save_meta();
+    return;
+  }
+
   std::sort(registros.begin(), registros.end(),
             [](const auto& a, const auto& b) { return compare(a.first, b.first) < 0; });
 
@@ -290,7 +308,7 @@ void SequentialFile::split_group(std::size_t g) {
 
   std::vector<PageId> paginas = reutilizables;
   while (paginas.size() < destino) paginas.push_back(disk_.allocate_page());
-  paginas.resize(std::max<std::size_t>(destino, 1));
+  paginas.resize(destino);  // destino >= 1: arriba se descarto el grupo vacio
 
   // 3. Escribirlas encadenadas; la ultima retoma el resto de la cadena.
   std::size_t escritos = 0;
