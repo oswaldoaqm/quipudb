@@ -175,6 +175,7 @@ podia reabrir.
 | Heap File | `core/include/quipudb/storage/heap_file.hpp` | completo: insercion y escaneo (#8), free list y reutilizacion (#9) |
 | Archivo Secuencial Paginado | `core/include/quipudb/storage/sequential_file.hpp` | completo: #10, #11, #12 y #13 |
 | B+ Tree (maquinaria comun) | `core/include/quipudb/index/bplus_tree.hpp` | nodos, split e insercion (#14); los indices #15, #16 y #17 se construyen encima |
+| B+ agrupado | `core/include/quipudb/index/bplus_clustered_table.hpp` | tercera organizacion de tabla (#15); falta el rebalanceo al borrar (#17) |
 
 El heap file guarda slots de tamano fijo (`[1 byte de estado][registro]`) en el
 body de cada pagina, asi que el slot `i` esta siempre en `i * slot_size` y un
@@ -308,3 +309,37 @@ en un arbol de altura 2: dos paginas leidas por busqueda, igual que con 1 000.
 `check_invariants()` comprueba balanceo, orden, rangos de cada subarbol y que
 la cadena de hojas recorra exactamente las mismas claves; las pruebas la
 llaman despues de cada insercion en los arboles chicos.
+
+### B+ agrupado: el indice ES la tabla
+
+Agrupado quiere decir que los registros completos viven en las hojas del
+arbol, ordenados por clave primaria. No hay archivo de datos aparte, asi que
+`BPlusClusteredTable` implementa `TableFile` y es una **tercera organizacion
+de tabla**, no un indice que se cuelga de otra:
+
+| Organizacion | Como guarda |
+|---|---|
+| heap file | registros en orden de llegada |
+| secuencial paginado | registros ordenados, con area de overflow |
+| B+ agrupado | registros ordenados en las hojas de un arbol |
+
+El payload de cada entrada del arbol es el registro serializado con el mismo
+codec que las demas (#7). Como `BPlusTree` no sabe que guarda, el indice no
+agrupado (#16) podra usar el mismo arbol con RIDs como payload.
+
+Las tres organizaciones sobre los mismos datos, insertados en orden aleatorio
+(promedio de 200 busquedas; el rango trae 1 000 registros):
+
+**100 000 registros**
+
+| | insercion | busqueda | paginas | rango de 1 000 | scan | espacio |
+|---|---|---|---|---|---|---|
+| heap file | 0,0036 ms | 1,289 ms | 381 | 3,44 ms | 13,4 ms | 2 864 KB |
+| secuencial | 0,0062 ms | 0,0016 ms | 1,0 | 0,14 ms | 9,6 ms | 4 156 KB |
+| B+ agrupado | 0,0173 ms | 0,0038 ms | 3,0 | 0,18 ms | 12,5 ms | 4 656 KB |
+
+Lo que dice la tabla: el heap gana en insercion y pierde por dos ordenes de
+magnitud en busqueda; el secuencial y el B+ agrupado buscan practicamente
+igual de rapido, pero el B+ paga el triple en insercion a cambio de no tener
+overflow que revisar ni reorganizaciones que disparar. El espacio del B+
+incluye los nodos internos y las hojas a media carga tras los splits.
