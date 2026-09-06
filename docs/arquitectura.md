@@ -144,3 +144,15 @@ class Index {                                      // indice secundario
   la organizacion de cada tabla y sus indices en un archivo de texto que se
   reescribe atomicamente en cada cambio.
 - Como se crea o abre un `TableFile` desde un path: lo define el catalogo (#7).
+
+## Organizaciones implementadas
+
+| Estructura | Archivo | Estado |
+|---|---|---|
+| Heap File | `core/include/quipudb/storage/heap_file.hpp` | insercion y escaneo (#8); free list en #9 |
+
+El heap file guarda slots de tamano fijo (`[1 byte de estado][registro]`) en el
+body de cada pagina, asi que el slot `i` esta siempre en `i * slot_size` y un
+RID se resuelve sin recorrer nada. Medido sobre 1k / 10k / 100k registros: la
+insercion es constante por registro y la busqueda crece lineal, que es
+exactamente el perfil que el 2.1.6 compara contra el archivo secuencial.
