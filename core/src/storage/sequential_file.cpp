@@ -490,50 +490,75 @@ std::size_t SequentialFile::remove(const Key& key) {
 
 double SequentialFile::reorganize() {
   const auto t0 = std::chrono::steady_clock::now();
-
-  // 1. Juntar los registros vivos en orden. `scan` ya los devuelve ordenados
-  //    (ordena grupo por grupo), asi que no hay que volver a ordenar.
   const std::size_t key_col = codec_.schema().key_column;
-  std::vector<Record> vivos = scan();
 
-  // 2. Repartirlos en paginas consecutivas desde la 1, sin overflow.
+  // Se escribe en un archivo aparte y recien al final se reemplaza el
+  // original. Asi el recorrido puede ser incremental (un grupo a la vez, no
+  // la tabla entera en memoria) sin riesgo de pisar paginas que todavia no se
+  // leyeron, y si algo falla a mitad de camino el archivo viejo queda intacto.
+  const std::filesystem::path tmp = disk_.path().string() + ".reorg";
+  std::filesystem::remove(tmp);
+
   const std::size_t por_pagina = std::max<std::size_t>(
       1, static_cast<std::size_t>(static_cast<double>(slots_per_page_) * kFillFactor));
-  const std::size_t necesarias = (vivos.size() + por_pagina - 1) / por_pagina;
 
-  while (disk_.page_count() < necesarias) disk_.allocate_page();
-
-  std::size_t escritos = 0;
-  for (std::size_t i = 0; i < necesarias; ++i) {
-    const PageId destino = static_cast<PageId>(i + 1);
-    const std::size_t cuantos = std::min(por_pagina, vivos.size() - escritos);
-    scratch_.clear();
-    set_overflow_head(kInvalidPage);
-    scratch_.set_next(i + 1 < necesarias ? static_cast<PageId>(i + 2) : kInvalidPage);
-    scratch_.set_record_count(static_cast<std::uint16_t>(cuantos));
-    scratch_.set_free_space(static_cast<std::uint16_t>((slots_per_page_ - cuantos) * slot_size_));
+  std::vector<Key> claves;   // una por pagina nueva, no una por registro
+  PageId escritas = 0;
+  {
+    DiskManager salida(tmp, disk_.page_size());
+    Page buffer(disk_.page_size());
+    auto cur = cursor();
+    Record r;
+    std::size_t en_pagina = 0;
     std::vector<std::byte> slot(slot_size_);
-    for (std::size_t j = 0; j < cuantos; ++j) {
+
+    const auto cerrar_pagina = [&](PageId siguiente) {
+      buffer.set_next(siguiente);
+      buffer.set_record_count(static_cast<std::uint16_t>(en_pagina));
+      buffer.set_free_space(
+          static_cast<std::uint16_t>((slots_per_page_ - en_pagina) * slot_size_));
+      salida.write_page(escritas, buffer);
+      ++stats_.pages_written;
+    };
+
+    while (cur->next(r)) {
+      if (en_pagina == 0) {
+        salida.allocate_page();
+        ++escritas;
+        buffer.clear();
+        std::array<std::byte, sizeof(PageId)> vacio{};
+        const PageId ninguna = kInvalidPage;
+        std::memcpy(vacio.data(), &ninguna, sizeof ninguna);
+        buffer.write_bytes(0, vacio);   // sin overflow
+        claves.push_back(r[key_col]);
+      }
       slot[0] = kUsed;
-      codec_.encode(vivos[escritos + j], std::span<std::byte>(slot).subspan(1));
-      scratch_.write_bytes(slot_offset(j), slot);
+      codec_.encode(r, std::span<std::byte>(slot).subspan(1));
+      buffer.write_bytes(kBodyHeader + en_pagina * slot_size_, slot);
+      if (++en_pagina == por_pagina) {
+        cerrar_pagina(escritas + 1);
+        en_pagina = 0;
+      }
     }
-    store(destino);
-    escritos += cuantos;
+    if (en_pagina > 0) cerrar_pagina(kInvalidPage);
+    else if (escritas > 0) {
+      // La ultima pagina quedo cerrada apuntando a una que no existe.
+      salida.read_page(escritas, buffer);
+      buffer.set_next(kInvalidPage);
+      salida.write_page(escritas, buffer);
+    }
+    salida.flush();
   }
 
-  // 3. Devolver las paginas que sobran y rehacer el estado.
-  disk_.truncate(static_cast<PageId>(necesarias));
-  main_head_ = necesarias == 0 ? kInvalidPage : 1;
+  disk_.replace_with(tmp);
+  main_head_ = escritas == 0 ? kInvalidPage : 1;
   deleted_ = 0;
   save_meta();
 
   main_pages_.clear();
   first_keys_.clear();
-  for (std::size_t i = 0; i < necesarias; ++i) {
-    main_pages_.push_back(static_cast<PageId>(i + 1));
-    first_keys_.push_back(vivos[i * por_pagina][key_col]);
-  }
+  for (PageId i = 1; i <= escritas; ++i) main_pages_.push_back(i);
+  first_keys_ = std::move(claves);
 
   ++reorganizations_;
   last_reorganize_ms_ =
@@ -555,30 +580,83 @@ void SequentialFile::collect_live(std::vector<Record>& out) {
   }
 }
 
-std::vector<Record> SequentialFile::scan() {
+void SequentialFile::read_group(std::size_t g, std::vector<Record>& out) {
+  out.clear();
   const std::size_t key_col = codec_.schema().key_column;
+  fetch(main_pages_[g]);
+  const PageId ovf = overflow_head();
+  collect_live(out);
+  PageId p = ovf;
+  while (p != kInvalidPage) {
+    fetch(p);
+    collect_live(out);
+    p = scratch_.next();
+  }
+  if (ovf != kInvalidPage) {
+    // El overflow no esta ordenado, pero sus claves caen dentro del rango del
+    // grupo, asi que ordenarlo aqui alcanza para que el total salga ordenado.
+    std::sort(out.begin(), out.end(), [&](const Record& a, const Record& b) {
+      return compare(a[key_col], b[key_col]) < 0;
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Cursor
+// ---------------------------------------------------------------------------
+
+class SequentialFile::Cursor final : public RecordCursor {
+ public:
+  explicit Cursor(SequentialFile& duenio) : duenio_(duenio) {}
+
+  bool next(Record& out) override {
+    while (i_ >= grupo_.size()) {
+      if (g_ >= duenio_.main_pages_.size()) return false;
+      duenio_.read_group(g_++, grupo_);
+      i_ = 0;
+    }
+    out = grupo_[i_++];
+    return true;
+  }
+
+ private:
+  SequentialFile& duenio_;
+  std::vector<Record> grupo_;  // un grupo a la vez, no la tabla entera
+  std::size_t g_ = 0;
+  std::size_t i_ = 0;
+};
+
+std::unique_ptr<RecordCursor> SequentialFile::cursor() {
+  return std::make_unique<Cursor>(*this);
+}
+
+std::size_t SequentialFile::update(const Key& key, const Record& record) {
+  codec_.schema().validate(record);
+  if (compare(codec_.schema().key_of(record), key) != 0) {
+    throw SchemaError("update no puede cambiar la clave primaria de " +
+                      codec_.schema().table_name + ": eso es remove mas insert");
+  }
+  if (main_pages_.empty()) return 0;
+  const auto rid = find_in_group(main_pages_[group_of(key)], key);
+  if (!rid) return 0;
+
+  // La clave no cambia, asi que el registro se queda donde esta y el orden
+  // del area principal se mantiene.
+  fetch(rid->page);
+  std::vector<std::byte> bytes(slot_size_);
+  bytes[0] = kUsed;
+  codec_.encode(record, std::span<std::byte>(bytes).subspan(1));
+  scratch_.write_bytes(slot_offset(rid->slot), bytes);
+  store(rid->page);
+  return 1;
+}
+
+std::vector<Record> SequentialFile::scan() {
   std::vector<Record> out;
   out.reserve(live_);
-
-  for (const PageId mp : main_pages_) {
-    // Grupo = pagina principal + su cadena de overflow. Las claves del grupo
-    // caen todas entre la primera clave de esta pagina y la de la siguiente,
-    // asi que ordenar el grupo alcanza para que el total salga ordenado.
-    std::vector<Record> grupo;
-    fetch(mp);
-    const PageId ovf = overflow_head();
-    collect_live(grupo);
-    PageId p = ovf;
-    while (p != kInvalidPage) {
-      fetch(p);
-      collect_live(grupo);
-      p = scratch_.next();
-    }
-    if (ovf != kInvalidPage) {
-      std::sort(grupo.begin(), grupo.end(), [&](const Record& a, const Record& b) {
-        return compare(a[key_col], b[key_col]) < 0;
-      });
-    }
+  std::vector<Record> grupo;
+  for (std::size_t g = 0; g < main_pages_.size(); ++g) {
+    read_group(g, grupo);
     out.insert(out.end(), std::make_move_iterator(grupo.begin()),
                std::make_move_iterator(grupo.end()));
   }

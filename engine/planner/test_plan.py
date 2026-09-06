@@ -149,6 +149,12 @@ def test_las_estructuras_del_core_coinciden_con_kind() -> None:
     assert del_core <= {s.value for s in Structure}
 
 
+def test_las_operaciones_de_escritura_estan_completas() -> None:
+    # El core expone insert, remove y update (#56); el plan tiene que poder
+    # describir las tres.
+    assert {"insert", "remove", "update"} <= {o.value for o in Op}
+
+
 def test_op_desconocida_falla_al_deserializar() -> None:
     with pytest.raises(ValueError):
         Step.from_dict({"op": "magia", "structure": "heap"})

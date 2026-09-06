@@ -93,7 +93,9 @@ class TableFile {                                  // una tabla fisica
   std::size_t          remove(const Key&);         // 0 o 1
   std::vector<Record>  search(const Key&);         // vacio si no hay
   std::vector<Record>  range_search(const Key& lo, const Key& hi);  // [lo, hi]
-  std::vector<Record>  scan();
+  std::size_t          update(const Key&, const Record&);  // misma clave, mismo RID
+  std::vector<Record>  scan();                     // materializa: ver cursor()
+  std::unique_ptr<RecordCursor> cursor();          // recorrido incremental
   std::optional<Record> read(RID);                 // para resolver RIDs de un Index
   std::size_t          size() const;
   const OpStats&       stats() const;  void reset_stats();
@@ -128,6 +130,27 @@ class Index {                                      // indice secundario
 | Tiempo en las estadisticas | No; solo paginas y registros | El tiempo lo mide el planner, que sabe donde empieza y termina la consulta completa |
 | Nombres de estructura | Constantes en `kind::` | Planner, frontend y benchmarks usan exactamente las mismas cadenas |
 
+### Recorrido incremental, actualizacion y apertura (#56)
+
+`scan()` devuelve el vector completo y eso no escala: 100 000 registros ocupan
+4,3 MB en disco y 17,7 MB de memoria al materializarlos. `cursor()` recorre lo
+mismo con memoria acotada a una pagina (heap file) o a un grupo (secuencial):
+0 MB medibles de RSS adicional. Es lo que permite que el external sorting del
+#20 sea externo de verdad, y lo que usa `SequentialFile::reorganize`.
+
+`update(clave, registro)` reescribe el registro en su slot sin cambiar el RID,
+asi que los indices secundarios que lo apuntan siguen valiendo. La clave nueva
+tiene que ser la misma: cambiarla es `remove` mas `insert`, que mueve el
+registro de sitio.
+
+`Database` (`catalog/database.hpp`) junta el catalogo con los archivos
+abiertos: `db.table("alumnos")` devuelve el `TableFile` que corresponda a la
+organizacion registrada, y siempre el mismo objeto. Eso ultimo importa: dos
+handles sobre el mismo archivo tienen cada uno su estado en memoria, se pisan
+al escribir y dejan contadores que no cuadran. El catalogo guarda ademas el
+`page_size` de cada tabla, sin el cual una tabla creada con otro tamano no se
+podia reabrir.
+
 ### Lo que esto NO decide todavia
 
 - La forma del plan de ejecucion: resuelta en
@@ -143,7 +166,7 @@ class Index {                                      // indice secundario
   cabecera ni separadores. El catalogo (`catalog.hpp`) guarda los esquemas,
   la organizacion de cada tabla y sus indices en un archivo de texto que se
   reescribe atomicamente en cada cambio.
-- Como se crea o abre un `TableFile` desde un path: lo define el catalogo (#7).
+- Como se abre un `TableFile` desde el catalogo: `Database` (#56).
 
 ## Organizaciones implementadas
 

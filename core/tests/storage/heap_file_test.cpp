@@ -400,5 +400,61 @@ TEST_F(HeapFileTest, DetectaUnaFreeListInconsistente) {
   EXPECT_THROW(HeapFile(path_, alumnos(), 512), IoError);
 }
 
+
+// --- cursor y update (#56) ---
+
+TEST_F(HeapFileTest, UpdateReescribeElMismoSlot) {
+  HeapFile h(path_, alumnos(), 512);
+  const RID rid = h.insert(alumno(10));
+  h.insert(alumno(20));
+
+  Record nuevo = alumno(10);
+  nuevo[1] = std::string("cambiado");
+  nuevo[2] = 99.5;
+  EXPECT_EQ(h.update(Value{10}, nuevo), 1u);
+  EXPECT_EQ(h.size(), 2u);
+  const auto leido = h.read(rid);
+  ASSERT_TRUE(leido.has_value()) << "el RID se conserva: los indices que lo apuntan siguen bien";
+  EXPECT_EQ(*leido, nuevo);
+  EXPECT_EQ(h.search(Value{10})[0], nuevo);
+
+  EXPECT_EQ(h.update(Value{404}, alumno(404)), 0u);
+  EXPECT_THROW(h.update(Value{10}, alumno(11)), SchemaError);
+  EXPECT_EQ(h.page_count(), 1u) << "no crecio el archivo";
+}
+
+TEST_F(HeapFileTest, ElCursorDevuelveLoMismoQueScanYNoSeSaltaHuecos) {
+  HeapFile h(path_, alumnos(), 512);
+  for (std::int32_t i = 1; i <= 500; ++i) h.insert(alumno(i));
+  for (std::int32_t i = 1; i <= 500; i += 3) h.remove(Value{i});
+
+  std::vector<Record> del_cursor;
+  auto c = h.cursor();
+  Record r;
+  while (c->next(r)) del_cursor.push_back(r);
+  EXPECT_EQ(del_cursor, h.scan());
+  EXPECT_EQ(del_cursor.size(), h.size());
+  EXPECT_FALSE(c->next(r));
+}
+
+TEST_F(HeapFileTest, ElCursorLeeCadaPaginaUnaSolaVez) {
+  HeapFile h(path_, alumnos(), 512);
+  for (std::int32_t i = 1; i <= 300; ++i) h.insert(alumno(i));
+  h.reset_stats();
+  auto c = h.cursor();
+  Record r;
+  std::size_t n = 0;
+  while (c->next(r)) ++n;
+  EXPECT_EQ(n, 300u);
+  EXPECT_EQ(h.stats().pages_read, h.page_count())
+      << "una lectura por pagina, no una por registro";
+}
+
+TEST_F(HeapFileTest, ElCursorDeUnaTablaVaciaNoDevuelveNada) {
+  HeapFile h(path_, alumnos(), 512);
+  Record r;
+  EXPECT_FALSE(h.cursor()->next(r));
+}
+
 }  // namespace
 }  // namespace quipudb
