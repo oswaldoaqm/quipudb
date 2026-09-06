@@ -8,6 +8,7 @@
 // tabla. Las estructuras de disco (paginas, buckets, nodos) NO aparecen aqui:
 // son detalle de implementacion de cada modulo.
 
+#include <cmath>
 #include <compare>
 #include <cstddef>
 #include <cstdint>
@@ -103,6 +104,13 @@ using Record = std::vector<Value>;
 
 /// Orden total entre dos valores del mismo tipo: <0, 0 o >0.
 /// Comparar tipos distintos es un error de esquema, no un resultado.
+///
+/// NaN: un NaN no es menor, mayor ni igual a nada, asi que comparar con `<` a
+/// secas lo haria "igual" a todo y `KeyLess` dejaria de ser un orden estricto
+/// -- comportamiento indefinido para los std::map y std::sort del core. Aqui
+/// se le da un lugar en el orden: NaN va despues de todo y solo es igual a
+/// otro NaN. Ademas `Schema::validate` no deja que un NaN llegue a un
+/// registro, asi que esto es una segunda linea de defensa.
 [[nodiscard]] inline int compare(const Value& a, const Value& b) {
   if (a.index() != b.index()) {
     throw SchemaError("no se pueden comparar " + std::string(to_string(type_of(a))) +
@@ -111,6 +119,11 @@ using Record = std::vector<Value>;
   return std::visit(
       [&b](const auto& lhs) -> int {
         const auto& rhs = std::get<std::decay_t<decltype(lhs)>>(b);
+        if constexpr (std::is_same_v<std::decay_t<decltype(lhs)>, double>) {
+          const bool na = std::isnan(lhs);
+          const bool nb = std::isnan(rhs);
+          if (na || nb) return na && nb ? 0 : (na ? 1 : -1);
+        }
         if (lhs < rhs) return -1;
         if (rhs < lhs) return 1;
         return 0;
@@ -187,10 +200,25 @@ struct Schema {
                             std::string(to_string(columns[i].type)) + " y llego " +
                             std::string(to_string(type_of(r[i]))));
       }
-      if (columns[i].type == DataType::Varchar &&
-          std::get<std::string>(r[i]).size() > columns[i].length) {
-        throw InvalidRecord("columna " + columns[i].name + ": el texto supera VARCHAR(" +
-                            std::to_string(columns[i].length) + ")");
+      if (columns[i].type == DataType::Varchar) {
+        const auto& texto = std::get<std::string>(r[i]);
+        if (texto.size() > columns[i].length) {
+          throw InvalidRecord("columna " + columns[i].name + ": el texto supera VARCHAR(" +
+                              std::to_string(columns[i].length) + ")");
+        }
+        // Un byte nulo adentro rompe el formato: al serializar se guarda tal
+        // cual, pero al leer se corta ahi, asi que "ab\0cd" volveria como
+        // "ab". Eso pierde datos en silencio y puede hacer que dos claves
+        // distintas colapsen en una, dejando el archivo inabrible.
+        if (texto.find('\0') != std::string::npos) {
+          throw InvalidRecord("columna " + columns[i].name +
+                              ": el texto tiene un byte nulo adentro");
+        }
+      }
+      // Un NaN no tiene lugar en un orden: haria que compare lo considere
+      // igual a cualquier clave y que remove borre el registro equivocado.
+      if (columns[i].type == DataType::Double && std::isnan(std::get<double>(r[i]))) {
+        throw InvalidRecord("columna " + columns[i].name + ": NaN no es un valor valido");
       }
     }
   }
