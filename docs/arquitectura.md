@@ -130,7 +130,8 @@ class Index {                                      // indice secundario
 
 ### Lo que esto NO decide todavia
 
-- La forma del plan de ejecucion: issue #4 (`docs/adr/0002-plan-de-ejecucion.md`).
-  `OpStats` y `kind()` son sus insumos; el plan los agrega por operacion.
+- La forma del plan de ejecucion: resuelta en
+  [ADR 0002](adr/0002-plan-de-ejecucion.md) e implementada en
+  `engine/planner/plan.py`. `OpStats` y `kind()` son sus insumos.
 - El formato en bytes de un registro y de una pagina: issues #6 y #7.
 - Como se crea o abre un `TableFile` desde un path: lo define el catalogo (#7).
