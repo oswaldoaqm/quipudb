@@ -150,7 +150,7 @@ class Index {                                      // indice secundario
 | Estructura | Archivo | Estado |
 |---|---|---|
 | Heap File | `core/include/quipudb/storage/heap_file.hpp` | completo: insercion y escaneo (#8), free list y reutilizacion (#9) |
-| Archivo Secuencial Paginado | `core/include/quipudb/storage/sequential_file.hpp` | insercion ordenada con overflow (#10); faltan #11, #12 y #13 |
+| Archivo Secuencial Paginado | `core/include/quipudb/storage/sequential_file.hpp` | insercion ordenada con overflow (#10) y eliminacion lazy (#11); faltan #12 y #13 |
 
 El heap file guarda slots de tamano fijo (`[1 byte de estado][registro]`) en el
 body de cada pagina, asi que el slot `i` esta siempre en `i * slot_size` y un
@@ -195,3 +195,16 @@ principales contra 714 de overflow y 93 s de carga, frente a 998 contra 40 y
 |---|---|---|---|
 | en orden ascendente | 0,0029 ms/registro | 715 | 0 |
 | en orden aleatorio | 0,0051 ms/registro | 998 | 40 |
+
+**Eliminacion lazy.** `remove` marca el slot como borrado y no mueve nada: el
+archivo no cambia de tamano y los registros que le siguen conservan su
+posicion. El espacio desperdiciado es el que ocupan esos marcados, y
+`wasted_ratio()` es marcados / (vivos + marcados). Los slots libres al final
+de una pagina no cuentan: son sitio util para las proximas inserciones, y
+contarlos haria que un archivo recien partido (paginas a media carga)
+pareciera desperdiciar la mitad. Sobre esa razon dispara la reorganizacion del
+#12.
+
+El desperdicio solo baja solo al partir un grupo, donde los marcados se quedan
+fuera de las paginas nuevas. Al abrir el archivo se recuentan vivos y marcados
+recorriendo las cadenas y se comparan con lo que declara el area meta.
