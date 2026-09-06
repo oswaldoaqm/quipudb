@@ -3,11 +3,14 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
+#include <cstring>
 #include <filesystem>
 #include <set>
 #include <string>
 
 #include "quipudb/error.hpp"
+#include "quipudb/storage/disk_manager.hpp"
 #include "quipudb/storage/heap_file.hpp"
 
 namespace quipudb {
@@ -251,6 +254,150 @@ TEST_F(HeapFileTest, ClaveDeTextoTambienFunciona) {
   // que el rango ["A", "C"] deja fuera a CS2032 y solo trae BD2.
   EXPECT_EQ(h.range_search(Value{std::string{"A"}}, Value{std::string{"C"}}).size(), 1u);
   EXPECT_EQ(h.range_search(Value{std::string{"A"}}, Value{std::string{"D"}}).size(), 2u);
+}
+
+
+// ---------------------------------------------------------------------------
+// Free list y reutilizacion de espacio (issue #9)
+// ---------------------------------------------------------------------------
+
+TEST_F(HeapFileTest, MilInsertaTrescientosBorraTrescientosInsertaYNoCrece) {
+  // La prueba que pide el issue: el archivo no debe crecer al reponer.
+  HeapFile h(path_, alumnos(), 512);
+  for (std::int32_t i = 1; i <= 1000; ++i) h.insert(alumno(i));
+  const auto paginas_llenas = h.page_count();
+  const auto bytes_llenos = h.file_size();
+  EXPECT_EQ(h.free_pages(), 1u) << "solo la ultima pagina queda a medias";
+
+  for (std::int32_t i = 1; i <= 300; ++i) h.remove(Value{i});
+  EXPECT_EQ(h.size(), 700u);
+  EXPECT_GT(h.free_pages(), 1u) << "las paginas liberadas entraron a la free list";
+
+  for (std::int32_t i = 1001; i <= 1300; ++i) h.insert(alumno(i));
+  EXPECT_EQ(h.size(), 1000u);
+  EXPECT_EQ(h.page_count(), paginas_llenas) << "reutilizo los huecos en vez de crecer";
+  EXPECT_EQ(h.file_size(), bytes_llenos);
+
+  // Y el contenido es el correcto: se fueron los 300 viejos, estan los 300 nuevos.
+  const auto todos = h.scan();
+  ASSERT_EQ(todos.size(), 1000u);
+  std::set<std::int32_t> vistos;
+  for (const auto& r : todos) vistos.insert(codigo_de(r));
+  EXPECT_EQ(vistos.count(1), 0u);
+  EXPECT_EQ(vistos.count(300), 0u);
+  EXPECT_EQ(vistos.count(301), 1u);
+  EXPECT_EQ(vistos.count(1300), 1u);
+}
+
+TEST_F(HeapFileTest, ReutilizaElHuecoAntesDeCrecerElArchivo) {
+  HeapFile h(path_, alumnos(), 512);
+  const auto por_pagina = h.slots_per_page();
+  for (std::size_t i = 0; i < por_pagina; ++i) {
+    h.insert(alumno(static_cast<std::int32_t>(i)));
+  }
+  ASSERT_EQ(h.page_count(), 1u);
+  EXPECT_EQ(h.free_pages(), 0u) << "la unica pagina esta llena: la lista queda vacia";
+
+  // Se libera un slot del medio, no el ultimo.
+  const std::int32_t victima = static_cast<std::int32_t>(por_pagina / 2);
+  const RID hueco{1, static_cast<SlotId>(victima)};
+  ASSERT_EQ(codigo_de(*h.read(hueco)), victima);
+  ASSERT_EQ(h.remove(Value{victima}), 1u);
+  EXPECT_EQ(h.free_pages(), 1u) << "la pagina llena volvio a la lista";
+
+  const RID reusado = h.insert(alumno(777));
+  EXPECT_EQ(reusado, hueco) << "el registro nuevo ocupo exactamente el hueco liberado";
+  EXPECT_EQ(h.page_count(), 1u) << "no se agrego una pagina";
+  EXPECT_EQ(h.free_pages(), 0u);
+}
+
+TEST_F(HeapFileTest, LosRidsDeLosDemasNoSeMuevenAlBorrar) {
+  // FREE_LIST y no MOVE_THE_LAST: nadie cambia de sitio, porque los indices
+  // no agrupados (#16) van a guardar estos RIDs.
+  HeapFile h(path_, alumnos(), 512);
+  std::vector<RID> antes;
+  for (std::int32_t i = 1; i <= 50; ++i) antes.push_back(h.insert(alumno(i)));
+
+  h.remove(Value{1});
+  h.remove(Value{25});
+  for (std::int32_t i = 2; i <= 50; ++i) {
+    if (i == 25) continue;
+    const auto r = h.read(antes[static_cast<std::size_t>(i - 1)]);
+    ASSERT_TRUE(r.has_value()) << i;
+    EXPECT_EQ(codigo_de(*r), i) << "el registro " << i << " se movio de sitio";
+  }
+}
+
+TEST_F(HeapFileTest, LaFreeListPersisteYNoSeReconstruye) {
+  std::uint32_t libres_antes = 0;
+  {
+    HeapFile h(path_, alumnos(), 512);
+    for (std::int32_t i = 1; i <= 500; ++i) h.insert(alumno(i));
+    for (std::int32_t i = 1; i <= 200; ++i) h.remove(Value{i});
+    libres_antes = h.free_pages();
+    EXPECT_GT(libres_antes, 1u);
+    h.flush();
+  }
+  HeapFile h(path_, alumnos(), 512);
+  EXPECT_EQ(h.free_pages(), libres_antes) << "la lista se leyo del disco tal cual";
+  EXPECT_EQ(h.size(), 300u);
+
+  // Y sigue sirviendo: repone sin crecer.
+  const auto paginas = h.page_count();
+  for (std::int32_t i = 501; i <= 700; ++i) h.insert(alumno(i));
+  EXPECT_EQ(h.page_count(), paginas);
+  EXPECT_EQ(h.size(), 500u);
+}
+
+TEST_F(HeapFileTest, BorrarTodoDejaElArchivoReutilizableEntero) {
+  HeapFile h(path_, alumnos(), 512);
+  for (std::int32_t i = 1; i <= 200; ++i) h.insert(alumno(i));
+  const auto paginas = h.page_count();
+  for (std::int32_t i = 1; i <= 200; ++i) h.remove(Value{i});
+  EXPECT_EQ(h.size(), 0u);
+  EXPECT_TRUE(h.scan().empty());
+  EXPECT_EQ(h.free_pages(), paginas) << "todas las paginas tienen huecos";
+
+  for (std::int32_t i = 1; i <= 200; ++i) h.insert(alumno(i));
+  EXPECT_EQ(h.size(), 200u);
+  EXPECT_EQ(h.page_count(), paginas) << "no crecio: reutilizo todo";
+}
+
+TEST_F(HeapFileTest, RechazaUnArchivoDeLaVersionAnterior) {
+  {
+    HeapFile h(path_, alumnos(), 512);
+    h.insert(alumno(1));
+  }
+  {  // Se pisa el numero de version del area meta con el formato viejo (#8).
+    DiskManager dm(path_, 512);
+    std::array<std::byte, 4> v1{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
+    dm.write_meta(v1);
+    dm.flush();
+  }
+  EXPECT_THROW(HeapFile(path_, alumnos(), 512), IoError);
+}
+
+TEST_F(HeapFileTest, DetectaUnaFreeListInconsistente) {
+  {
+    HeapFile h(path_, alumnos(), 512);
+    for (std::int32_t i = 1; i <= 100; ++i) h.insert(alumno(i));
+    h.remove(Value{1});
+    h.flush();
+  }
+  // Se miente en el area meta: la cabeza apunta a una pagina que no existe.
+  {
+    DiskManager dm(path_, 512);
+    // Meta = version(4) + record_size(4) + live(8) + free_head(4): la cabeza
+    // de la lista empieza en el byte 16.
+    constexpr std::size_t kOffsetFreeHead = 16;
+    std::array<std::byte, kOffsetFreeHead + sizeof(std::uint32_t)> meta{};
+    dm.read_meta(meta);
+    const std::uint32_t pagina_inexistente = 9999;
+    std::memcpy(meta.data() + kOffsetFreeHead, &pagina_inexistente, sizeof pagina_inexistente);
+    dm.write_meta(meta);
+    dm.flush();
+  }
+  EXPECT_THROW(HeapFile(path_, alumnos(), 512), IoError);
 }
 
 }  // namespace
