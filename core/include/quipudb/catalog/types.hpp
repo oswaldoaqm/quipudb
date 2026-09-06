@@ -26,13 +26,14 @@ namespace quipudb {
 // Direccionamiento en disco
 // ---------------------------------------------------------------------------
 
-/// Tamano fijo de una pagina de disco. Todas las estructuras del core leen y
-/// escriben en multiplos de este valor; es la unidad que cuentan las
-/// estadisticas de acceso.
-inline constexpr std::size_t kPageSize = 4096;
+/// Tamano de pagina por defecto. El tamano real lo fija cada archivo al
+/// crearse (`DiskManager`) y queda grabado en su cabecera, asi que se puede
+/// cambiar para un benchmark sin tocar el resto del codigo. La pagina es la
+/// unidad que cuentan las estadisticas de acceso.
+inline constexpr std::size_t kDefaultPageSize = 4096;
 
 /// Numero de pagina dentro de un archivo. Es un indice, no un offset: el
-/// offset en bytes es `page * kPageSize`.
+/// offset en bytes es `page * page_size`.
 using PageId = std::uint32_t;
 
 /// Posicion de un registro dentro de su pagina.
