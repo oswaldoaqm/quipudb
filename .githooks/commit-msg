@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Bloquea el commit localmente si el mensaje no sigue el estandar.
+# Activar una sola vez con:  git config core.hooksPath .githooks
+set -uo pipefail
+
+msg="$(head -n1 "$1")"
+TIPOS='feat|fix|docs|refactor|test|chore'
+ALCANCES=" storage index external catalog parser txn planner api frontend bench docs build ci "
+
+case "$msg" in
+  "Merge "*|"Revert "*) exit 0 ;;
+esac
+
+if ! printf '%s' "$msg" | grep -Eq "^(${TIPOS})(\([a-z0-9-]+\))?: [a-z].*[^.]$"; then
+  echo "Mensaje rechazado: $msg"
+  echo "Formato esperado: tipo(alcance): descripcion"
+  echo "  tipos:    feat fix docs refactor test chore"
+  echo "  reglas:   minusculas, imperativo, sin punto final"
+  echo "  ejemplo:  feat(storage): implementar heap file con free list"
+  exit 1
+fi
+
+if [ "${#msg}" -gt 72 ]; then
+  echo "Mensaje rechazado: ${#msg} caracteres, el maximo es 72."
+  exit 1
+fi
+
+if printf '%s' "$msg" | grep -Eq '^[a-z]+\('; then
+  alcance="$(printf '%s' "$msg" | sed -E 's/^[a-z]+\(([a-z0-9-]+)\).*/\1/')"
+  case "$ALCANCES" in
+    *" $alcance "*) ;;
+    *) echo "Alcance no valido: '$alcance'. Usa uno de:${ALCANCES}"; exit 1 ;;
+  esac
+fi

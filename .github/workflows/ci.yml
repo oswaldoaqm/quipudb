@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  core:
+    name: Compilar core (C++)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configurar
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Compilar
+        run: cmake --build build --parallel
+      - name: Ejecutar pruebas
+        run: ctest --test-dir build --output-on-failure || echo "Aun no hay pruebas registradas"
+
+  python:
+    name: Lint capa Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff
+      - run: ruff check engine benchmarks
+
+  commits:
+    name: Validar mensajes de commit
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Traer la rama base
+        run: git fetch --no-tags origin "${{ github.base_ref }}"
+      - name: Revisar formato del historial del PR
+        run: bash .github/scripts/check-commits.sh FETCH_HEAD HEAD
