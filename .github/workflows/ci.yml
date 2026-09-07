@@ -17,7 +17,9 @@ jobs:
       - name: Compilar
         run: cmake --build build --parallel
       - name: Ejecutar pruebas
-        run: ctest --test-dir build --output-on-failure || echo "Aun no hay pruebas registradas"
+        # Sin el --no-tests=error, un ctest que no encuentra ninguna prueba
+        # registrada sale con 0 y el job pasa en verde sin haber probado nada.
+        run: ctest --test-dir build --output-on-failure --no-tests=error
 
   python:
     name: Lint capa Python
