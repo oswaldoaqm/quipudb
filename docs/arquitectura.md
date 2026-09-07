@@ -174,8 +174,8 @@ podia reabrir.
 |---|---|---|
 | Heap File | `core/include/quipudb/storage/heap_file.hpp` | completo: insercion y escaneo (#8), free list y reutilizacion (#9) |
 | Archivo Secuencial Paginado | `core/include/quipudb/storage/sequential_file.hpp` | completo: #10, #11, #12 y #13 |
-| B+ Tree (maquinaria comun) | `core/include/quipudb/index/bplus_tree.hpp` | nodos, split e insercion (#14); los indices #15, #16 y #17 se construyen encima |
-| B+ agrupado | `core/include/quipudb/index/bplus_clustered_table.hpp` | tercera organizacion de tabla (#15); falta el rebalanceo al borrar (#17) |
+| B+ Tree (maquinaria comun) | `core/include/quipudb/index/bplus_tree.hpp` | completo: nodos, split e insercion (#14), claves repetidas (#16), borrado con redistribucion y fusion (#17) |
+| B+ agrupado | `core/include/quipudb/index/bplus_clustered_table.hpp` | tercera organizacion de tabla (#15) |
 | B+ no agrupado | `core/include/quipudb/index/bplus_unclustered_index.hpp` | indice secundario sobre un heap file (#16) |
 
 El heap file guarda slots de tamano fijo (`[1 byte de estado][registro]`) en el
@@ -376,3 +376,53 @@ El costo de resolver los punteros es la desventaja del indice no agrupado
 frente al agrupado, y es lo que compara el 2.1.6: encontrar los RID cuesta la
 altura del arbol mas la cadena de hojas, pero traer los registros cuesta una
 lectura de pagina por registro, porque estan repartidos por todo el heap.
+
+### Borrado: redistribucion, fusion y free list
+
+Borrar es el espejo de insertar. Si al quitar una entrada el nodo baja del
+minimo, primero se intenta **prestar** una clave de un hermano al que le
+sobre; si a ninguno le sobra, los dos hermanos se **fusionan** y el separador
+que los dividia desaparece del padre, que puede quedar en falta a su vez, y
+asi hacia arriba. Cuando la raiz se queda sin claves, su unico hijo pasa a ser
+la raiz: es la unica forma en que un B+ **baja de altura**.
+
+Los minimos no son un numero elegido a mano, salen de lo que deja un split
+para que un nodo recien partido no nazca ya en falta:
+
+| | minimo | fusion de dos nodos en falta |
+|---|---|---|
+| hoja | `ceil(orden/2)` | `2*min - 1 <= orden` |
+| interno | `floor(orden/2)` | `2*min <= orden` |
+
+Las dos desigualdades son lo que garantiza que una fusion siempre entre en una
+pagina, y `merge_children` las comprueba en tiempo de ejecucion en vez de
+confiar en el papel.
+
+La rotacion en un nodo interno vuelve a separar los dos casos del split: el
+separador del padre **baja** al nodo que estaba en falta y la clave del
+hermano **sube** a ocupar su lugar. En una hoja no hay tal cosa: el separador
+nuevo es una **copia** de la primera clave de la derecha.
+
+La fusion siempre tira hacia la izquierda, asi la pagina que desaparece nunca
+es la primera hoja del archivo y `first_leaf` no cambia nunca.
+
+**Free list.** Las paginas que quedan libres al fusionar se encadenan por el
+campo `next`, con la cabeza en el area meta, igual que el heap file (#9). Sin
+eso, un ciclo de borrar e insertar haria crecer el archivo indefinidamente:
+la prueba `ElArchivoNoCreceAlBorrarYVolverAInsertar` vacia y rellena un arbol
+de 3 000 claves tres veces y exige que el numero de paginas no suba.
+
+`check_invariants()` gano dos comprobaciones con este issue: la **ocupacion
+minima** de todo nodo que no sea la raiz, y que cada pagina del archivo este
+**o en el arbol o en la free list, nunca en las dos ni en ninguna**. La
+segunda es la que atrapa una pagina liberada dos veces o una que se entrega
+otra vez estando todavia colgada del arbol.
+
+**Claves repetidas.** Con repetidas, una corrida de iguales puede abarcar
+varias hojas y el descenso puede aterrizar en una hoja que no la contiene (el
+separador es igual a la clave y las copias estan del otro lado). Por eso el
+borrado es recursivo y no un recorrido de la cadena: baja por el primer hijo
+cuyo rango puede contenerla y sigue al hermano de la derecha solo si el
+separador que los divide es exactamente la clave buscada. Volver por la
+recursion es ademas lo que deja al padre a mano, que es quien tiene a los
+hermanos para rebalancear.
