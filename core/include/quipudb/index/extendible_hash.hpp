@@ -116,17 +116,54 @@
 //   mezclar (y hace lo mismo con NaN, que `Schema::validate` ya no deja
 //   entrar en un registro pero que puede llegar como clave suelta).
 //
-// Lo que NO hace este issue
-// -------------------------
+// Borrado y merge (#19)
+// ---------------------
 //
-//   Buscar, borrar y fusionar buckets hermanos son del #19, junto con el
-//   adaptador `Index`. Aqui se construye la estructura y se comprueba que
-//   ninguna clave se pierde al crecer, que es lo que `check_invariants()`
-//   verifica y lo que las pruebas comparan contra un `unordered_multimap`.
+//   Borrar quita la entrada y tapa su hueco con la ultima de esa misma pagina:
+//   dentro de un bucket no hay orden que conservar, asi que compactar cuesta
+//   una copia y no un corrimiento.
+//
+//   Despues se intenta fusionar el bucket con su hermano -- el que difiere
+//   solo en el bit mas alto de la profundidad local -- y, si se fusiona, se
+//   reduce el directorio mientras ningun bucket quede en la profundidad
+//   global. Es el espejo del split.
+//
+//   Fusionan si estan en la MISMA profundidad local, ninguno tiene overflow, y
+//   sus entradas CABEN JUNTAS en una pagina. Esa ultima condicion se midio en
+//   vez de razonarla, y la medicion desmintio dos intentos previos:
+//
+//     condicion            merges en el regimen de altas y bajas frecuentes
+//                          capacidad 4     capacidad 408 (paginas de 4 KB)
+//     uno queda vacio           182              0
+//     suma <= capacidad/2       162              0
+//     suma <= capacidad        1177            104
+//
+//   Las dos primeras no fusionan NUNCA con capacidades reales: en un regimen
+//   equilibrado de altas y bajas los buckets no llegan a vaciarse ni a bajar
+//   de la mitad a la vez que su hermano. Implementarlas es tener merge en el
+//   codigo y no tenerlo en la practica.
+//
+//   El miedo a que "caben juntos" oscile -- partir y fusionar el mismo bucket
+//   en bucle -- resulto infundado: cero oscilaciones en los 35 escenarios
+//   medidos. La razon es que un split de hash no reparte por la mitad como el
+//   B+, sino por un bit del hash, y para volver a partir hay que llenar un
+//   bucket ENTERO, no llegar a su mitad. La histeresis ya esta en la
+//   estructura y no hay que agregarla, asi que aqui no hay ningun umbral
+//   elegido a mano.
+//
+//   El overflow se excluye solo: una cadena de overflow tiene mas entradas que
+//   la capacidad, asi que jamas cumple "caben juntas en una pagina". Un bucket
+//   con claves repetidas no se fusiona hasta que se borran esas claves.
+//
+//   Reducir el directorio es raro -- entre 0 y 4 veces en corridas de 20 000
+//   operaciones -- asi que se comprueba recorriendolo despues de un merge, sin
+//   llevar contadores. Por eso el formato en disco NO cambio con este issue y
+//   los archivos creados por el #18 se siguen abriendo.
 
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
@@ -236,6 +273,23 @@ class ExtendibleHash {
   /// payload no mide exactamente `payload_size()`.
   void insert(const Key& key, std::span<const std::byte> payload);
 
+  /// Payloads de todas las entradas con esa clave, en el orden en que estan
+  /// en la cadena. Vacio si no hay ninguna.
+  ///
+  /// Es la operacion que justifica la estructura: un acceso al directorio
+  /// (que vive en memoria) mas uno al bucket, sin importar cuantas claves
+  /// haya guardadas. Solo se paga mas si la clave cayo en una cadena de
+  /// overflow, y eso solo pasa con claves repetidas.
+  [[nodiscard]] std::vector<std::vector<std::byte>> find(const Key& key);
+
+  /// Quita todas las entradas con esa clave. Devuelve cuantas quito.
+  std::size_t erase_all(const Key& key);
+
+  /// Quita una sola entrada, la que tiene esa clave Y ese payload. Devuelve
+  /// si existia. Es lo que necesita un indice secundario para borrar un
+  /// puntero concreto sin tocar los demas registros que comparten la clave.
+  bool erase_one(const Key& key, std::span<const std::byte> payload);
+
   /// Todas las entradas, en orden de bucket. Materializa todo: para recorridos
   /// grandes, `entries()`.
   [[nodiscard]] std::vector<std::pair<Key, std::vector<std::byte>>> scan();
@@ -336,6 +390,30 @@ class ExtendibleHash {
   void crecer(std::size_t index, PageId bucket);
 
   void duplicar_directorio();
+
+  /// Quita de la cadena las entradas que cumplan `coincide`. Devuelve cuantas
+  /// quito. Si `una_sola`, para en la primera.
+  ///
+  /// Al quitar una entrada se tapa su hueco con la ultima de esa misma
+  /// pagina: dentro de un bucket no hay orden que conservar, asi que compactar
+  /// cuesta una copia y no un corrimiento.
+  std::size_t quitar_de(PageId bucket, const std::function<bool(std::span<const std::byte>)>& coincide,
+                        bool una_sola);
+
+  /// Intenta fusionar el bucket de `index` con su hermano. Si lo consigue,
+  /// reduce el directorio mientras pueda. Se llama despues de cada borrado.
+  void encoger(std::size_t index);
+
+  /// Indice de la entrada de directorio del bucket hermano: el que difiere
+  /// solo en el bit mas alto de la profundidad local.
+  [[nodiscard]] std::size_t hermano_de(std::size_t index, std::size_t local) const noexcept;
+
+  /// Quita la ultima pagina del directorio mientras ningun bucket este en la
+  /// profundidad global. Devuelve cuantas veces redujo.
+  std::size_t reducir_directorio();
+
+  /// Paginas de la cadena, contando la primaria.
+  [[nodiscard]] std::size_t paginas_de(PageId bucket);
 
   /// Clave de una entrada serializada.
   [[nodiscard]] Key clave_de(std::span<const std::byte> entrada) const;
