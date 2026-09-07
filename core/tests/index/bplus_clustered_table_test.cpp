@@ -138,7 +138,7 @@ TEST_F(BPlusClusteredTest, SigueCoincidiendoDespuesDeBorrarYActualizar) {
   }
   EXPECT_EQ(arbol.size(), secuencial.size());
   EXPECT_EQ(arbol.scan(), secuencial.scan());
-  EXPECT_EQ(arbol.check_invariants(), "") << "borrar no rebalancea, pero deja el arbol correcto";
+  EXPECT_EQ(arbol.check_invariants(), "") << "borrar rebalancea y deja el arbol correcto (#17)";
 }
 
 TEST_F(BPlusClusteredTest, LaBusquedaBajaUnaVezPorNivel) {
