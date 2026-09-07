@@ -28,9 +28,10 @@
 // de sitio. El contrato (#3) ya lo dice, y `Catalog::create_index` rechaza
 // crear un indice secundario sobre una tabla asi.
 //
-// Falta el rebalanceo al borrar (#17): `remove` quita la entrada de la hoja
-// sin fusionar ni redistribuir, asi que el arbol queda correcto pero con
-// hojas por debajo de la mitad.
+// `remove` rebalancea desde el #17: si la hoja baja del minimo se le presta
+// una entrada de un hermano o se fusiona con el, y el arbol puede bajar de
+// altura. Los RID que devolvio `insert` dejan de valer despues de eso, que es
+// otra razon por la que esta organizacion no admite indices secundarios.
 
 #include <cstddef>
 #include <filesystem>
