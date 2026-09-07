@@ -533,3 +533,106 @@ cabeza del directorio y la de la free list. Reabrir con otra version es un
 **Lo que este issue no hace.** Buscar, borrar y fusionar buckets hermanos son
 del #19, junto con el adaptador `Index` y la documentacion de por que esta
 estructura no sirve para busquedas por rango -- material directo del 2.1.6.
+
+### Extendible Hashing: busqueda, borrado y merge (#19)
+
+`ExtendibleHashIndex` implementa `Index` sobre la maquinaria del #18 y es lo que
+cierra la vineta "Indice Hash Dinamico" del enunciado. Misma relacion que hay
+entre `BPlusTree` (#14) y `BPlusUnclusteredIndex` (#16), y las mismas dos
+restricciones: solo se monta sobre un heap file, porque un RID guardado tiene
+que seguir valiendo manana, y admite claves repetidas.
+
+**Buscar** cuesta un acceso al directorio -- que vive en memoria -- mas uno al
+bucket, sin importar cuantas claves haya guardadas. Lo comprueba
+`LaBusquedaLeeUnaSolaPaginaCuandoNoHayOverflow`, que exige `pages_read == 1`
+exactamente. Es la ventaja frente al B+, que paga la altura del arbol.
+
+**Borrar** quita la entrada y tapa su hueco con la ultima de esa misma pagina:
+dentro de un bucket no hay orden que conservar, asi que compactar cuesta una
+copia y no un corrimiento. Despues se intenta fusionar con el hermano.
+
+#### Por que el hash no sirve para busquedas por rango
+
+Es material directo del analisis comparativo (2.1.6), y la respuesta esta en el
+hash mismo, no en la implementacion: **el trabajo de un hash es esparcir**. Que
+claves parecidas caigan lejos es lo que hace que los buckets se llenen parejo, y
+es exactamente lo que impide recorrer un intervalo. Las claves 100 y 101 caen en
+buckets sin relacion, y entre ellas puede estar cualquier otra clave del
+archivo. No existe "el bucket siguiente".
+
+Responder `WHERE edad BETWEEN 20 AND 30` con este indice obliga a una de dos
+cosas, y las dos son peores que no tenerlo:
+
+| salida | costo |
+|---|---|
+| recorrer todos los buckets y filtrar | un scan completo, con peor localidad que el del heap porque los buckets estan repartidos por el archivo |
+| generar cada clave del intervalo y buscarla | una busqueda por valor posible aunque no exista ninguno; solo aplicable a tipos discretos y acotados |
+
+El B+ no tiene el problema porque sus hojas estan encadenadas **en orden de
+clave**: se baja una vez a un extremo del intervalo y se sigue la cadena. Esa es
+la diferencia estructural que el 2.1.6 tiene que medir.
+
+Por eso `supports_range()` devuelve false y `range_search` lanza `Unsupported`
+en vez de devolver un resultado caro en silencio. El planner consulta
+`supports_range()` antes de elegir; si lo ignora, recibe la excepcion. Devolver
+el resultado igual seria peor: una consulta que parece funcionar y que en
+100 000 registros tarda lo que un scan.
+
+#### La condicion de merge se midio, no se razono
+
+Dos hermanos fusionan si estan en la misma profundidad local, ninguno tiene
+overflow, y sus entradas **caben juntas en una pagina**. Esa ultima condicion
+salio de medir, y la medicion desmintio dos intentos previos. El script esta en
+`docs/medir-condicion-merge.py`.
+
+Merges disparados en el regimen que el 2.1.6 manda medir -- "rendimiento con
+inserciones/eliminaciones frecuentes", 20 000 operaciones mitad altas mitad
+bajas:
+
+| condicion | capacidad 4 | capacidad 32 | capacidad 408 (paginas de 4 KB) |
+|---|---|---|---|
+| uno queda vacio | 182 | 0 | **0** |
+| suma <= capacidad/2 | 162 | 0 | **0** |
+| suma <= capacidad | 1 177 | 104 | **104** |
+
+Las dos primeras **no fusionan nunca con capacidades reales**. En un regimen
+equilibrado los buckets no llegan a vaciarse, ni a bajar de la mitad a la vez
+que su hermano: implementarlas es tener merge en el codigo y no tenerlo en la
+practica. La primera es, ademas, la que el issue #19 pedia literalmente.
+
+Y al vaciar la estructura entera, que es donde se ve cuanto espacio recupera
+cada una (capacidad 4, 6 000 claves insertadas y borradas):
+
+| condicion | buckets que quedan |
+|---|---|
+| uno queda vacio | 359 |
+| suma <= capacidad/2 | 134 |
+| suma <= capacidad | **1** |
+
+**La oscilacion resulto ser un miedo infundado.** El argumento para exigir un
+umbral mas estricto era que un bucket recien partido ya cumpliria la condicion
+de fusion y se pondria a partir y fusionar en bucle. Medido: **cero
+oscilaciones en los 35 escenarios**. La razon es que un split de hash no reparte
+por la mitad como el B+, sino por un bit del hash, y para volver a partir hay
+que llenar un bucket ENTERO, no llegar a su mitad. La histeresis ya esta en la
+estructura, asi que aqui no hay ningun umbral elegido a mano -- al reves que en
+el B+, donde los minimos si hay que derivarlos del split.
+
+El overflow se excluye solo: una cadena de overflow tiene mas entradas que la
+capacidad, asi que jamas cumple "caben juntas en una pagina". Un bucket de
+claves repetidas no se fusiona hasta que se borran esas claves.
+
+#### Reducir el directorio sin tocar el formato
+
+Se quita un bit cuando ningun bucket queda en la profundidad global. La primera
+idea fue llevar un contador de buckets al tope en el area meta, lo que habria
+obligado a subir la version del formato a 2 y a que los archivos del #18 dejaran
+de abrirse. La medicion lo descarto: **reducir el directorio ocurre entre 0 y 4
+veces en corridas de 20 000 operaciones**. Un recorrido O(directorio) que pasa
+cuatro veces en 20 000 operaciones es ruido, no un costo. Asi que se comprueba
+recorriendo, el formato **sigue en la version 1** y los archivos del #18 se
+siguen abriendo.
+
+`ElArchivoNoCreceAlBorrarYVolverAInsertar` cierra el ciclo: vacia y rellena un
+indice de 600 claves tres veces y exige que el archivo no crezca, porque las
+paginas que libera un merge van a la free list y se reusan.
