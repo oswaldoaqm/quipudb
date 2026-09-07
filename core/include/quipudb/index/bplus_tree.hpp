@@ -47,6 +47,33 @@
 //   Un nodo que se pasa del orden se parte por la mitad. La raiz es el unico
 //   nodo al que se le permite tener menos de la mitad.
 //
+// Borrado (#17)
+// -------------
+//
+//   Borrar es el espejo de insertar. Si al quitar una entrada el nodo baja del
+//   minimo, primero se intenta PRESTAR una clave de un hermano al que le
+//   sobre; si a ninguno le sobra, los dos hermanos se FUSIONAN en uno solo y
+//   el separador que los separaba desaparece del padre -- lo que puede hacer
+//   que ahora sea el padre el que baje del minimo, y asi hacia arriba.
+//
+//   Cuando la raiz se queda sin claves, su unico hijo pasa a ser la raiz y el
+//   arbol pierde un nivel: es la unica forma en que un B+ baja de altura.
+//
+//   Los minimos salen de lo que produce un split, para que un nodo recien
+//   partido nunca nazca en falta:
+//
+//     hoja      ceil(orden / 2)   = (orden + 1) / 2
+//     interno   floor(orden / 2)  = orden / 2
+//
+//   Con esos numeros una fusion siempre entra en una pagina: el nodo en falta
+//   tiene minimo-1 claves y el hermano exactamente minimo, asi que la hoja
+//   fusionada tiene 2*minimo-1 <= orden y el interno 2*minimo <= orden.
+//
+//   Las paginas que quedan libres al fusionar NO se devuelven al sistema de
+//   archivos: van a una free list encadenada por el campo `next`, con la
+//   cabeza en el area meta, igual que el heap file (#8). Asi un ciclo de
+//   borrar e insertar reusa paginas en vez de hacer crecer el archivo.
+//
 // Claves
 // ------
 //
@@ -124,6 +151,14 @@ class BPlusTree {
   /// Claves maximas por nodo.
   [[nodiscard]] std::size_t order() const noexcept { return order_; }
 
+  /// Claves minimas por nodo, salvo la raiz. Distintas en hojas y en internos
+  /// porque el split no reparte igual en los dos casos (ver la cabecera).
+  [[nodiscard]] std::size_t min_leaf_keys() const noexcept { return min_leaf_; }
+  [[nodiscard]] std::size_t min_internal_keys() const noexcept { return min_internal_; }
+
+  /// Paginas que quedaron libres al fusionar y estan esperando reuso.
+  [[nodiscard]] std::size_t free_pages();
+
   /// Altura: 0 si esta vacio, 1 si la raiz es una hoja.
   [[nodiscard]] std::size_t height() const noexcept { return height_; }
 
@@ -147,12 +182,12 @@ class BPlusTree {
   /// Reemplaza el payload de una clave existente. Devuelve false si no esta.
   bool set_payload(const Key& key, std::span<const std::byte> payload);
 
-  /// Quita la clave. Devuelve false si no estaba.
+  /// Quita una entrada con esa clave. Devuelve false si no estaba.
   ///
-  /// No rebalancea: la hoja puede quedar por debajo de la mitad, e incluso
-  /// vacia, y sigue en el arbol y en la cadena. El arbol se mantiene
-  /// correcto -- ordenado, balanceado en altura y con la cadena completa --
-  /// pero desperdicia espacio. La fusion y la redistribucion son el #17.
+  /// Rebalancea: si el nodo baja del minimo se le presta una clave de un
+  /// hermano, y si no hay de donde, se fusiona con el. Al terminar, todos los
+  /// nodos menos la raiz cumplen el minimo, que es justo lo que comprueba
+  /// `check_invariants`.
   bool erase(const Key& key);
 
   /// Quita todas las entradas con esa clave. Devuelve cuantas quito.
@@ -199,8 +234,9 @@ class BPlusTree {
  private:
   class Cursor;
 
-  // La version 1 (#14, #15) no guardaba si el arbol admite repetidas.
-  static constexpr std::uint32_t kMetaVersion = 2;
+  // La version 1 (#14, #15) no guardaba si el arbol admite repetidas; la 2
+  // (#16) no tenia free list, asi que su cabeza no significaba nada.
+  static constexpr std::uint32_t kMetaVersion = 3;
 
   struct Meta {
     std::uint32_t version = kMetaVersion;
@@ -212,6 +248,7 @@ class BPlusTree {
     std::uint32_t root = kInvalidPage;
     std::uint32_t first_leaf = kInvalidPage;
     std::uint32_t height = 0;
+    std::uint32_t free_head = kInvalidPage;
     std::uint64_t count = 0;
   };
   static_assert(sizeof(Meta) <= DiskManager::kMetaSize);
@@ -228,6 +265,9 @@ class BPlusTree {
   void fetch(PageId id);
   void store(PageId id);
   PageId allocate(std::byte tipo);
+  /// Manda la pagina a la free list. No encoge el archivo: la deja lista para
+  /// que el proximo `allocate` la reuse.
+  void free_page(PageId id);
 
   // --- acceso al nodo cargado en scratch_ -----------------------------------
   [[nodiscard]] std::byte node_type() const { return scratch_.read_bytes(0, 1)[0]; }
@@ -249,8 +289,32 @@ class BPlusTree {
   [[nodiscard]] std::size_t lower_bound(const Key& key) const;
   /// Primera posicion del nodo cargado con clave > `key`.
   [[nodiscard]] std::size_t upper_bound(const Key& key) const;
-  /// Quita de las hojas las entradas con esa clave que cumplan el filtro.
-  std::size_t erase_matching(const Key& key, const std::vector<std::byte>* payload);
+  /// Quita entradas con esa clave que cumplan el filtro de payload,
+  /// rebalanceando despues de cada una. `todas` decide si borra la primera que
+  /// encuentre o sigue hasta que no quede ninguna.
+  std::size_t erase_matching(const Key& key, const std::vector<std::byte>* payload, bool todas);
+
+  /// Quita UNA entrada del subarbol `id`. Al volver, el subarbol es correcto
+  /// salvo que `id` mismo haya quedado por debajo del minimo: de eso se ocupa
+  /// su padre, que es quien tiene a los hermanos a mano.
+  bool erase_one_from(PageId id, const Key& key, const std::vector<std::byte>* payload);
+
+  /// Si el hijo `i` de `padre` esta en falta, le presta una clave de un
+  /// hermano o lo fusiona con el. Deja `padre` posiblemente en falta.
+  void fix_underflow(PageId padre, std::size_t i);
+  /// Rota una clave del hijo `i-1` al hijo `i` (o al reves) por el padre.
+  void borrow_from_left(PageId padre, std::size_t i);
+  void borrow_from_right(PageId padre, std::size_t i);
+  /// Fusiona el hijo `j` con el `j+1`: todo queda en el `j`, el `j+1` se
+  /// libera y el separador `j` desaparece del padre.
+  void merge_children(PageId padre, std::size_t j);
+  /// Si la raiz se quedo sin claves, la baja un nivel (o vacia el arbol).
+  void shrink_root();
+
+  /// Vuelca el nodo cargado a memoria, para poder reescribir dos nodos a la vez.
+  [[nodiscard]] std::vector<std::pair<Key, std::vector<std::byte>>> read_leaf(PageId id,
+                                                                             PageId& siguiente);
+  [[nodiscard]] std::vector<Branch> read_internal(PageId id, PageId& hijo_izq);
 
   /// Baja desde la raiz hasta la hoja donde deberia estar `key`, dejando en
   /// `camino` los nodos internos recorridos.
@@ -274,17 +338,21 @@ class BPlusTree {
 
   [[nodiscard]] std::string check_node(PageId id, std::size_t profundidad,
                                        const Key* lo, const Key* hi,
-                                       std::size_t& hojas_en, std::size_t& contadas);
+                                       std::size_t& hojas_en, std::size_t& contadas,
+                                       std::vector<bool>& vivas);
 
   Column key_column_;
   std::size_t key_size_ = 0;
   std::size_t payload_size_ = 0;
   std::size_t order_ = 0;
+  std::size_t min_leaf_ = 0;
+  std::size_t min_internal_ = 0;
   bool unique_ = true;
   DiskManager disk_;
   Page scratch_;
   PageId root_ = kInvalidPage;
   PageId first_leaf_ = kInvalidPage;
+  PageId free_head_ = kInvalidPage;
   std::size_t height_ = 0;
   std::uint64_t count_ = 0;
   OpStats stats_;
