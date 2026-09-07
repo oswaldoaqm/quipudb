@@ -426,3 +426,110 @@ cuyo rango puede contenerla y sigue al hermano de la derecha solo si el
 separador que los divide es exactamente la clave buscada. Volver por la
 recursion es ademas lo que deja al padre a mano, que es quien tiene a los
 hermanos para rebalancear.
+
+### Extendible Hashing: el directorio absorbe el crecimiento
+
+`ExtendibleHash` (#18) es la tercera estructura de indexacion del 2.1.2 y la
+primera que no mantiene un orden. Sigue la misma division que el B+: es la
+**maquinaria**, guarda `payload_size` bytes opacos por clave y no sabe que
+son; el adaptador que implementa `Index` -- con `search`, `remove` y
+`supports_range() == false` -- es del #19, igual que `BPlusUnclusteredIndex`
+(#16) se apoya en el arbol del #14.
+
+```
+directorio (2^global entradas)      bucket (cadena de paginas)
+[PageId][PageId][PageId]...         [4 bytes profundidad local]
+next -> siguiente pagina            [clave][payload]
+record_count = entradas usadas      ...
+                                    next -> pagina de overflow
+```
+
+Varias entradas del directorio pueden apuntar al **mismo** bucket: uno de
+profundidad local L es compartido por las 2^(global-L) entradas que coinciden
+en sus L bits bajos. El directorio se indexa con los bits **bajos** del hash, y
+eso no es una preferencia: es lo que hace que duplicarlo conserve el reparto,
+porque la entrada j y la j + 2^global quedan con el mismo bucket sin mover
+nada.
+
+| bucket lleno con | que pasa |
+|---|---|
+| local < global | se parte en dos (L+1); el directorio no cambia de tamano, solo repunta la mitad de las entradas que compartian el bucket |
+| local == global | no hay bit que distinga las mitades: primero se **duplica el directorio** y despues se parte |
+| claves inseparables | ningun bit las separa nunca: el bucket crece por **overflow** encadenado |
+
+Duplicar el directorio no crea buckets. Ese es el punto de la estructura frente
+al hashing estatico: el costo de crecer se paga sobre el directorio, que son
+`PageId` de 4 bytes, y no sobre los datos.
+
+**Cuando NO hay que partir.** Un indice secundario admite claves repetidas, y
+dos claves iguales tienen el mismo hash: ningun bit las separa, partir deja un
+bucket igual de lleno y otro vacio, y duplicar el directorio para intentarlo lo
+hace crecer sin repartir. Antes de partir se comprueba si las entradas difieren
+en algun bit **por encima** de los que ya comparten; si no, se encadena una
+pagina de overflow, como el area de overflow del archivo secuencial (#10).
+
+La pregunta se hace sobre todos los bits altos y no solo sobre el que toca
+partir ahora. Preguntar solo por ese bit fue el primer intento y esta mal: con
+buckets de 4 entradas, una de cada ocho veces las cuatro coinciden en ese bit
+por casualidad, y ahi lo correcto es partir igual -- el hermano nace vacio -- y
+volver a intentarlo un bit mas arriba. La version estricta llenaba de overflow
+una estructura con claves perfectamente separables. Lo cubre
+`ClavesAlAzarNoGeneranOverflow`, que usa claves al azar a proposito: con
+patrones regulares ese bit separa casi siempre por construccion y el defecto no
+se ve.
+
+**El hash: FNV-1a a secas.** La clave se serializa con el mismo codec que los
+registros (#7) y sobre esos bytes va FNV-1a de 64 bits, sin finalizador de
+mezcla. La objecion clasica a FNV es que termina en una multiplicacion y los
+bits bajos de un producto dependen solo de los bits bajos de sus factores. Es
+cierto, pero para claves de tamano **fijo** eso no las agrupa: multiplicar por
+un impar es una biyeccion modulo 2^k, asi que el byte que varia sigue dando
+bits bajos distintos. Se midio la carga maxima de un bucket con 2 000 claves
+sobre 512 buckets:
+
+| patron de clave | hash = la clave | FNV-1a | FNV-1a + splitmix64 |
+|---|---|---|---|
+| int 1..n | 5 | **5** | 10 |
+| int i*4 | 16 | **8** | 10 |
+| int i*512 | 2 000 | **5** | 11 |
+| varchar(12) con prefijo comun | - | **9** | 10 |
+| double i*1,5 | - | **9** | 12 |
+
+El finalizador reparte como el azar (Poisson); FNV a secas reparte **mejor** que
+el azar en los patrones que de verdad aparecen en una clave de tabla:
+correlativos, con paso fijo, texto con prefijo comun. Empeoraba la carga maxima
+en todos los casos medidos, asi que no esta. La primera version del codigo si lo
+llevaba, con el argumento de que "sin el, insertar 1..n manda todo al mismo
+bucket": era falso y la medicion lo desmintio.
+
+La columna "hash = la clave" es la respuesta a por que hace falta un hash. Con
+un paso que es potencia de dos, usar el valor tal cual manda las 2 000 claves al
+mismo bucket, y el sintoma no es que falten buckets sino que **el directorio se
+dispara**: el split sigue bajando hasta el bit donde las claves difieren, y para
+llegar ahi duplica el directorio una vez por bit. Por eso
+`ElHashRepartelasClavesConUnPasoQueEsPotenciaDeDos` acota
+`directory_size() <= 4 * bucket_count()` ademas de contar buckets: contar
+buckets solo no lo ve.
+
+**Claves que `compare` considera iguales tienen que hashear igual.** Los bytes
+crudos no lo garantizan: `0.0` y `-0.0` solo difieren en el bit de signo y
+`compare` los declara iguales, asi que `hash_of` los normaliza antes de mezclar
+(y hace lo mismo con NaN, que `Schema::validate` ya no deja entrar en un
+registro pero que puede llegar como clave suelta). Sin eso, una busqueda por
+`0.0` no encontraria al `-0.0` que esta en otro bucket.
+
+**Recorrido.** `entries()` va por el directorio y visita cada bucket una sola
+vez sin recordar cuales ya vio: un bucket de profundidad local L aparece en
+2^(global-L) entradas y solo la de indice menor que 2^L tiene los bits altos en
+cero. Esa es su entrada canonica; desde las demas se salta. Memoria acotada a
+una pagina, a cambio de leer una por entrada de directorio en vez de una por
+bucket.
+
+**Versionado.** El area meta guarda `version = 1`, la profundidad global, la
+cabeza del directorio y la de la free list. Reabrir con otra version es un
+`IoError`; con otra capacidad de bucket, otro payload o otro tipo de clave, un
+`SchemaError`. Si cambia el layout de las paginas, sube la version.
+
+**Lo que este issue no hace.** Buscar, borrar y fusionar buckets hermanos son
+del #19, junto con el adaptador `Index` y la documentacion de por que esta
+estructura no sirve para busquedas por rango -- material directo del 2.1.6.
