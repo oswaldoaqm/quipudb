@@ -483,6 +483,212 @@ void ExtendibleHash::crecer(std::size_t index, PageId bucket) {
 }
 
 // ---------------------------------------------------------------------------
+// Busqueda
+// ---------------------------------------------------------------------------
+
+std::vector<std::vector<std::byte>> ExtendibleHash::find(const Key& key) {
+  std::vector<std::vector<std::byte>> out;
+  // Un acceso al directorio, que vive en memoria, y uno al bucket. Lo unico
+  // que puede costar mas es una cadena de overflow, y esa solo existe si hay
+  // claves repetidas.
+  const std::uint64_t h = hash_of(key_column_, key);
+  std::vector<std::byte> buscada(key_size_);
+  RecordCodec::encode_value(key_column_, key, buscada);
+
+  for (PageId p = dir_[dir_index(h)]; p != kInvalidPage;) {
+    fetch(p);
+    const std::uint16_t n = scratch_.record_count();
+    for (std::uint16_t i = 0; i < n; ++i) {
+      const auto e = scratch_.read_bytes(kBucketHeader + static_cast<std::size_t>(i) * entry_size_,
+                                         entry_size_);
+      ++stats_.records_examined;
+      if (!std::equal(buscada.begin(), buscada.end(), e.begin())) continue;
+      out.emplace_back(e.begin() + static_cast<std::ptrdiff_t>(key_size_), e.end());
+      ++stats_.records_returned;
+    }
+    p = scratch_.next();
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Borrado y merge
+// ---------------------------------------------------------------------------
+
+std::size_t ExtendibleHash::quitar_de(
+    PageId bucket, const std::function<bool(std::span<const std::byte>)>& coincide,
+    bool una_sola) {
+  std::size_t quitadas = 0;
+  for (PageId p = bucket; p != kInvalidPage;) {
+    fetch(p);
+    std::uint16_t n = scratch_.record_count();
+    bool tocada = false;
+    for (std::uint16_t i = 0; i < n;) {
+      const std::size_t off = kBucketHeader + static_cast<std::size_t>(i) * entry_size_;
+      if (!coincide(scratch_.read_bytes(off, entry_size_))) {
+        ++i;
+        continue;
+      }
+      // Dentro de un bucket no hay orden que conservar, asi que el hueco se
+      // tapa con la ultima entrada de la pagina en vez de correr las de atras.
+      --n;
+      if (i != n) {
+        const std::size_t ult = kBucketHeader + static_cast<std::size_t>(n) * entry_size_;
+        std::vector<std::byte> cola(entry_size_);
+        const auto src = scratch_.read_bytes(ult, entry_size_);
+        std::copy(src.begin(), src.end(), cola.begin());
+        scratch_.write_bytes(off, cola);
+      }
+      ++quitadas;
+      tocada = true;
+      if (una_sola) break;
+      // No se avanza `i`: en esa posicion hay ahora una entrada sin revisar.
+    }
+    if (tocada) {
+      set_entradas(n);
+      store(p);
+    }
+    if (una_sola && quitadas > 0) break;
+    p = scratch_.next();
+  }
+  return quitadas;
+}
+
+std::size_t ExtendibleHash::erase_all(const Key& key) {
+  const std::uint64_t h = hash_of(key_column_, key);
+  std::vector<std::byte> buscada(key_size_);
+  RecordCodec::encode_value(key_column_, key, buscada);
+
+  const std::size_t i = dir_index(h);
+  const std::size_t quitadas = quitar_de(
+      dir_[i],
+      [&](std::span<const std::byte> e) {
+        return std::equal(buscada.begin(), buscada.end(), e.begin());
+      },
+      /*una_sola=*/false);
+
+  if (quitadas > 0) {
+    count_ -= quitadas;
+    encoger(i);
+    save_meta();
+  }
+  return quitadas;
+}
+
+bool ExtendibleHash::erase_one(const Key& key, std::span<const std::byte> payload) {
+  if (payload.size() != payload_size_) {
+    throw SchemaError("el payload mide " + std::to_string(payload.size()) +
+                      " bytes y este indice guarda " + std::to_string(payload_size_));
+  }
+  const std::uint64_t h = hash_of(key_column_, key);
+  std::vector<std::byte> buscada(entry_size_);
+  RecordCodec::encode_value(key_column_, key, std::span<std::byte>(buscada).subspan(0, key_size_));
+  if (payload_size_ > 0) {
+    std::memcpy(buscada.data() + key_size_, payload.data(), payload_size_);
+  }
+
+  const std::size_t i = dir_index(h);
+  const std::size_t quitadas = quitar_de(
+      dir_[i],
+      [&](std::span<const std::byte> e) {
+        return std::equal(buscada.begin(), buscada.end(), e.begin());
+      },
+      /*una_sola=*/true);
+
+  if (quitadas > 0) {
+    count_ -= quitadas;
+    encoger(i);
+    save_meta();
+  }
+  return quitadas > 0;
+}
+
+std::size_t ExtendibleHash::hermano_de(std::size_t index, std::size_t local) const noexcept {
+  // El hermano difiere solo en el bit mas alto de la profundidad local: es el
+  // que se separo de el en el split que los creo.
+  return index ^ (std::size_t{1} << (local - 1));
+}
+
+std::size_t ExtendibleHash::paginas_de(PageId bucket) {
+  std::size_t n = 0;
+  for (PageId p = bucket; p != kInvalidPage;) {
+    ++n;
+    fetch(p);
+    p = scratch_.next();
+  }
+  return n;
+}
+
+void ExtendibleHash::encoger(std::size_t index) {
+  const PageId b = dir_[index];
+  const std::size_t local = depth_of(b);
+  if (local == 0) return;  // un solo bucket: no tiene con quien fusionarse
+
+  const std::size_t hi = hermano_de(index, local);
+  if (hi >= dir_.size()) return;
+  const PageId hb = dir_[hi];
+  if (hb == b) return;  // ya comparten bucket
+
+  // Solo fusionan hermanos de la misma profundidad: si el otro se partio mas
+  // veces, este no es su par y el directorio no podria repuntarse.
+  if (depth_of(hb) != local) return;
+
+  // Una cadena de overflow tiene mas entradas que la capacidad, asi que la
+  // condicion de abajo ya la excluye; comprobarlo aparte evita recorrerla.
+  if (paginas_de(b) != 1 || paginas_de(hb) != 1) return;
+
+  fetch(b);
+  const std::uint16_t nb = scratch_.record_count();
+  fetch(hb);
+  const std::uint16_t nh = scratch_.record_count();
+  // Caben juntas en una pagina: el espejo exacto del split. Ver la cabecera
+  // para las mediciones que descartaron "uno vacio" y "la mitad".
+  if (static_cast<std::size_t>(nb) + static_cast<std::size_t>(nh) > capacity_) return;
+
+  // Se mueven las entradas del hermano al bucket y se libera su pagina.
+  const auto entradas = recolectar(hb);
+  for (const auto& e : entradas) append_forzado(b, e.bytes);
+
+  const std::size_t nueva_local = local - 1;
+  fetch(b);
+  scratch_.write<std::uint32_t>(0, static_cast<std::uint32_t>(nueva_local));
+  store(b);
+
+  for (std::size_t j = 0; j < dir_.size(); ++j) {
+    if (dir_[j] == hb) dir_[j] = b;
+  }
+  free_page(hb);
+  save_directory();
+
+  reducir_directorio();
+}
+
+std::size_t ExtendibleHash::reducir_directorio() {
+  std::size_t veces = 0;
+  while (global_depth_ > 0) {
+    // Se puede quitar un bit cuando ningun bucket lo necesita, es decir cuando
+    // ninguno esta en la profundidad global. Es raro (entre 0 y 4 veces en
+    // 20 000 operaciones), asi que se comprueba recorriendo en vez de llevar
+    // un contador en el area meta -- que habria obligado a subir la version
+    // del formato.
+    bool alguno_al_tope = false;
+    const std::size_t mitad = dir_.size() / 2;
+    for (std::size_t j = 0; j < mitad && !alguno_al_tope; ++j) {
+      if (depth_of(dir_[j]) >= global_depth_) alguno_al_tope = true;
+    }
+    if (alguno_al_tope) break;
+
+    // La mitad de arriba es copia de la de abajo: si nadie usa el bit, ambas
+    // apuntan a los mismos buckets y tirarla no pierde nada.
+    dir_.resize(mitad);
+    --global_depth_;
+    ++veces;
+  }
+  if (veces > 0) save_directory();
+  return veces;
+}
+
+// ---------------------------------------------------------------------------
 // Forma de la estructura
 // ---------------------------------------------------------------------------
 
