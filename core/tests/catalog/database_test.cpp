@@ -136,5 +136,182 @@ TEST_F(DatabaseTest, ElCursorFuncionaAtravesDelHandle) {
   EXPECT_EQ(n, 100u);
 }
 
+// ---------------------------------------------------------------------------
+// Indices abiertos desde el catalogo
+// ---------------------------------------------------------------------------
+
+/// Esquema con una columna que se repite: es lo que se indexa de verdad con un
+/// indice secundario.
+Schema empleados() {
+  return Schema{
+      .table_name = "empleados",
+      .columns = {{"codigo", DataType::Int},
+                  {"area", DataType::Varchar, 12},
+                  {"edad", DataType::Int}},
+      .key_column = 0,
+  };
+}
+
+const std::vector<std::string> kAreas{"ventas", "soporte", "legal"};
+
+Record empleado(std::int32_t c) {
+  return {c, kAreas[static_cast<std::size_t>(c) % kAreas.size()], 20 + (c % 15)};
+}
+
+TEST_F(DatabaseTest, AbreCadaTipoDeIndiceSegunElCatalogo) {
+  Database db(path_);
+  TableFile& t = db.create_table(empleados(), kind::kHeap);
+  for (std::int32_t c = 1; c <= 200; ++c) t.insert(empleado(c));
+
+  Index& bp = db.create_index("empleados", "por_edad", "edad", kind::kBPlusUnclustered);
+  Index& hs = db.create_index("empleados", "por_area", "area", kind::kExtendibleHash);
+
+  EXPECT_EQ(bp.kind(), kind::kBPlusUnclustered);
+  EXPECT_EQ(hs.kind(), kind::kExtendibleHash);
+  EXPECT_TRUE(bp.supports_range());
+  EXPECT_FALSE(hs.supports_range());
+  // Se construyeron sobre los datos que la tabla YA tenia.
+  EXPECT_EQ(bp.size(), 200u);
+  EXPECT_EQ(hs.size(), 200u);
+}
+
+TEST_F(DatabaseTest, DevuelveSiempreElMismoObjetoParaUnIndice) {
+  Database db(path_);
+  TableFile& t = db.create_table(empleados(), kind::kHeap);
+  for (std::int32_t c = 1; c <= 50; ++c) t.insert(empleado(c));
+  Index& a = db.create_index("empleados", "por_edad", "edad", kind::kExtendibleHash);
+  Index& b = db.index("empleados", "por_edad");
+  EXPECT_EQ(&a, &b);
+}
+
+TEST_F(DatabaseTest, ElIndiceSeMontaSobreElMismoHandleQueDevuelveTable) {
+  // Es la razon de ser de esta clase. Si el indice se montara sobre un handle
+  // propio, los RID que guarda apuntarian a un estado que el handle de
+  // `table()` no conoce, y `lookup` devolveria basura o lanzaria.
+  Database db(path_);
+  TableFile& t = db.create_table(empleados(), kind::kHeap);
+  for (std::int32_t c = 1; c <= 100; ++c) t.insert(empleado(c));
+  db.create_index("empleados", "por_edad", "edad", kind::kExtendibleHash);
+
+  // Se inserta por el handle de la tabla y se avisa al indice, que es lo que
+  // hara el planner (2.1.3).
+  const RID rid = db.table("empleados").insert(empleado(101));
+  db.index("empleados", "por_edad").insert(Value{20 + (101 % 15)}, rid);
+
+  const auto rids = db.index("empleados", "por_edad").search(Value{20 + (101 % 15)});
+  ASSERT_FALSE(rids.empty());
+  bool encontrado = false;
+  for (const RID r : rids) {
+    const auto rec = db.table("empleados").read(r);
+    ASSERT_TRUE(rec.has_value()) << "el indice apunta a un registro que la tabla no ve";
+    if (std::get<std::int32_t>((*rec)[0]) == 101) encontrado = true;
+  }
+  EXPECT_TRUE(encontrado);
+}
+
+TEST_F(DatabaseTest, LosIndicesSobrevivenAlCerrarYReabrir) {
+  {
+    Database db(path_);
+    TableFile& t = db.create_table(empleados(), kind::kHeap);
+    for (std::int32_t c = 1; c <= 300; ++c) t.insert(empleado(c));
+    db.create_index("empleados", "por_area", "area", kind::kExtendibleHash);
+    db.flush();
+  }
+  Database db(path_);
+  Index& ix = db.index("empleados", "por_area");
+  EXPECT_EQ(ix.kind(), kind::kExtendibleHash);
+  EXPECT_EQ(ix.size(), 300u);
+  const auto rids = ix.search(Value{std::string("ventas")});
+  EXPECT_FALSE(rids.empty());
+  for (const RID r : rids) {
+    const auto rec = db.table("empleados").read(r);
+    ASSERT_TRUE(rec.has_value());
+    EXPECT_EQ(std::get<std::string>((*rec)[1]), "ventas");
+  }
+}
+
+TEST_F(DatabaseTest, DropIndexCierraElHandleYBorraElArchivoSinTocarLaTabla) {
+  Database db(path_);
+  TableFile& t = db.create_table(empleados(), kind::kHeap);
+  for (std::int32_t c = 1; c <= 40; ++c) t.insert(empleado(c));
+  db.create_index("empleados", "por_edad", "edad", kind::kExtendibleHash);
+
+  const auto archivo = db.catalog().resolve(
+      db.catalog().table("empleados").index("por_edad")->file);
+  ASSERT_TRUE(fs::exists(archivo));
+
+  db.drop_index("empleados", "por_edad");
+  EXPECT_FALSE(fs::exists(archivo));
+  EXPECT_EQ(db.catalog().table("empleados").index("por_edad"), nullptr);
+  EXPECT_THROW(db.index("empleados", "por_edad"), SchemaError);
+  // La tabla sigue entera.
+  EXPECT_EQ(db.table("empleados").size(), 40u);
+}
+
+TEST_F(DatabaseTest, DropTableSeLlevaLosArchivosDeSusIndices) {
+  // Los RID de un indice no apuntan a nada si su tabla desaparece: dejar el
+  // archivo seria dejar basura que el catalogo ya no menciona.
+  Database db(path_);
+  TableFile& t = db.create_table(empleados(), kind::kHeap);
+  for (std::int32_t c = 1; c <= 40; ++c) t.insert(empleado(c));
+  db.create_index("empleados", "por_edad", "edad", kind::kExtendibleHash);
+  db.create_index("empleados", "por_area", "area", kind::kBPlusUnclustered);
+
+  const auto a1 = db.catalog().resolve(db.catalog().table("empleados").index("por_edad")->file);
+  const auto a2 = db.catalog().resolve(db.catalog().table("empleados").index("por_area")->file);
+  ASSERT_TRUE(fs::exists(a1));
+  ASSERT_TRUE(fs::exists(a2));
+
+  db.drop_table("empleados");
+  EXPECT_FALSE(fs::exists(a1));
+  EXPECT_FALSE(fs::exists(a2));
+  EXPECT_TRUE(db.open_indexes().empty());
+}
+
+TEST_F(DatabaseTest, CerrarUnaTablaCierraAntesSusIndices) {
+  // Un indice guarda un puntero a su tabla: si la tabla se cerrara primero, el
+  // indice quedaria colgado. Con ASan esta prueba es la que lo detecta.
+  Database db(path_);
+  TableFile& t = db.create_table(empleados(), kind::kHeap);
+  for (std::int32_t c = 1; c <= 60; ++c) t.insert(empleado(c));
+  db.create_index("empleados", "por_edad", "edad", kind::kExtendibleHash);
+  ASSERT_EQ(db.open_indexes().size(), 1u);
+
+  db.close("empleados");
+  EXPECT_TRUE(db.open_indexes().empty());
+  EXPECT_FALSE(db.is_open("empleados"));
+
+  // Y se puede volver a abrir sin rastro del anterior.
+  Index& ix = db.index("empleados", "por_edad");
+  EXPECT_EQ(ix.size(), 60u);
+  EXPECT_EQ(db.open_indexes().size(), 1u);
+}
+
+TEST_F(DatabaseTest, RechazaIndicesQueNoPuedeAbrir) {
+  Database db(path_);
+  db.create_table(empleados(), kind::kHeap);
+  EXPECT_THROW(db.index("empleados", "noexiste"), SchemaError);
+  EXPECT_THROW(db.index("noexiste", "da_igual"), SchemaError);
+  EXPECT_THROW(db.create_index("empleados", "x", "noexiste", kind::kExtendibleHash), SchemaError);
+  EXPECT_THROW(db.create_index("empleados", "x", "edad", "arbol_magico"), SchemaError);
+  // Solo sobre heap: en las demas organizaciones los RID se mueven.
+  db.create_table(cursos(), kind::kSequential);
+  EXPECT_THROW(db.create_index("cursos", "por_creditos", "creditos", kind::kExtendibleHash),
+               SchemaError);
+}
+
+TEST_F(DatabaseTest, ElFlushVaciaTambienLosIndices) {
+  Database db(path_);
+  TableFile& t = db.create_table(empleados(), kind::kHeap);
+  for (std::int32_t c = 1; c <= 120; ++c) t.insert(empleado(c));
+  db.create_index("empleados", "por_area", "area", kind::kExtendibleHash);
+  db.flush();
+
+  // Otro proceso abriria el archivo y veria las 120 entradas sin que nadie
+  // haya cerrado el handle.
+  Database otra(path_);
+  EXPECT_EQ(otra.index("empleados", "por_area").size(), 120u);
+}
+
 }  // namespace
 }  // namespace quipudb

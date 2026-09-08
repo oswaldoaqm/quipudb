@@ -151,6 +151,48 @@ al escribir y dejan contadores que no cuadran. El catalogo guarda ademas el
 `page_size` de cada tabla, sin el cual una tabla creada con otro tamano no se
 podia reabrir.
 
+### Abrir indices desde el catalogo
+
+El #56 resolvio para las tablas el problema de que cada consumidor escribiera su
+propio `if (storage == "heap") new HeapFile(...)`. Los indices quedaron a medias:
+el catalogo (#7) los registraba -- nombre, columna, tipo y archivo -- pero nadie
+sabia convertir ese registro en un objeto usable, asi que planner, parser,
+transacciones, benchmarks y bindings habrian tenido cada uno su copia del switch.
+
+`Database::index(tabla, nombre)` cierra ese hueco. El switch de `IndexInfo::kind`
+vive en `abrir_indice` y en ningun otro sitio: agregar un tipo de indice -- el
+R-Tree de la Parte 2, por ejemplo -- es tocar esa funcion y nada mas.
+
+**El indice se monta sobre el MISMO handle de tabla que devuelve `table()`.** No
+es una comodidad: un indice guarda RID, y un RID solo significa algo respecto de
+un estado concreto del archivo. Si el indice tuviera su propio handle, insertar
+por `table()` dejaria al indice apuntando a un estado que su handle no conoce, y
+`read(rid)` devolveria el registro equivocado o nada. Lo comprueba
+`ElIndiceSeMontaSobreElMismoHandleQueDevuelveTable`.
+
+De ahi salen tres reglas de ciclo de vida:
+
+| operacion | que hace |
+|---|---|
+| `close(tabla)` | cierra primero los indices, despues la tabla |
+| `drop_table` | borra tambien los archivos de sus indices: sus RID ya no apuntan a nada |
+| `flush()` | vacia primero los indices, mientras su tabla sigue viva |
+| destructor | suelta `indices_` explicitamente |
+
+El destructor no confia en el orden de declaracion de los miembros. Ese orden ya
+da el resultado correcto, pero es una propiedad fragil que un reordenamiento
+inocente rompe en silencio y que ninguna prueba sin ASan detectaria.
+
+`create_index` ademas **construye** el indice recorriendo la tabla, porque una
+columna se puede indexar cuando la tabla ya tiene datos. Eso usa el cursor (#56)
+y no `scan()`: en 100 000 registros la diferencia es materializarlos todos o
+ninguno.
+
+Lo que `Database` NO hace es mantener los indices al dia cuando la tabla cambia.
+Quien inserta, borra o actualiza tiene que avisarle al indice; coordinar eso es
+del planner (2.1.3). Aqui la responsabilidad termina en que haya un solo objeto
+por archivo y en saber abrirlo.
+
 ### Lo que esto NO decide todavia
 
 - La forma del plan de ejecucion: resuelta en
