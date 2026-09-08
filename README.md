@@ -65,7 +65,62 @@ pip install -r requirements.txt
 ```
 
 Si vas a trabajar sobre la capa Python **no necesitas compilar los bindings**;
-solo se construyen con `-DQUIPUDB_BUILD_PYTHON=ON`.
+solo se construyen con `-DQUIPUDB_BUILD_PYTHON=ON`. Las pruebas que dependen de
+ellos se saltan solas si el módulo no está: `pytest` sigue pasando.
+
+### Bindings de Python (opcional)
+
+Dan acceso al core desde Python: `Database`, `TableFile`, `Index` y los tipos del
+esquema. Los necesitan el parser (2.1.3), las transacciones (2.1.4) y los
+benchmarks (2.1.6); el frontend consume la API, no el core.
+
+```bash
+cmake -S . -B build-py -DCMAKE_BUILD_TYPE=Release -DQUIPUDB_BUILD_PYTHON=ON
+cmake --build build-py --parallel
+
+# Que Python encuentre el modulo
+export PYTHONPATH=$PWD/build-py/bindings        # Windows: set PYTHONPATH=%CD%\build-py\bindings
+python -m pytest engine/test_bindings.py -q
+```
+
+pybind11 se descarga solo con FetchContent: no hay que instalarlo aparte.
+
+```python
+import quipudb_native as q
+
+db = q.Database("datos/catalogo.txt")
+esquema = q.Schema("alumnos", [
+    q.Column("codigo", q.DataType.INT),
+    q.Column("nombre", q.DataType.VARCHAR, 32),
+    q.Column("promedio", q.DataType.DOUBLE),
+], key_column=0)
+
+t = db.create_table(esquema, q.kind.HEAP)
+t.insert([1, "ana", 15])            # el 15 se promueve a 15.0 segun el esquema
+
+db.create_index("alumnos", "por_promedio", "promedio", q.kind.EXTENDIBLE_HASH)
+ix = db.index("alumnos", "por_promedio")
+for rid in ix.search(15.0):
+    print(t.read(rid))
+
+print(t.stats().as_dict())          # lo que consume el plan de ejecucion
+db.flush()
+```
+
+Detalles que conviene saber:
+
+- **`Database` es la puerta de entrada.** Devuelve siempre el mismo objeto para
+  una tabla o índice dado; dos handles sobre el mismo archivo se pisan.
+- **Los enteros se promueven según el esquema.** Un `15` en una columna DOUBLE
+  entra como `15.0`, y en una DATE como `Date(15)`.
+- **`bool` es `bool`.** No llega como entero, pese a que en Python `bool` derive
+  de `int`.
+- **Cada error del core tiene su excepción**: `IoError`, `SchemaError`,
+  `InvalidRecord`, `DuplicateKey`, `Unsupported`, todas derivadas de
+  `QuipuDBError`.
+- **`cursor()` no se expone**: deja de valer si la tabla se modifica, y desde
+  Python eso sería un uso-después-de-liberar. Existe para el external sorting
+  (#20), que es C++.
 
 ## Equipo
 
