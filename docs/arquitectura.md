@@ -949,3 +949,43 @@ Juntar columnas de tipos distintos **falla al construir**. No da cero
 coincidencias: `compare` define un orden entre tipos distintos para tener un
 orden total, asi que un INT contra un VARCHAR daria un resultado
 silenciosamente incorrecto en vez de un error.
+
+
+### Los external algorithms salen a Python (bindings)
+
+El #23 dejo escrito que `cursor()` no se expone porque "el external sorting del
+#20 es C++: nadie en Python lo necesita". Eso dejo de ser cierto en cuanto el
+**#28** tuvo que conectar el ORDER BY y el GROUP BY del parser con el core: los
+tres algoritmos estaban implementados, probados y encerrados.
+
+Lo que se expone es `source_of(tabla)`, que **envuelve** el cursor sin
+entregarlo: se puede pasar a un sort, un group by o un join, pero no guardar,
+adelantar ni releer a mano. La regla de invalidacion sigue viva y esta en su
+docstring.
+
+#### Los tiempos de vida son el problema de verdad
+
+Los tres objetos son dueños de sus temporales, y su cabecera dice que el flujo
+que devuelven deja de valer si el objeto muere. En C++ eso es una regla que se
+lee; en Python, donde el recolector decide cuando destruir, es esto:
+
+```python
+flujo = quipudb_native.ExternalSort(esquema, 0).sorted(fuente)
+for fila in flujo: ...      # el ExternalSort ya murio
+```
+
+Por eso cada `sorted`, `grouped` y `joined` lleva `py::keep_alive` sobre el
+objeto **y sobre sus entradas**.
+
+Se midio cuales dependen de verdad de eso, quitandolos y corriendo cada prueba
+por separado:
+
+| | sin `keep_alive` | por que |
+|---|---|---|
+| sort | pasa | `MergeSource` guarda `shared_ptr<Temporal>`: los archivos sobreviven |
+| group by | pasa | `Salida` materializa el resultado; no referencia nada |
+| **index nested loop** | **segfault** | `SalidaIndexNested` guarda punteros CRUDOS al join, al flujo izquierdo y a la sonda, y los usa mientras se lee |
+
+Se quedan en los tres igual: lo que protege a los otros dos no es una garantia
+del contrato sino una casualidad de como estan implementados hoy, y el propio
+#21 dice que la salida del group by deberia dejar de materializarse.
