@@ -13,8 +13,15 @@
 //                En C++ eso es una regla que se respeta; expuesto a Python es
 //                una invitacion a guardar un cursor, insertar, y llevarse un
 //                uso-despues-de-liberar que ocurre dentro del interprete.
-//                Existe para que el external sorting del #20 sea externo de
-//                verdad, y el #20 es C++: nadie en Python lo necesita.
+//
+//                OJO: la razon que estaba escrita aqui -- "el #20 es C++, nadie
+//                en Python lo necesita" -- dejo de ser cierta. El #28 conecta
+//                ORDER BY y GROUP BY del parser con los external algorithms, y
+//                para eso hacen falta desde Python. Lo que se expone es
+//                `source_of(tabla)`, que envuelve el cursor sin entregarlo: no
+//                se puede guardar, adelantar ni releer a mano, solo pasarselo a
+//                un sort, un group by o un join. La regla de invalidacion sigue
+//                viva y esta escrita en su docstring.
 //
 //   BPlusTree,   Es la maquinaria de los indices, no los indices. Se llega a
 //   ExtendibleHash   ellos por `Index`.
@@ -55,6 +62,9 @@
 #include "quipudb/catalog/table.hpp"
 #include "quipudb/catalog/types.hpp"
 #include "quipudb/error.hpp"
+#include "quipudb/external/external_group.hpp"
+#include "quipudb/external/external_join.hpp"
+#include "quipudb/external/external_sort.hpp"
 #include "quipudb/index/bplus_clustered_table.hpp"
 #include "quipudb/storage/heap_file.hpp"
 #include "quipudb/storage/sequential_file.hpp"
@@ -391,6 +401,249 @@ PYBIND11_MODULE(quipudb_native, m) {
   // --- medidas por organizacion, para el 2.1.6 ------------------------------
   // Estas NO estan en `TableFile` porque cada organizacion mide cosas
   // distintas. La comparacion experimental las necesita.
+
+
+  // --- external algorithms (#20, #21, #22) ---------------------------------
+  //
+  // Son lo que el #28 necesita para conectar ORDER BY y GROUP BY del parser con
+  // el core. Hasta este issue estaban implementados, probados y encerrados: no
+  // salian de C++.
+  //
+  // TIEMPOS DE VIDA. Los tres objetos son DUEÑOS de sus archivos temporales, y
+  // el flujo que devuelven deja de valer si el objeto muere. En C++ eso es una
+  // regla que se lee en la cabecera; en Python, donde el recolector decide
+  // cuando destruir, seria un uso-despues-de-liberar dentro del interprete:
+  //
+  //     flujo = quipudb_native.ExternalSort(esquema, 0).sorted(fuente)
+  //     for fila in flujo: ...      # el ExternalSort ya murio
+  //
+  // Por eso cada `sorted`, `grouped` y `joined` lleva `py::keep_alive` sobre el
+  // objeto Y sobre sus entradas: mientras el flujo viva, nada de lo que
+  // necesita se destruye. El caso peor no es el sort sino el index nested loop,
+  // cuya salida recorre el flujo externo y sondea el indice mientras se lee, o
+  // sea que guarda punteros a los dos.
+  //
+  // `PruebasDeTiemposDeVida` en test_bindings.py cubre exactamente los patrones
+  // que se caerian sin esto.
+
+  py::class_<RecordSource>(
+      m, "RecordSource",
+      "Flujo de registros de a uno: la entrada y la salida de los external "
+      "algorithms. Se recorre con un for; no se puede rebobinar ni recorrer dos "
+      "veces.")
+      .def(
+          "__iter__", [](RecordSource& s) -> RecordSource& { return s; },
+          py::keep_alive<0, 1>())
+      .def("__next__", [](RecordSource& s) {
+        Record r;
+        if (!s.next(r)) throw py::stop_iteration();
+        return r;
+      });
+
+  m.def(
+      "source_of", [](TableFile& t) { return source_of(t); }, py::arg("table"),
+      py::keep_alive<0, 1>(),
+      "Recorre una tabla como flujo, sin materializarla.\n\n"
+      "Envuelve el cursor de la tabla, que NO se expone suelto. Vale la misma "
+      "regla: el flujo deja de valer en cuanto la tabla se modifica. Insertar o "
+      "borrar mientras se lee es comportamiento indefinido, no una excepcion.");
+
+  m.def(
+      "source_of", [](std::vector<Record> rs) { return source_of(std::move(rs)); },
+      py::arg("records"),
+      "Adapta una lista ya materializada. Para pruebas y para trozos chicos que "
+      "alguien ya tiene en memoria; una tabla entera va por la otra forma.");
+
+  // --- external sorting (#20) ----------------------------------------------
+
+  py::class_<ExternalSort> sort(
+      m, "ExternalSort",
+      "ORDER BY sobre mas datos de los que caben en memoria: k-way merge.\n\n"
+      "De un solo uso: se construye, se llama a `sorted()` una vez y se lee el "
+      "flujo. `buffers` son PAGINAS, no megabytes -- es lo que hace "
+      "interpretable la formula de costo 2N(1 + ceil(log_{B-1}(N/B))).");
+  sort.attr("MIN_BUFFERS") = ExternalSort::kMinBuffers;
+  sort.attr("DEFAULT_BUFFERS") = ExternalSort::kDefaultBuffers;
+  sort.def(py::init<Schema, std::size_t, std::size_t, std::size_t, std::filesystem::path>(),
+           py::arg("schema"), py::arg("key_column"),
+           py::arg("buffers") = ExternalSort::kDefaultBuffers,
+           py::arg("page_size") = kDefaultPageSize,
+           py::arg("dir") = std::filesystem::path{})
+      .def("sorted", &ExternalSort::sorted, py::arg("source"), py::keep_alive<0, 1>(),
+           py::keep_alive<0, 2>(),
+           "Ordena el flujo y devuelve otro. Si todo cabe en `buffers` paginas "
+           "no toca disco, y `passes()` devuelve 0.")
+      .def("size", &ExternalSort::size, "Registros ordenados")
+      .def("runs", &ExternalSort::runs, "Runs que produjo la fase 1")
+      .def("passes", &ExternalSort::passes, "Pasadas de fusion; 0 si todo cupo en memoria")
+      .def("buffers", &ExternalSort::buffers)
+      .def("records_per_page", &ExternalSort::records_per_page)
+      .def("stats", &ExternalSort::stats, py::return_value_policy::copy,
+           "Paginas leidas y escritas de verdad, para contrastar contra la formula")
+      .def("reset_stats", &ExternalSort::reset_stats)
+      .def("predicted_pages", &ExternalSort::predicted_pages, py::arg("data_pages"),
+           "Costo en paginas que la teoria predice para N paginas de datos")
+      .def("temp_bytes", &ExternalSort::temp_bytes, "Bytes de los temporales vivos");
+
+  // --- GROUP BY externo (#21) ----------------------------------------------
+
+  py::enum_<Aggregate>(m, "Aggregate", "Funcion de agregacion de un GROUP BY")
+      .value("COUNT", Aggregate::Count)
+      .value("SUM", Aggregate::Sum)
+      .value("MIN", Aggregate::Min)
+      .value("MAX", Aggregate::Max)
+      .value("AVG", Aggregate::Avg);
+
+  py::class_<AggregateSpec>(
+      m, "AggregateSpec",
+      "Una agregacion pedida: que funcion, sobre que columna de la ENTRADA, y "
+      "como se llama la columna resultante. Un nombre vacio lo genera el motor.")
+      .def(py::init<>())
+      .def_static("count", &AggregateSpec::count, py::arg("name") = std::string{},
+                  "COUNT(*): cuenta filas, la columna se ignora")
+      .def_static("of", &AggregateSpec::of, py::arg("func"), py::arg("column"),
+                  py::arg("name") = std::string{})
+      .def_readwrite("func", &AggregateSpec::func)
+      .def_readwrite("column", &AggregateSpec::column)
+      .def_readwrite("name", &AggregateSpec::name)
+      .def("__repr__", [](const AggregateSpec& a) {
+        return "AggregateSpec(" + std::string(to_string(a.func)) + ", col=" +
+               std::to_string(a.column) + ")";
+      });
+
+  py::class_<ExternalGroupBy> grupo(
+      m, "ExternalGroupBy",
+      "GROUP BY sobre volumenes que no caben en memoria.\n\n"
+      "Dos caminos: por hash, particionando a disco; y por sort, apoyandose en "
+      "el external sorting. `AUTO` empieza por hash y cae a sort si una "
+      "particion no se deja separar, asi que siempre termina.");
+  py::enum_<ExternalGroupBy::Strategy>(grupo, "Strategy")
+      .value("AUTO", ExternalGroupBy::Strategy::kAuto)
+      .value("HASH", ExternalGroupBy::Strategy::kHash)
+      .value("SORT", ExternalGroupBy::Strategy::kSort);
+  grupo.attr("MIN_PARTITIONS") = ExternalGroupBy::kMinPartitions;
+  grupo.def(py::init<Schema, std::size_t, std::vector<AggregateSpec>,
+                     ExternalGroupBy::Strategy, std::size_t, std::size_t,
+                     std::filesystem::path>(),
+            py::arg("schema"), py::arg("key_column"), py::arg("aggregates"),
+            py::arg("strategy") = ExternalGroupBy::Strategy::kAuto,
+            py::arg("buffers") = ExternalSort::kDefaultBuffers,
+            py::arg("page_size") = kDefaultPageSize,
+            py::arg("dir") = std::filesystem::path{})
+      .def("output_schema", &ExternalGroupBy::output_schema,
+           py::return_value_policy::copy,
+           "Esquema de la SALIDA: la clave seguida de una columna por "
+           "agregacion. No es el de la entrada.")
+      .def("grouped", &ExternalGroupBy::grouped, py::arg("source"), py::keep_alive<0, 1>(),
+           py::keep_alive<0, 2>(),
+           "Agrupa y devuelve el resultado como flujo. Con SORT las filas salen "
+           "ordenadas por la clave; con HASH salen en orden de particion, que no "
+           "es ningun orden util: `used()` dice cual fue.")
+      .def("used", &ExternalGroupBy::used, "Estrategia que se termino usando")
+      .def("groups", &ExternalGroupBy::groups)
+      .def("rows", &ExternalGroupBy::rows)
+      .def("partitions", &ExternalGroupBy::partitions)
+      .def("repartitions", &ExternalGroupBy::repartitions,
+           "Veces que hubo que re-particionar: la medida del sesgo de la clave")
+      .def("fell_back", &ExternalGroupBy::fell_back, "true si el hash no alcanzo y cayo a sort")
+      .def("stats", &ExternalGroupBy::stats, py::return_value_policy::copy)
+      .def("reset_stats", &ExternalGroupBy::reset_stats)
+      .def("temp_bytes", &ExternalGroupBy::temp_bytes);
+
+  // --- JOIN externo (#22) --------------------------------------------------
+
+  py::class_<JoinProbe>(
+      m, "JoinProbe",
+      "El lado interno de un index nested loop: dame las filas cuya clave de "
+      "join es esta. Se construye con `probe_of`.")
+      .def("matches", &JoinProbe::matches, py::arg("key"))
+      .def("schema", &JoinProbe::schema, py::return_value_policy::copy)
+      .def("structure", &JoinProbe::structure,
+           "El `kind::` de lo que sondea: es lo que va como `structure` del paso "
+           "en el plan (ADR 0002)")
+      .def("rows", &JoinProbe::rows)
+      .def("probe_cost", &JoinProbe::probe_cost, "Paginas que cuesta una sonda, medido")
+      .def("stats", &JoinProbe::stats, py::return_value_policy::copy)
+      .def("reset_stats", &JoinProbe::reset_stats);
+
+  m.def(
+      "probe_of", [](Index& ix, TableFile& datos) { return probe_of(ix, datos); },
+      py::arg("index"), py::arg("data"), py::keep_alive<0, 1>(), py::keep_alive<0, 2>(),
+      "Sonda por indice secundario: busca los RIDs en el indice y los resuelve "
+      "en la tabla.");
+
+  m.def(
+      "probe_of", [](TableFile& tabla) { return probe_of(tabla); }, py::arg("table"),
+      py::keep_alive<0, 1>(),
+      "Sonda por clave primaria, con `TableFile::search` sobre la propia tabla. "
+      "Es lo que convierte al B+ agrupado y al secuencial en caminos de join. "
+      "Lanza SchemaError si la clave de join no es la clave de la tabla.");
+
+  py::class_<ExternalJoin> join(
+      m, "ExternalJoin",
+      "Equijoin INTERNO de dos flujos por una columna de cada lado.\n\n"
+      "Dos caminos: hash join por particiones en disco, e index nested loop "
+      "cuando el lado derecho se puede sondear. Cual gana NO es cuestion de que "
+      "exista un indice sino del tamaño relativo -- ver la tabla medida en "
+      "external_join.hpp -- y `AUTO` lo decide con esa regla.");
+  py::enum_<ExternalJoin::Strategy>(join, "Strategy")
+      .value("AUTO", ExternalJoin::Strategy::kAuto)
+      .value("HASH", ExternalJoin::Strategy::kHash)
+      .value("INDEX_NESTED", ExternalJoin::Strategy::kIndexNested);
+  join.attr("MIN_PARTITIONS") = ExternalJoin::kMinPartitions;
+  join.attr("MIN_BUFFERS") = ExternalJoin::kMinBuffers;
+  join.def(py::init<Schema, std::size_t, Schema, std::size_t, ExternalJoin::Strategy,
+                    std::size_t, std::size_t, std::filesystem::path>(),
+           py::arg("left"), py::arg("left_column"), py::arg("right"), py::arg("right_column"),
+           py::arg("strategy") = ExternalJoin::Strategy::kAuto,
+           py::arg("buffers") = ExternalSort::kDefaultBuffers,
+           py::arg("page_size") = kDefaultPageSize,
+           py::arg("dir") = std::filesystem::path{})
+      .def("output_schema", &ExternalJoin::output_schema, py::return_value_policy::copy,
+           "Las columnas de la izquierda seguidas de las de la derecha. Las que "
+           "se llaman igual en los dos lados salen prefijadas por su tabla; la "
+           "columna de join sale dos veces, una por lado.")
+      .def("joined",
+           py::overload_cast<RecordSource&, RecordSource&>(&ExternalJoin::joined),
+           py::arg("left"), py::arg("right"), py::keep_alive<0, 1>(), py::keep_alive<0, 2>(),
+           py::keep_alive<0, 3>(),
+           "Junta dos flujos. Sin sonda no hay camino por indice, asi que "
+           "siempre es hash join; INDEX_NESTED lanza Unsupported aqui.")
+      .def("joined",
+           py::overload_cast<RecordSource&, JoinProbe&, RecordSource&, std::size_t>(
+               &ExternalJoin::joined),
+           py::arg("left"), py::arg("probe"), py::arg("right"), py::arg("left_rows"),
+           py::keep_alive<0, 1>(), py::keep_alive<0, 2>(), py::keep_alive<0, 3>(),
+           py::keep_alive<0, 4>(),
+           "Junta cuando el lado derecho se puede sondear. Pide las dos formas "
+           "del lado derecho porque AUTO elige entre ellas. `left_rows` es "
+           "cuantas filas trae el lado externo, que AUTO necesita para decidir "
+           "y no puede averiguar sin consumir el flujo: un 0 significa 'no lo "
+           "se' y elige hash join, que es la respuesta segura.")
+      .def_static("conviene_index_nested", &ExternalJoin::conviene_index_nested,
+                  py::arg("outer_rows"), py::arg("outer_pages"), py::arg("inner_pages"),
+                  py::arg("probe_cost"),
+                  "La regla medida, expuesta aparte para que el planner pueda "
+                  "explicar por que eligio lo que eligio sin correr el join.")
+      .def("used", &ExternalJoin::used)
+      .def("structure", &ExternalJoin::structure,
+           "'external_hash' con hash join, y el `kind::` de lo que sondeo con INL")
+      .def("left_rows", &ExternalJoin::left_rows)
+      .def("right_rows", &ExternalJoin::right_rows)
+      .def("output_rows", &ExternalJoin::output_rows)
+      .def("partitions", &ExternalJoin::partitions)
+      .def("blocked_partitions", &ExternalJoin::blocked_partitions,
+           "Particiones que no cupieron y hubo que recorrer por bloques")
+      .def("left_records_per_page", &ExternalJoin::left_records_per_page)
+      .def("right_records_per_page", &ExternalJoin::right_records_per_page)
+      .def("stats", &ExternalJoin::stats, py::return_value_policy::copy)
+      .def("reset_stats", &ExternalJoin::reset_stats)
+      .def_static("predicted_pages", &ExternalJoin::predicted_pages, py::arg("left_pages"),
+                  py::arg("right_pages"),
+                  "3(N_R + N_S): dos pasadas de particionado mas una de sondeo")
+      .def("temp_bytes", &ExternalJoin::temp_bytes);
+
+  // --- utilidades de archivo ----------------------------------------------
 
   m.def("file_size",
         [](TableFile& t) -> std::uintmax_t {
