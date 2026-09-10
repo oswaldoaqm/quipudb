@@ -118,7 +118,52 @@ class ExternalJoinTest : public ::testing::Test {
     fs::remove_all(dir_);
     fs::create_directories(dir_);
   }
-  void TearDown() override { fs::remove_all(dir_); }
+  /// Los miembros de una fixture se destruyen DESPUES de `TearDown`, asi que
+  /// todo lo que tenga archivos abiertos hay que soltarlo a mano ANTES de
+  /// borrar el directorio. En Windows `remove_all` sobre un archivo abierto
+  /// falla, y esa excepcion tumba el test aunque su cuerpo haya pasado; en
+  /// Linux no falla, asi que el error no se ve hasta correrlo alla.
+  virtual void soltar_recursos() {}
+
+  void TearDown() override {
+    soltar_recursos();
+    exigir_nada_abierto_bajo(dir_);
+    // Con `error_code` en vez de excepcion: si algo sigue abierto, el test
+    // falla diciendo QUE paso, en vez de con un `filesystem_error` suelto
+    // saliendo de TearDown.
+    std::error_code ec;
+    fs::remove_all(dir_, ec);
+    EXPECT_FALSE(ec) << "no se pudo borrar " << dir_ << ": " << ec.message()
+                     << " -- queda algo con archivos abiertos; sueltalo en soltar_recursos()";
+  }
+
+  /// Comprueba que el proceso no tenga ningun archivo abierto bajo `d`.
+  ///
+  /// Existe porque este error es invisible en Linux: borrar un archivo abierto
+  /// funciona, asi que la suite pasaba en verde mientras en Windows tumbaba los
+  /// ocho tests de `JoinConIndiceTest` de golpe. `/proc/self/fd` es la unica
+  /// forma de verlo desde aqui, y hace que la suite de Linux atrape el fallo en
+  /// vez de depender de correrlo en Windows para enterarse.
+  static void exigir_nada_abierto_bajo([[maybe_unused]] const fs::path& d) {
+#if defined(__linux__)
+    std::error_code ec;
+    const fs::path fds{"/proc/self/fd"};
+    if (!fs::exists(fds, ec)) return;  // sin /proc no hay nada que mirar
+    for (const auto& e : fs::directory_iterator(fds, ec)) {
+      std::error_code ec2;
+      const fs::path destino = fs::read_symlink(e.path(), ec2);
+      if (ec2) continue;  // el fd del propio iterador se cierra a mitad
+      std::error_code ec3;
+      const fs::path rel = fs::relative(destino, d, ec3);
+      if (ec3 || rel.empty()) continue;
+      const std::string s = rel.string();
+      if (s == ".." || s.rfind("../", 0) == 0) continue;  // fuera del directorio
+      ADD_FAILURE() << "sigue abierto " << destino
+                    << " al llegar a TearDown: en Windows esto haria fallar remove_all. "
+                       "Sueltalo en soltar_recursos().";
+    }
+#endif
+  }
 
   [[nodiscard]] std::size_t temporales_vivos() const {
     std::size_t n = 0;
@@ -408,6 +453,15 @@ class JoinConIndiceTest : public ExternalJoinTest {
     }
     ix_ = &db_->create_index("notas", "por_codigo", "codigo", kind_indice);
     sonda_ = probe_of(*ix_, t);
+  }
+
+  /// La sonda apunta al indice y a la tabla, y la `Database` es la dueña de los
+  /// archivos: hay que soltarlos en este orden y antes de que `TearDown` borre
+  /// el directorio.
+  void soltar_recursos() override {
+    sonda_.reset();
+    ix_ = nullptr;
+    db_.reset();
   }
 
   std::unique_ptr<Database> db_;
