@@ -746,3 +746,76 @@ asi que el espacio en disco queda acotado a dos pasadas y no a todas.
 registros con la misma clave conservan su orden relativo entre pasadas. Eso es
 lo que hace que las claves repetidas salgan juntas, que es justo lo que el GROUP
 BY del #21 necesita para agrupar sin otra pasada.
+
+### GROUP BY externo: hash con re-particionado, y sort (#21)
+
+Segunda mitad de la viñeta de External Algorithms. El enunciado permite
+resolverlo "con External Hashing **o el uso estrategico de indices**"; estan
+implementados **los dos caminos**, porque el 2.1.6 pide "analisis comparativo
+entre las tecnicas implementadas" y con uno solo esa comparacion se afirma en
+vez de medirse.
+
+| camino | como | cuando gana |
+|---|---|---|
+| hash | particiona por hash de la clave; agrega particion por particion | muchos grupos chicos; no necesita orden |
+| sort | ordena con el #20 y corta cuando la clave cambia | la salida sale ORDENADA, asi que GROUP BY + ORDER BY por la misma columna paga un solo ordenamiento |
+
+`LosDosCaminosDanExactamenteLoMismo` comprueba que coinciden hasta el ultimo
+decimal: si no, comparar sus tiempos no significaria nada.
+
+#### Lo que tiene que caber en memoria son los GRUPOS, no las filas
+
+Fue el error de la primera version y vale la pena dejarlo escrito. El
+particionado rechazaba una cubeta por su numero de FILAS, asi que 4 000 filas
+repartidas en 5 grupos se declaraban "no caben" -- cuando son cinco
+acumuladores de unas decenas de bytes. Y el mensaje culpaba a "las claves son
+todas iguales", que era exactamente el caso contrario.
+
+Un acumulador es la clave mas un punado de contadores. Lo que decide si una
+particion cabe es cuantas claves DISTINTAS trae, y por eso se agrega al vuelo
+contando grupos en vez de mirar el tamaño de la cubeta.
+
+#### Cuando el re-particionado no converge
+
+Si una cubeta sale de una vuelta con exactamente el mismo tamaño con el que
+entro, esa semilla no separo nada y las siguientes tampoco lo haran. Ahi:
+
+- con `Strategy::kHash` se lanza `Unsupported`. Existe para medir el hash puro
+  en los benchmarks, donde caer a sort falsearia la medicion.
+- con `Strategy::kAuto` se cae a **sort**, que no depende de que el hash separe
+  nada. Es el mismo problema que las claves repetidas del hash extensible (#18),
+  pero aqui hay una salida mejor que encadenar overflow.
+
+El limite no es un contador fijo de vueltas: cuantas hagan falta depende de
+cuantos grupos haya y de cuantas particiones se abran. Con 15 particiones,
+8 000 grupos convergen; con 2, no -- y eso es correcto, no un fallo.
+
+**Al rendirse hay que rescatar TODAS las filas, tambien las de las cubetas ya
+agregadas.** Es el segundo bug que aparecio: esas cubetas se liberaban en cuanto
+sus grupos estaban cerrados, asi que el fallback a sort perdia sus filas -- 2 966
+de 3 000 en la prueba que lo destapo. Ahora se sostienen hasta saber que nadie
+se rindio.
+
+Convertir los grupos ya cerrados de vuelta en filas no sirve: agregar es
+asociativo para SUM, MIN y MAX, pero COUNT contaria 1 en vez de N y AVG
+promediaria promedios.
+
+#### El AVG no es SUM/COUNT
+
+Sumar 100 000 doubles de magnitudes distintas acumula error de redondeo, y el
+2.1.6 compara estos resultados **contra PostgreSQL**, que suma compensado. Un
+AVG que devuelve 15,699999999999998 donde PostgreSQL dice 15,7 hace quedar mal a
+la comparacion por una razon que no es del algoritmo.
+
+SUM y AVG usan **suma de Neumaier**: cuesta una resta y una suma mas por
+elemento. `LaSumaEsCompensadaYNoAcumulaErrorDeRedondeo` suma 1e16 con 10 000
+unos -- donde la suma ingenua se traga los unos enteros -- y exige que el
+resultado sea exacto **y distinto** del ingenuo, para que la prueba no pase por
+casualidad.
+
+#### El esquema de salida no es el de la entrada
+
+Un GROUP BY produce filas con otra forma: `(clave, agregado, agregado, ...)`.
+`output_schema()` lo arma, para que el planner (2.1.3) no tenga que inventarlo.
+Un SUM de INT sube a DOUBLE porque un int32 puede desbordar, y eso obligaria a
+elegir entre truncar y lanzar a media agregacion.
