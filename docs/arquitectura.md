@@ -819,3 +819,111 @@ Un GROUP BY produce filas con otra forma: `(clave, agregado, agregado, ...)`.
 `output_schema()` lo arma, para que el planner (2.1.3) no tenga que inventarlo.
 Un SUM de INT sube a DOUBLE porque un int32 puede desbordar, y eso obligaria a
 elegir entre truncar y lanzar a media agregacion.
+
+### JOIN externo: hash join por particiones e index nested loop (#22)
+
+Cierra la viñeta de External Algorithms del 2.1.2: *"GROUP BY y JOIN
+optimizados con External Hashing o el uso estrategico de indices"*. El plan de
+ejecucion (ADR 0002) ya tenia reservado el paso `op: "join"`, y las reglas 5 y
+6 de ese ADR se escribieron aqui, al descubrir que le faltaba decir dos cosas.
+
+**Hash join (grace).** Se particionan las DOS entradas por el hash de su clave,
+escribiendo cada particion a disco. Dos filas que casan comparten clave, luego
+comparten hash, luego caen en particiones homologas: basta comparar la
+particion *i* de un lado con la *i* del otro. En memoria vive una particion del
+lado interno a la vez, y eso es lo que lo hace externo.
+
+**Index nested loop.** Se recorre el lado externo una vez y por cada fila se
+sondea el interno. Quien sondea es un `JoinProbe`, y hay dos: un indice
+secundario (#16, #19), y **la propia tabla cuando la clave de join es su clave
+primaria**, que es lo que convierte al B+ agrupado y al secuencial en caminos
+de join. El segundo caso no estaba en el criterio del issue y es el join mas
+comun que existe: una clave foranea apuntando a una clave primaria.
+
+Sondear un heap file por clave primaria esta **prohibido** (`probe_of` lanza):
+su `search` recorre la tabla entera, asi que una sonda por fila externa seria
+un producto cartesiano disfrazado de estrategia por indice.
+
+#### La regla del issue era falsa, y esta medida
+
+El criterio de aceptacion del #22 decia *"si hay indice sobre la clave de join
+se usa index nested loop; si no, hash join"*. Medido sobre el motor real
+(`docs/medir-condicion-join.cpp`, GCC 13.3.0, paginas de 4 KB):
+
+| \|R\| | \|S\| | claves | indice | INL (pags) | hash (pags) | gana |
+|---|---|---|---|---|---|---|
+| 10 000 | 10 000 | 10 000 | `bplus_unclustered` | 40 176 | 474 | hash (85x) |
+| 10 000 | 10 000 | 10 000 | `extendible_hash` | 20 082 | 474 | hash (42x) |
+| 10 000 | 10 000 | 100 | `bplus_unclustered` | 1 033 282 | 474 | hash (2180x) |
+| 1 000 | 10 000 | 10 000 | `bplus_unclustered` | 4 017 | 261 | hash |
+| 100 | 10 000 | 10 000 | `bplus_unclustered` | 401 | 240 | hash |
+| 50 | 10 000 | 10 000 | `bplus_unclustered` | 201 | 240 | **INL** |
+| 100 | 10 000 | 10 000 | `extendible_hash` | 201 | 240 | **INL** |
+
+El INL paga por **fila** externa -- 4,0 paginas por sonda con B+ no agrupado,
+2,0 con hash extensible -- y el hash join paga por **pagina**, 3(N_R + N_S).
+Con 81 filas por pagina, una fila externa de mas le cuesta al INL cuatro
+paginas y al hash join cuatro centesimas. Por eso el INL solo gana cuando el
+lado externo es del orden de |S|/100, y el caso que el propio issue mandaba
+probar -- dos tablas de 10 000 -- es donde su regla elegia la estrategia 85
+veces mas cara.
+
+Es la cuarta vez en este repo que una regla de folklore no sobrevive a la
+medicion (#18, #19 dos veces, y esta). `conviene_index_nested()` implementa la
+comparacion de costos, y tres pruebas la fijan para que nadie la "corrija" de
+vuelta sin volver a medir.
+
+La decision supone **una coincidencia por fila externa**, que es el mejor caso
+posible para el INL. Es a proposito: con claves repetidas el INL empeora y el
+hash join no, asi que equivocarse por ahi solo puede llevar a elegir hash de
+mas. Elegir hash de mas cuesta un factor dos; elegir INL de mas cuesta 2180x.
+
+Por lo mismo, `joined()` pide el tamaño del lado externo y **un 0 significa
+"no lo se" y elige hash**: no hay forma de averiguarlo sin consumir el flujo,
+que es justo lo que no se puede hacer antes de decidir.
+
+#### La particion que no cabe
+
+Si una particion del lado interno no entra en memoria no se re-particiona: se
+recorre por **bloques**. Se carga lo que cabe, se recorre la particion externa
+entera contra ese bloque, y se pasa al siguiente.
+
+Es distinto de lo que hizo el #21 a proposito. Re-particionar no separa nada
+cuando todas las claves de la particion son iguales -- el mismo problema de las
+claves repetidas del #18 --, y ese caso en un join no es raro: es cualquier
+join por una columna con pocos valores. El recorrido por bloques termina
+siempre, y su costo se sabe de antemano, asi que `stats()` se puede contrastar
+contra una formula igual que en el sort. `blocked_partitions()` cuenta cuantas
+particiones lo necesitaron, que es la medida del sesgo de la clave.
+
+#### El esquema de salida y los nombres repetidos
+
+La salida es la concatenacion de los dos esquemas. Se prefijan con el nombre de
+su tabla **solo las columnas que aparecen en los dos lados** (`alumnos.codigo`,
+`notas.codigo`); las demas conservan su nombre. Prefijarlas todas ensuciaria
+las cabeceras que el panel de resultados (#36) muestra en el caso comun, y no
+prefijar ninguna dejaria dos columnas indistinguibles.
+
+Se aparta del #21, que desambigua por indice (`sum_nota`, `sum_nota_2`), porque
+aqui hay algo mejor que un numero: las dos columnas vienen de tablas con
+nombre.
+
+La columna de join sale **dos veces**, una por lado. Quedarse con una sola es
+lo que hace `USING` en SQL, y quien lo quiera pone un `project` encima, que es
+como el ADR 0002 ya lo modela.
+
+`output_schema().key_column` queda en 0 porque un join no tiene clave primaria
+y `Schema` no sabe expresar que no la hay. Nadie debe usarla. Es la misma
+limitacion que arrastra `ExternalGroupBy::output_schema()`, y la lleva anotada
+en los dos sitios para que no se convierta en una suposicion.
+
+#### Solo INNER, y solo igualdad
+
+Es lo que pide la viñeta, y la gramatica que el 2.1.3 enumera no tiene sintaxis
+para un OUTER. Agregarlo seria decidir por el parser algo que el parser
+todavia no pide.
+
+Juntar columnas de tipos distintos **falla al construir**. No da cero
+coincidencias: `compare` define un orden entre tipos distintos para tener un
+orden total, asi que un INT contra un VARCHAR daria un resultado
+silenciosamente incorrecto en vez de un error.
