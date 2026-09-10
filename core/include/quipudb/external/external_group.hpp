@@ -31,19 +31,29 @@
 //            consulta con GROUP BY y ORDER BY por la misma columna paga un solo
 //            ordenamiento. Y no depende de que el hash separe nada.
 //
-// El caso que el hash no puede resolver
-// -------------------------------------
+// Que es lo que tiene que caber en memoria
+// ----------------------------------------
 //
-//   Si una particion no cabe en memoria y TODAS sus claves son iguales,
-//   re-particionar no separa nada: es el mismo problema que las claves
-//   repetidas del hash extensible (#18), donde la salida fue encadenar
-//   overflow. Aqui la salida es mejor: se cae al camino por SORT, que no
-//   depende de que el hash separe.
+//   Los GRUPOS, no las filas. Un grupo ocupa un acumulador de unas decenas de
+//   bytes; sus filas viven en disco y se leen de a una pagina. Por eso el tope
+//   se mide en acumuladores y no en filas, y por eso 20 000 filas de una sola
+//   clave no desbordan nada: son un acumulador.
+//
+//   Esto ultimo desmiente lo que esta cabecera decia antes -- que el caso que
+//   el hash no puede resolver es que "todas las claves sean iguales". Es al
+//   reves: claves todas iguales es UN grupo y cabe siempre, como comprueba
+//   `TodasLasClavesIgualesEsUnSoloGrupoYCabeDeSobra`. Lo que no se puede
+//   resolver es lo contrario: demasiados grupos DISTINTOS en una particion que
+//   ninguna mezcla consigue separar.
 //
 //   Por eso `Strategy::kAuto` no es una comodidad sino la opcion correcta por
 //   omision: empieza por hash y cae a sort cuando el hash no alcanza. Elegir
 //   `kHash` a mano es pedir que falle con `Unsupported` en ese caso, y existe
 //   para que los benchmarks puedan medir el hash puro.
+//
+//   Cuando se rinde, las filas no se han perdido: siguen en los archivos de la
+//   primera vuelta, y el fallback las relee de ahi. No hay que guardarlas en
+//   memoria por si acaso.
 //
 // Que devuelve
 // ------------
@@ -188,8 +198,13 @@ class ExternalGroupBy {
   [[nodiscard]] const OpStats& stats() const noexcept { return stats_; }
   void reset_stats() noexcept { stats_.reset(); }
 
+  /// Bytes que ocupan las particiones vivas. Cero si se agrupo por sort.
+  [[nodiscard]] std::uintmax_t temp_bytes() const;
+
  private:
   class Salida;
+  class Temporal;
+  class FuenteDeParticiones;
   struct Acumulador;
 
   void validar();
@@ -201,13 +216,21 @@ class ExternalGroupBy {
   void acumular(const Record& fila, Acumulador& acc) const;
   [[nodiscard]] Record cerrar(const Key& clave, const Acumulador& acc) const;
 
-  /// Agrupa por hash. Si una particion no cabe ni tras re-particionar,
-  /// pone en `sin_agrupar` las filas que quedaban y marca `se_rindio`: la
-  /// entrada ya se consumio y sin esas filas el fallback a sort seria
-  /// imposible.
-  [[nodiscard]] std::vector<Record> por_hash(RecordSource& entrada,
-                                            std::vector<Record>* sin_agrupar,
-                                            bool& se_rindio);
+  /// Reparte un flujo en `p` archivos de particion por el hash de su clave.
+  /// `vuelta` cambia la mezcla en cada re-particionado sin romper lo unico que
+  /// no se puede romper: que dos claves iguales caigan juntas.
+  [[nodiscard]] std::vector<std::shared_ptr<Temporal>> repartir(RecordSource& entrada,
+                                                                std::size_t p,
+                                                                std::size_t vuelta);
+
+  [[nodiscard]] std::filesystem::path nueva_ruta();
+
+  /// Agrupa por hash, con las particiones EN DISCO. Si una particion no cabe ni
+  /// tras re-particionar, marca `se_rindio` y devuelve vacio: las filas
+  /// originales siguen en los archivos de la primera vuelta (`nivel0_`), asi
+  /// que el fallback a sort las relee de ahi en vez de haberlas guardado en
+  /// memoria por si acaso.
+  [[nodiscard]] std::vector<Record> por_hash(RecordSource& entrada, bool& se_rindio);
   [[nodiscard]] std::vector<Record> por_sort(RecordSource& entrada);
 
   Schema entrada_;
@@ -225,6 +248,16 @@ class ExternalGroupBy {
   std::size_t particiones_ = 0;
   std::size_t reparticiones_ = 0;
   bool cayo_ = false;
+  std::uint64_t serie_ = 0;  // para nombrar los temporales
+
+  /// Particiones de la PRIMERA vuelta. Se mantienen vivas hasta el final: son
+  /// las que tienen las filas originales sin agregar, y son lo que el fallback
+  /// a sort relee si el hash se rinde.
+  std::vector<std::shared_ptr<Temporal>> nivel0_;
+
+  /// Todas las particiones vivas, de cualquier nivel. Existe para que el
+  /// destructor las borre aunque una excepcion interrumpa el reparto.
+  std::vector<std::shared_ptr<Temporal>> vivos_;
 
   OpStats stats_;
 };
