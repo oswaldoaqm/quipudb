@@ -144,7 +144,10 @@ TEST_F(HashIndexTest, NoSoportaRangoYLoDiceAntesDeQueSeLoPidan) {
   EXPECT_FALSE(ix.supports_range());
   // Y si lo ignora, recibe una excepción en vez de un resultado caro en
   // silencio: devolverlo igual costaría un scan completo disfrazado de índice.
-  EXPECT_THROW(ix.range_search(Value{std::int32_t{20}}, Value{std::int32_t{25}}), Unsupported);
+  // El static_cast<void> es porque `range_search` es [[nodiscard]] y
+  // EXPECT_THROW descarta el valor: sin el, GCC 16 avisa (-Wunused-result).
+  EXPECT_THROW(static_cast<void>(ix.range_search(Value{std::int32_t{20}}, Value{std::int32_t{25}})),
+               Unsupported);
 }
 
 // ---------------------------------------------------------------------------
@@ -374,7 +377,7 @@ TEST_F(HashIndexTest, UnPunteroColgadoSeDenunciaEnVezDeDevolverDeMenos) {
   // Se apunta a un registro que no existe: la tabla y el índice quedaron
   // desincronizados y eso hay que decirlo.
   ix.insert(Value{std::int32_t{18}}, RID{9999, 0});
-  EXPECT_THROW(ix.lookup(Value{std::int32_t{18}}), IoError);
+  EXPECT_THROW(static_cast<void>(ix.lookup(Value{std::int32_t{18}})), IoError);
 }
 
 }  // namespace

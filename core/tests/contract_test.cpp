@@ -466,7 +466,9 @@ TEST(IndiceMemoria, HashNoSoportaRango) {
   MemoryIndex idx(DataType::Varchar, /*ordered=*/false);
   idx.insert(Value{std::string{"lima"}}, RID{0, 0});
   EXPECT_FALSE(idx.supports_range());
-  EXPECT_THROW(idx.range_search(Value{std::string{"a"}}, Value{std::string{"z"}}), Unsupported);
+  EXPECT_THROW(
+      static_cast<void>(idx.range_search(Value{std::string{"a"}}, Value{std::string{"z"}})),
+      Unsupported);
   EXPECT_EQ(idx.search(Value{std::string{"lima"}}).size(), 1u);
   EXPECT_EQ(idx.kind(), kind::kExtendibleHash);
 }

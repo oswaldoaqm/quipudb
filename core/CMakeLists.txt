@@ -7,6 +7,15 @@ add_library(quipudb_core ${QUIPUDB_CORE_SOURCES})
 target_include_directories(quipudb_core
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+# El core es una biblioteca estatica, pero los bindings (#23) la enlazan dentro
+# de un modulo COMPARTIDO. Sin codigo independiente de la posicion, ese enlace
+# falla con "relocation R_X86_64_PC32 ... can not be used when making a shared
+# object". Se pide siempre y no solo con QUIPUDB_BUILD_PYTHON=ON para que las
+# pruebas del core y los bindings compilen exactamente el mismo objeto: si solo
+# se activara con los bindings, un fallo que dependa de -fPIC no aparecería en
+# la corrida normal de ctest.
+set_target_properties(quipudb_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 target_compile_options(quipudb_core PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
   $<$<CXX_COMPILER_ID:MSVC>:/W4>)

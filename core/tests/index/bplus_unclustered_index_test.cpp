@@ -254,7 +254,7 @@ TEST_F(UnclusteredTest, UnPunteroColgadoSeDenunciaEnVezDeDevolverDeMenos) {
   // colgado. Mantener las dos cosas en sincronia es del planner (2.1.3).
   const std::int32_t edad = edad_de(alumno(5));
   ASSERT_EQ(datos.remove(Value{5}), 1u);
-  EXPECT_THROW(ix.lookup(Value{edad}), IoError);
+  EXPECT_THROW(static_cast<void>(ix.lookup(Value{edad})), IoError);
   // El indice por si solo sigue respondiendo: es la tabla la que cambio.
   EXPECT_FALSE(ix.search(Value{edad}).empty());
 }
