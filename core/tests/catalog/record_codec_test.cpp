@@ -82,7 +82,9 @@ TEST(RecordCodec, RegistroQueNoCalzaLanza) {
 TEST(RecordCodec, BufferCortoLanzaEnAmbasDirecciones) {
   const RecordCodec codec(alumnos());
   std::vector<std::byte> chico(codec.size() - 1);
-  EXPECT_THROW(codec.encode(Record{1, std::string{"a"}, 0.0, true, Date{}}, chico), InvalidRecord);
+  EXPECT_THROW(
+      static_cast<void>(codec.encode(Record{1, std::string{"a"}, 0.0, true, Date{}}, chico)),
+      InvalidRecord);
   EXPECT_THROW(static_cast<void>(codec.decode(chico)), InvalidRecord);
   EXPECT_THROW(static_cast<void>(codec.decode_column(chico, 0)), InvalidRecord);
 }
