@@ -2,12 +2,16 @@
 
 #include <algorithm>
 #include <cmath>
+#include <deque>
 #include <map>
+#include <system_error>
 #include <utility>
 
 #include "quipudb/catalog/record_codec.hpp"
 #include "quipudb/error.hpp"
 #include "quipudb/index/extendible_hash.hpp"
+#include "quipudb/storage/disk_manager.hpp"
+#include "quipudb/storage/page.hpp"
 
 namespace quipudb {
 
@@ -265,154 +269,308 @@ std::vector<Record> ExternalGroupBy::por_sort(RecordSource& entrada) {
 }
 
 // ---------------------------------------------------------------------------
-// Camino por hash
+// Camino por hash: particiones en disco
 // ---------------------------------------------------------------------------
+
+/// Un archivo de particion que se borra solo. Mismo patron que los runs del
+/// #20: borrarlos al terminar no basta, porque una excepcion a media escritura
+/// dejaria p archivos regados.
+class ExternalGroupBy::Temporal {
+ public:
+  explicit Temporal(std::filesystem::path ruta) : ruta_(std::move(ruta)) {}
+  ~Temporal() {
+    // El destructor no puede lanzar: si el archivo ya no esta, no hay nada
+    // mejor que hacer que seguir.
+    std::error_code ec;
+    std::filesystem::remove(ruta_, ec);
+  }
+  Temporal(const Temporal&) = delete;
+  Temporal& operator=(const Temporal&) = delete;
+
+  [[nodiscard]] const std::filesystem::path& path() const noexcept { return ruta_; }
+  [[nodiscard]] std::size_t rows() const noexcept { return filas_; }
+  void add_row() noexcept { ++filas_; }
+
+ private:
+  std::filesystem::path ruta_;
+  std::size_t filas_ = 0;
+};
 
 namespace {
 
-/// Filas de una particion, en memoria mientras se agrega.
-using Lote = std::vector<Record>;
+/// Escribe registros a una particion, de a una pagina. El layout es el de un
+/// run del #20: registros serializados uno tras otro y `record_count` en la
+/// cabecera.
+///
+/// Aqui esta el nucleo de lo que este arreglo corrige: la memoria que ocupa
+/// una particion mientras se escribe es UNA pagina, no sus filas.
+class EscritorDeParticion {
+ public:
+  EscritorDeParticion(const std::filesystem::path& ruta, const RecordCodec& codec,
+                      std::size_t page_size, std::size_t por_pagina, OpStats& stats)
+      : disco_(ruta, page_size),
+        codec_(&codec),
+        pagina_(page_size),
+        por_pagina_(por_pagina),
+        stats_(&stats) {}
+
+  void write(const Record& r) {
+    codec_->encode(r, pagina_.body().subspan(en_pagina_ * codec_->size(), codec_->size()));
+    ++en_pagina_;
+    if (en_pagina_ == por_pagina_) volcar();
+  }
+
+  void close() {
+    if (en_pagina_ > 0) volcar();
+    disco_.flush();
+  }
+
+ private:
+  void volcar() {
+    pagina_.set_record_count(static_cast<std::uint16_t>(en_pagina_));
+    const PageId id = disco_.allocate_page();
+    disco_.write_page(id, pagina_);
+    ++stats_->pages_written;
+    pagina_.clear();
+    en_pagina_ = 0;
+  }
+
+  DiskManager disco_;
+  const RecordCodec* codec_;
+  Page pagina_;
+  std::size_t por_pagina_;
+  OpStats* stats_;
+  std::size_t en_pagina_ = 0;
+};
+
+/// Lee una particion de a una pagina.
+class LectorDeParticion {
+ public:
+  LectorDeParticion(const std::filesystem::path& ruta, const RecordCodec& codec,
+                    std::size_t page_size, OpStats& stats)
+      : disco_(ruta, page_size), codec_(&codec), pagina_(page_size), stats_(&stats) {}
+
+  bool next(Record& out) {
+    while (slot_ >= en_pagina_) {
+      if (proxima_ > disco_.page_count()) return false;
+      disco_.read_page(proxima_, pagina_);
+      ++stats_->pages_read;
+      ++proxima_;
+      en_pagina_ = pagina_.record_count();
+      slot_ = 0;
+    }
+    out = codec_->decode(pagina_.read_bytes(slot_ * codec_->size(), codec_->size()));
+    ++slot_;
+    ++stats_->records_examined;
+    return true;
+  }
+
+ private:
+  DiskManager disco_;
+  const RecordCodec* codec_;
+  Page pagina_;
+  OpStats* stats_;
+  PageId proxima_ = 1;
+  std::uint16_t en_pagina_ = 0;
+  std::uint16_t slot_ = 0;
+};
 
 }  // namespace
 
-std::vector<Record> ExternalGroupBy::por_hash(RecordSource& entrada,
-                                             std::vector<Record>* sin_agrupar,
-                                             bool& se_rindio) {
+/// Recorre varias particiones seguidas como si fueran un flujo solo. Es lo que
+/// alimenta al fallback por sort: cuando el hash se rinde, las filas originales
+/// no estan en memoria -- estan en los archivos de la primera vuelta -- y desde
+/// aqui se releen sin materializar nada.
+class ExternalGroupBy::FuenteDeParticiones final : public RecordSource {
+ public:
+  FuenteDeParticiones(std::vector<std::shared_ptr<Temporal>> partes, Schema esquema,
+                      std::size_t page_size, OpStats& stats)
+      : partes_(std::move(partes)),
+        codec_(std::move(esquema)),
+        page_size_(page_size),
+        stats_(&stats) {}
+
+  bool next(Record& out) override {
+    for (;;) {
+      if (lector_ && lector_->next(out)) return true;
+      lector_.reset();
+      while (i_ < partes_.size() && partes_[i_]->rows() == 0) ++i_;
+      if (i_ >= partes_.size()) return false;
+      lector_ = std::make_unique<LectorDeParticion>(partes_[i_++]->path(), codec_, page_size_,
+                                                    *stats_);
+    }
+  }
+
+ private:
+  std::vector<std::shared_ptr<Temporal>> partes_;
+  RecordCodec codec_;
+  std::size_t page_size_;
+  OpStats* stats_;
+  std::size_t i_ = 0;
+  std::unique_ptr<LectorDeParticion> lector_;
+};
+
+std::uintmax_t ExternalGroupBy::temp_bytes() const {
+  std::uintmax_t total = 0;
+  for (const auto& t : vivos_) {
+    std::error_code ec;
+    const auto n = std::filesystem::file_size(t->path(), ec);
+    if (!ec) total += n;
+  }
+  return total;
+}
+
+std::filesystem::path ExternalGroupBy::nueva_ruta() {
+  return dir_ / ("quipudb_group_" + std::to_string(reinterpret_cast<std::uintptr_t>(this)) +
+                 "_" + std::to_string(serie_++) + ".part");
+}
+
+std::vector<std::shared_ptr<ExternalGroupBy::Temporal>> ExternalGroupBy::repartir(
+    RecordSource& entrada, std::size_t p, std::size_t vuelta) {
   const Column& col = entrada_.columns[key_column_];
+  const RecordCodec codec{entrada_};
+  const std::size_t por_pagina =
+      std::max<std::size_t>(1, (page_size_ - Page::kHeaderSize) / codec.size());
+
+  std::vector<std::shared_ptr<Temporal>> partes;
+  std::vector<std::unique_ptr<EscritorDeParticion>> escritores;
+  partes.reserve(p);
+  escritores.reserve(p);
+  for (std::size_t i = 0; i < p; ++i) {
+    partes.push_back(std::make_shared<Temporal>(nueva_ruta()));
+    // Se registran ANTES de escribir: si esto lanza a media vuelta, el
+    // destructor ya los conoce y los borra. Registrarlos al final dejaria
+    // archivos regados justo en el caso que importa.
+    vivos_.push_back(partes.back());
+    escritores.push_back(std::make_unique<EscritorDeParticion>(partes.back()->path(), codec,
+                                                               page_size_, por_pagina, stats_));
+  }
+
+  Record r;
+  while (entrada.next(r)) {
+    if (vuelta == 0) {
+      entrada_.validate(r);
+      ++filas_;
+    }
+    const std::uint64_t h = ExtendibleHash::hash_of(col, r[key_column_]);
+    // Mezclar con la vuelta cambia el reparto sin romper lo unico que no se
+    // puede romper: que dos claves iguales sigan cayendo juntas.
+    const std::uint64_t mezclado = vuelta == 0 ? h : ((h >> (8 * vuelta)) ^ h);
+    const std::size_t destino = mezclado % p;
+    escritores[destino]->write(r);
+    partes[destino]->add_row();
+  }
+  for (auto& e : escritores) e->close();
+  return partes;
+}
+
+std::vector<Record> ExternalGroupBy::por_hash(RecordSource& entrada, bool& se_rindio) {
   // Una particion por buffer disponible, menos uno para leer la entrada.
   const std::size_t p = std::max(kMinPartitions, buffers_ - 1);
   particiones_ = p;
 
-  // Las particiones se sostienen en memoria y se vuelcan a `pendientes` cuando
-  // una se pasa del tope. Es lo mismo que hace un motor real con su buffer
-  // pool: aqui el tope se expresa en filas, derivado de los buffers.
   // Cuantos acumuladores caben en memoria. Un acumulador es la clave mas un
   // punado de contadores, bastante mas chico que una fila, pero se acota con la
   // misma unidad -- paginas -- para que `buffers` signifique lo mismo aqui que
   // en el sort (#20).
   const RecordCodec codec{entrada_};
-  const std::size_t por_pagina = std::max<std::size_t>(
-      1, (page_size_ - Page::kHeaderSize) / codec.size());
+  const std::size_t por_pagina =
+      std::max<std::size_t>(1, (page_size_ - Page::kHeaderSize) / codec.size());
   const std::size_t tope_grupos = std::max<std::size_t>(1, buffers_ * por_pagina);
 
-  std::vector<Lote> cubetas(p);
-  Record fila;
-  while (entrada.next(fila)) {
-    entrada_.validate(fila);
-    ++filas_;
-    const std::uint64_t h = ExtendibleHash::hash_of(col, fila[key_column_]);
-    cubetas[h % p].push_back(fila);
-  }
+  // Primera vuelta: la entrada se reparte en p archivos. A partir de aqui la
+  // entrada ya no existe, y las filas viven en disco.
+  nivel0_ = repartir(entrada, p, 0);
 
   // Cada particion se agrega por separado: todas las filas de un grupo
-  // comparten hash, asi que estan en la misma cubeta y no hay que mirar las
+  // comparten hash, asi que estan en el mismo archivo y no hay que mirar los
   // demas. Eso es lo que hace que el hash no necesite ordenar nada.
+  //
+  // La cola puede crecer: una particion que no cabe se re-particiona y sus
+  // trozos vuelven a la cola, un nivel mas abajo.
+  struct Pendiente {
+    std::shared_ptr<Temporal> archivo;
+    std::size_t vuelta;      // cuantas veces se re-particiono ya
+    std::size_t tamano_padre;  // filas del archivo del que salio
+  };
+  std::deque<Pendiente> cola;
+  for (auto& t : nivel0_) cola.push_back(Pendiente{t, 0, 0});
+
   se_rindio = false;
-  std::size_t ultimo_tamano = 0;
   std::vector<Record> salida;
-  // Filas de las cubetas ya agregadas. Se sostienen hasta el final por si
-  // alguna cubeta posterior se rinde y hay que rehacer todo por sort.
-  std::vector<Lote> agregadas;
-  for (std::size_t semilla_vuelta = 0; !cubetas.empty();) {
-    std::vector<Lote> siguientes;
-    for (auto& cubeta : cubetas) {
-      if (cubeta.empty()) continue;
 
-      // Lo que tiene que caber en memoria son los GRUPOS, no las filas: un
-      // grupo ocupa un acumulador de unas decenas de bytes, no sus filas. Por
-      // eso se agrega al vuelo y se mira cuantos grupos distintos van
-      // apareciendo, en vez de mirar cuantas filas trae la cubeta.
-      //
-      // Ese era el error de la primera version: rechazaba una cubeta de 4 000
-      // filas repartidas en 5 grupos, que cabe de sobra, y encima culpaba a
-      // "las claves son todas iguales", que era justo el caso contrario.
-      {
-        std::map<Key, Acumulador, KeyLess> acc;
-        bool desbordo = false;
-        for (const auto& r : cubeta) {
-          const auto it = acc.find(r[key_column_]);
-          if (it == acc.end() && acc.size() >= tope_grupos) {
-            desbordo = true;
-            break;
-          }
-          acumular(r, it == acc.end() ? acc[r[key_column_]] : it->second);
-        }
-        if (!desbordo) {
-          for (const auto& [clave, a] : acc) salida.push_back(cerrar(clave, a));
-          // La cubeta NO se libera aqui: si una cubeta posterior se rinde, el
-          // fallback a sort necesita TODAS las filas, tambien las de las que ya
-          // se agregaron. Se mueven a `agregadas` y se liberan al final, cuando
-          // ya se sabe que nadie se rindio.
-          agregadas.push_back(std::move(cubeta));
-          cubeta.clear();
-          continue;
-        }
-      }
+  while (!cola.empty()) {
+    Pendiente actual = std::move(cola.front());
+    cola.pop_front();
+    if (actual.archivo->rows() == 0) continue;
 
-      // Demasiados grupos distintos para esta cubeta: se re-particiona con
-      // otra semilla para repartirlos entre varias.
-      //
-      // Cuantas vueltas hacen falta depende de cuantos grupos haya, asi que el
-      // limite no es un contador fijo sino no haber avanzado: si una cubeta
-      // sale de una vuelta con exactamente el mismo tamaño que entro, esa
-      // semilla no separo nada y las siguientes tampoco lo haran.
-      if (semilla_vuelta >= kMaxRepartitions && cubeta.size() == ultimo_tamano) {
-        if (pedida_ == Strategy::kHash) {
-          throw Unsupported(
-              "una particion con mas de " + std::to_string(tope_grupos) +
-              " grupos distintos no cabe en memoria y re-particionarla no la separa. "
-              "Usa Strategy::kAuto o kSort");
+    // Lo que tiene que caber en memoria son los GRUPOS, no las filas: un grupo
+    // ocupa un acumulador de unas decenas de bytes. Por eso se agrega al vuelo
+    // y se mira cuantos grupos distintos van apareciendo, en vez de mirar
+    // cuantas filas trae la particion.
+    std::map<Key, Acumulador, KeyLess> acc;
+    bool desbordo = false;
+    {
+      LectorDeParticion lector(actual.archivo->path(), codec, page_size_, stats_);
+      Record r;
+      while (lector.next(r)) {
+        const auto it = acc.find(r[key_column_]);
+        if (it == acc.end() && acc.size() >= tope_grupos) {
+          desbordo = true;
+          break;
         }
-        // Se rinde. Las filas que quedan se devuelven por `sin_agrupar` para
-        // que el llamador las ordene: la entrada ya se consumio y no se puede
-        // releer, asi que perderlas aqui haria imposible el fallback.
-        se_rindio = true;
-        for (auto& c : cubetas) {
-          sin_agrupar->insert(sin_agrupar->end(), std::make_move_iterator(c.begin()),
-                              std::make_move_iterator(c.end()));
-        }
-        for (auto& s : siguientes) {
-          sin_agrupar->insert(sin_agrupar->end(), std::make_move_iterator(s.begin()),
-                              std::make_move_iterator(s.end()));
-        }
-        for (auto& a : agregadas) {
-          sin_agrupar->insert(sin_agrupar->end(), std::make_move_iterator(a.begin()),
-                              std::make_move_iterator(a.end()));
-        }
-        // Lo ya agregado en esta vuelta NO se puede descartar sin mas: sus
-        // filas ya se liberaron con `cubeta.clear()`, asi que rehacer todo por
-        // sort perderia esos grupos. Se convierten de vuelta en filas -- una
-        // por grupo, con sus agregados ya calculados -- para que el sort las
-        // vuelva a agrupar. Funciona porque agregar es asociativo... salvo
-        // para COUNT y AVG, que contarian 1 en vez de N.
-        //
-        // Asi que en vez de eso se descarta `salida` y se avisa: el llamador
-        // tiene que rehacer la agregacion entera sobre TODAS las filas, y por
-        // eso `por_hash` las conserva enteras hasta saber si va a rendirse.
-        salida.clear();
-        return {};
-      }
-      ++reparticiones_;
-      ultimo_tamano = cubeta.size();
-      std::vector<Lote> sub(p);
-      for (const auto& r : cubeta) {
-        // Mezclar con la semilla cambia el reparto sin cambiar que dos claves
-        // iguales sigan juntas, que es lo unico que no se puede romper.
-        const std::uint64_t h = ExtendibleHash::hash_of(col, r[key_column_]);
-        sub[((h >> (8 * (semilla_vuelta + 1))) ^ h) % p].push_back(r);
-      }
-      cubeta.clear();
-      cubeta.shrink_to_fit();
-      for (auto& s : sub) {
-        if (!s.empty()) siguientes.push_back(std::move(s));
+        acumular(r, it == acc.end() ? acc[r[key_column_]] : it->second);
       }
     }
-    cubetas = std::move(siguientes);
-    if (!cubetas.empty()) ++semilla_vuelta;
+    if (!desbordo) {
+      for (const auto& [clave, a] : acc) salida.push_back(cerrar(clave, a));
+      continue;
+    }
+    acc.clear();
+
+    // Demasiados grupos distintos para esta particion: se re-particiona con
+    // otra mezcla para repartirlos entre varias.
+    //
+    // Cuantas vueltas hacen falta depende de cuantos grupos haya, asi que el
+    // limite no es un contador fijo sino no haber avanzado: si una particion
+    // sale de una vuelta con exactamente el mismo tamano que entro, esa mezcla
+    // no separo nada y las siguientes tampoco lo haran.
+    if (actual.vuelta >= kMaxRepartitions && actual.archivo->rows() == actual.tamano_padre) {
+      if (pedida_ == Strategy::kHash) {
+        throw Unsupported("una particion con mas de " + std::to_string(tope_grupos) +
+                          " grupos distintos no cabe en memoria y re-particionarla no la "
+                          "separa. Usa Strategy::kAuto o kSort");
+      }
+      // Se rinde. No hace falta rescatar filas a memoria: las originales siguen
+      // en los archivos de la primera vuelta, que `nivel0_` mantiene vivos, y
+      // el fallback los relee desde ahi.
+      //
+      // Hay que rehacer la agregacion ENTERA, tambien la de las particiones ya
+      // cerradas: agregar es asociativo salvo para COUNT y AVG, que contarian 1
+      // en vez de N si se reagregaran sobre filas ya agregadas.
+      se_rindio = true;
+      salida.clear();
+      return {};
+    }
+
+    LectorDeParticion lector(actual.archivo->path(), codec, page_size_, stats_);
+    class FuenteDeUna final : public RecordSource {
+     public:
+      explicit FuenteDeUna(LectorDeParticion& l) : l_(&l) {}
+      bool next(Record& out) override { return l_->next(out); }
+
+     private:
+      LectorDeParticion* l_;
+    } fuente{lector};
+
+    ++reparticiones_;
+    const std::size_t tamano = actual.archivo->rows();
+    auto trozos = repartir(fuente, p, actual.vuelta + 1);
+    for (auto& t : trozos) {
+      if (t->rows() > 0) cola.push_back(Pendiente{t, actual.vuelta + 1, tamano});
+    }
   }
 
-  agregadas.clear();
-  agregadas.shrink_to_fit();
   grupos_ = salida.size();
   return salida;
 }
@@ -447,24 +605,28 @@ std::unique_ptr<RecordSource> ExternalGroupBy::grouped(RecordSource& entrada) {
     return std::make_unique<Salida>(por_sort(entrada));
   }
 
-  std::vector<Record> rescatadas;
   bool se_rindio = false;
-  auto porHash = por_hash(entrada, &rescatadas, se_rindio);
+  auto porHash = por_hash(entrada, se_rindio);
 
   if (!se_rindio) {
     usada_ = Strategy::kHash;
     return std::make_unique<Salida>(std::move(porHash));
   }
 
-  // El hash no pudo: una particion no cabe y re-particionarla no la separa,
-  // porque sus claves son todas iguales. La entrada ya se consumio, asi que se
-  // ordenan las filas que `por_hash` conservo. Ordenar siempre funciona: no
-  // depende de que el hash separe nada.
+  // El hash no pudo: una particion sigue teniendo mas grupos de los que caben y
+  // re-particionarla ya no la separa. La entrada ya se consumio, pero las filas
+  // originales no se perdieron: estan en los archivos de la primera vuelta, que
+  // `nivel0_` mantiene vivos. Se releen desde ahi y se ordenan.
+  //
+  // Ordenar siempre funciona porque no depende de que el hash separe nada, y
+  // releer de disco es lo que permite que el fallback no cueste memoria: la
+  // version anterior conservaba TODAS las filas en RAM por si tenia que llegar
+  // hasta aqui.
   cayo_ = true;
   usada_ = Strategy::kSort;
   filas_ = 0;
   grupos_ = 0;
-  auto fuente = source_of(std::move(rescatadas));
+  auto fuente = std::make_unique<FuenteDeParticiones>(nivel0_, entrada_, page_size_, stats_);
   return std::make_unique<Salida>(por_sort(*fuente));
 }
 

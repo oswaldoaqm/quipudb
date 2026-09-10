@@ -322,9 +322,13 @@ TEST_F(GroupTest, SiNiReParticionarAlcanzaElHashCaeASort) {
 
   EXPECT_EQ(salida.size(), 4000u);
   EXPECT_EQ(g.rows(), 4000u);
-  if (g.fell_back()) {
-    EXPECT_EQ(g.used(), ExternalGroupBy::Strategy::kSort);
-  }
+  // Antes esto era `if (g.fell_back()) { ... }`, y por lo tanto pasaba igual si
+  // el fallback dejaba de dispararse: una prueba que no prueba. Se exige.
+  EXPECT_TRUE(g.fell_back()) << "el caso que esta prueba cubre no llego a darse";
+  EXPECT_EQ(g.used(), ExternalGroupBy::Strategy::kSort);
+  // Y el fallback tiene que releer de las particiones de la primera vuelta, no
+  // de una copia en memoria: si no se escribio nada, no habia de donde releer.
+  EXPECT_GT(g.stats().pages_written, 0u);
 }
 
 TEST_F(GroupTest, TodasLasClavesIgualesEsUnSoloGrupoYCabeDeSobra) {
@@ -467,6 +471,95 @@ TEST_F(GroupTest, NoDejaArchivosTemporales) {
     if (e.path().extension() == ".run") ++runs;
   }
   EXPECT_EQ(runs, 0u);
+}
+
+// ---------------------------------------------------------------------------
+// El hash tiene que tocar el disco
+// ---------------------------------------------------------------------------
+
+TEST_F(GroupTest, ElHashEscribeLasParticionesADisco) {
+  // LA prueba de este arreglo. La primera version del #21 particionaba EN
+  // MEMORIA: `cubetas` era un vector<vector<Record>> y no se escribia nada.
+  // Con 100 000 filas y 8 buffers reportaba pages_read=0, pages_written=0 y
+  // cero temporales, o sea que el "External" del nombre era falso y un paso
+  // `group` del plan (ADR 0002) habria reportado cero paginas al 2.1.6.
+  //
+  // Si esta prueba vuelve a ver ceros, es que alguien deshizo el arreglo.
+  std::vector<Record> rs;
+  rs.reserve(100000);
+  for (std::int32_t i = 0; i < 100000; ++i) {
+    rs.push_back({i, "g" + std::to_string(i % 40000), static_cast<double>(i % 997), 1});
+  }
+  Schema s{.table_name = "muchas",
+           .columns = {{"id", DataType::Int},
+                       {"g", DataType::Varchar, 12},
+                       {"v", DataType::Double},
+                       {"u", DataType::Int}},
+           .key_column = 0};
+
+  ExternalGroupBy g(s, 1, {AggregateSpec::count()}, ExternalGroupBy::Strategy::kHash, 8,
+                    kDefaultPageSize, dir_);
+  auto f = source_of(rs);
+  const auto salida = drenar(*g.grouped(*f));
+
+  EXPECT_EQ(salida.size(), 40000u);
+  EXPECT_GT(g.stats().pages_written, 0u) << "el hash no escribio ninguna particion a disco";
+  EXPECT_GT(g.stats().pages_read, 0u) << "el hash no releyo ninguna particion";
+  EXPECT_GT(g.temp_bytes(), 0u) << "no hay ningun archivo de particion vivo";
+  EXPECT_FALSE(g.fell_back()) << "esto no deberia necesitar el fallback a sort";
+}
+
+TEST_F(GroupTest, LasParticionesDelHashSeBorranAlDestruirElGroupBy) {
+  {
+    std::vector<Record> rs;
+    for (std::int32_t i = 0; i < 20000; ++i) {
+      rs.push_back({i, "g" + std::to_string(i % 9000), static_cast<double>(i % 97), 1});
+    }
+    Schema s{.table_name = "muchas",
+             .columns = {{"id", DataType::Int},
+                         {"g", DataType::Varchar, 12},
+                         {"v", DataType::Double},
+                         {"u", DataType::Int}},
+             .key_column = 0};
+    ExternalGroupBy g(s, 1, {AggregateSpec::count()}, ExternalGroupBy::Strategy::kHash, 8,
+                      kDefaultPageSize, dir_);
+    auto f = source_of(rs);
+    EXPECT_FALSE(drenar(*g.grouped(*f)).empty());
+    EXPECT_GT(g.temp_bytes(), 0u) << "no llego a escribir particiones, no prueba nada";
+  }
+  std::size_t partes = 0;
+  for (const auto& e : fs::directory_iterator(dir_)) {
+    if (e.path().extension() == ".part") ++partes;
+  }
+  EXPECT_EQ(partes, 0u);
+}
+
+TEST_F(GroupTest, ElHashNoDejaParticionesNiSiquieraSiFalla) {
+  // Una excepcion a media primera vuelta no puede dejar p archivos regados.
+  // Los temporales se registran ANTES de escribir en ellos justamente por esto.
+  class FuenteQueLanza final : public RecordSource {
+   public:
+    bool next(Record& out) override {
+      if (++n_ > 500) throw IoError("fuente rota a proposito");
+      out = venta(static_cast<std::int32_t>(n_));
+      return true;
+    }
+
+   private:
+    std::size_t n_ = 0;
+  };
+
+  {
+    FuenteQueLanza rota;
+    ExternalGroupBy g(ventas(), kRegion, todas(), ExternalGroupBy::Strategy::kHash, 8, 256,
+                      dir_);
+    EXPECT_THROW(static_cast<void>(g.grouped(rota)), IoError);
+  }
+  std::size_t partes = 0;
+  for (const auto& e : fs::directory_iterator(dir_)) {
+    if (e.path().extension() == ".part") ++partes;
+  }
+  EXPECT_EQ(partes, 0u);
 }
 
 // ---------------------------------------------------------------------------
