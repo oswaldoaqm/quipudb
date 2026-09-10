@@ -33,6 +33,35 @@ jobs:
       - run: ruff check engine benchmarks
       - run: python -m pytest -q
 
+  bindings:
+    name: Compilar bindings y probarlos (Python + C++)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: pip install pytest
+      - name: Configurar con los bindings activados
+        run: >
+          cmake -S . -B build-py -DCMAKE_BUILD_TYPE=Release
+          -DQUIPUDB_BUILD_PYTHON=ON -DQUIPUDB_BUILD_TESTS=OFF
+      - name: Compilar
+        run: cmake --build build-py --parallel
+      - name: Comprobar que el modulo existe antes de probarlo
+        # El job de Python corre pytest sin los bindings compilados, asi que sus
+        # pruebas se SALTAN y pasa en verde. Aqui no pueden saltarse: si el
+        # modulo no esta, este paso falla en vez de dejar el job verde sin
+        # haber probado nada.
+        run: test -n "$(find build-py -name 'quipudb_native*.so' -print -quit)"
+      - name: Probar los bindings
+        env:
+          PYTHONPATH: ${{ github.workspace }}/build-py/bindings
+        # -p no:cacheprovider evita escribir .pytest_cache en el runner.
+        # --no-skips no existe en pytest, asi que la garantia de que no se
+        # saltan es el paso anterior mas este -rs, que lista lo salteado.
+        run: python -m pytest engine/test_bindings.py -q -rs
+
   commits:
     name: Validar mensajes de commit
     if: github.event_name == 'pull_request'
