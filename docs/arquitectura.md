@@ -757,7 +757,7 @@ vez de medirse.
 
 | camino | como | cuando gana |
 |---|---|---|
-| hash | particiona por hash de la clave; agrega particion por particion | muchos grupos chicos; no necesita orden |
+| hash | particiona por hash de la clave **escribiendo a disco**; agrega particion por particion | muchos grupos chicos; no necesita orden |
 | sort | ordena con el #20 y corta cuando la clave cambia | la salida sale ORDENADA, asi que GROUP BY + ORDER BY por la misma columna paga un solo ordenamiento |
 
 `LosDosCaminosDanExactamenteLoMismo` comprueba que coinciden hasta el ultimo
@@ -790,15 +790,37 @@ El limite no es un contador fijo de vueltas: cuantas hagan falta depende de
 cuantos grupos haya y de cuantas particiones se abran. Con 15 particiones,
 8 000 grupos convergen; con 2, no -- y eso es correcto, no un fallo.
 
-**Al rendirse hay que rescatar TODAS las filas, tambien las de las cubetas ya
-agregadas.** Es el segundo bug que aparecio: esas cubetas se liberaban en cuanto
-sus grupos estaban cerrados, asi que el fallback a sort perdia sus filas -- 2 966
-de 3 000 en la prueba que lo destapo. Ahora se sostienen hasta saber que nadie
-se rindio.
+**Al rendirse hay que rehacer la agregacion sobre TODAS las filas, tambien las
+de las particiones ya cerradas.** Convertir los grupos ya cerrados de vuelta en
+filas no sirve: agregar es asociativo para SUM, MIN y MAX, pero COUNT contaria
+1 en vez de N y AVG promediaria promedios.
 
-Convertir los grupos ya cerrados de vuelta en filas no sirve: agregar es
-asociativo para SUM, MIN y MAX, pero COUNT contaria 1 en vez de N y AVG
-promediaria promedios.
+Eso costaba memoria mientras las particiones estaban en RAM: habia que sostener
+todas las filas por si acaso. Con las particiones en disco no cuesta nada -- las
+filas originales siguen en los archivos de la primera vuelta, que se mantienen
+vivos hasta el final, y el fallback los relee de a una pagina.
+
+#### Las particiones van a disco, y eso costo un arreglo aparte
+
+La primera version particionaba **en memoria**: las cubetas eran un
+`vector<vector<Record>>` y no se escribia nada. Con 100 000 filas y 8 buffers
+--- 32 KB de memoria declarada --- reportaba `pages_read = 0`,
+`pages_written = 0` y cero archivos temporales, y no caia a sort: las 100 000
+filas vivian en RAM.
+
+Funcionaba y daba resultados correctos, pero no era externo, que es justo lo que
+la viñeta pide. Y para el 2.1.6 significaba que un paso `group` con
+`structure: external_hash` habria reportado cero paginas, o sea nada que
+comparar contra PostgreSQL.
+
+Ahora el reparto escribe cada particion a disco con el mismo patron de
+temporales del #20 --- registrados antes de escribir, borrados en su destructor
+--- y la memoria durante el reparto es **una pagina por particion**, no sus
+filas. Medido sobre el mismo caso: 415 paginas escritas y 478 leidas donde antes
+habia ceros.
+
+`ElHashEscribeLasParticionesADisco` lo fija: si `pages_written` vuelve a ser 0,
+falla.
 
 #### El AVG no es SUM/COUNT
 
