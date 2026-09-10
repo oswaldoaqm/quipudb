@@ -316,7 +316,11 @@ TEST_F(BPlusDeleteTest, DiferencialContraStdMap) {
           const auto encontrado = t.find(Value{k});
           const auto esperado = oraculo.find(k);
           ASSERT_EQ(encontrado.has_value(), esperado != oraculo.end()) << k;
-          if (encontrado) EXPECT_EQ(valor(*encontrado), esperado->second) << k;
+          // Con llaves: EXPECT_EQ expande a un if/else y sin ellas el `else`
+          // interno queda ambiguo (-Wdangling-else).
+          if (encontrado) {
+            EXPECT_EQ(valor(*encontrado), esperado->second) << k;
+          }
         }
         ASSERT_EQ(t.size(), oraculo.size()) << "orden " << orden << " paso " << paso;
         if (paso % 25 == 0) {
