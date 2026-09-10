@@ -359,11 +359,412 @@ def test_drop_table_se_lleva_los_indices(db):
 def test_no_se_expone_el_cursor(db):
     """Un cursor deja de valer en cuanto la tabla se modifica. En C++ eso es una
     regla que se respeta; en Python seria un uso-despues-de-liberar dentro del
-    interprete. Existe para el external sorting (#20), que es C++."""
+    interprete.
+
+    Lo que si se expone es `source_of(tabla)`, que lo envuelve: se puede pasar a
+    un sort, un group by o un join, pero no guardar ni adelantar a mano."""
     t = db.create_table(esquema_alumnos(), quipudb.kind.HEAP)
     assert not hasattr(t, "cursor")
+    assert hasattr(quipudb, "source_of")
 
 
 def test_la_version_del_motor_es_legible():
     assert isinstance(quipudb.version(), str)
     assert quipudb.version()
+
+
+# ---------------------------------------------------------------------------
+# External algorithms (#20, #21, #22): lo que el #28 necesita
+# ---------------------------------------------------------------------------
+
+
+def esquema_notas() -> quipudb.Schema:
+    return quipudb.Schema(
+        table_name="notas",
+        columns=[
+            quipudb.Column("id", quipudb.DataType.INT),
+            quipudb.Column("codigo", quipudb.DataType.INT),
+            quipudb.Column("nota", quipudb.DataType.INT),
+        ],
+        key_column=0,
+    )
+
+
+def esquema_simple() -> quipudb.Schema:
+    return quipudb.Schema(
+        table_name="t",
+        columns=[
+            quipudb.Column("id", quipudb.DataType.INT),
+            quipudb.Column("grupo", quipudb.DataType.INT),
+        ],
+        key_column=0,
+    )
+
+
+def test_un_flujo_se_recorre_con_un_for():
+    filas = [[i, i % 3] for i in range(10)]
+    assert list(quipudb.source_of(filas)) == filas
+
+
+def test_un_flujo_no_se_recorre_dos_veces():
+    """No es un vector disfrazado: se consume. Si alguien lo trata como lista,
+    mejor que lo descubra aqui y no en el planner."""
+    flujo = quipudb.source_of([[1, 1], [2, 2]])
+    assert len(list(flujo)) == 2
+    assert list(flujo) == []
+
+
+def test_una_tabla_se_recorre_como_flujo_sin_materializarla(db):
+    t = db.create_table(esquema_simple(), quipudb.kind.HEAP)
+    for i in range(50):
+        t.insert([i, i % 5])
+    assert len(list(quipudb.source_of(t))) == 50
+
+
+def test_el_sort_externo_ordena_y_usa_disco(tmp_path):
+    """Buffers bajos a proposito: con los 64 por omision estas filas caben en
+    memoria y `passes()` seria 0, o sea que no se probaria el k-way merge."""
+    filas = [[i, (i * 7919) % 1000] for i in range(2000)]
+    s = quipudb.ExternalSort(
+        esquema_simple(), 1, buffers=4, page_size=512, dir=tmp_path
+    )
+    salida = list(s.sorted(quipudb.source_of(filas)))
+
+    assert len(salida) == 2000
+    assert [f[1] for f in salida] == sorted(f[1] for f in filas)
+    assert s.passes() > 0, "no llego a tocar disco, la prueba no prueba el merge"
+    assert s.stats().pages_written > 0
+
+
+def test_el_sort_sin_disco_reporta_cero_pasadas(tmp_path):
+    """El caso comun en tablas chicas, y lo que el plan de ejecucion muestra
+    para distinguirlo."""
+    s = quipudb.ExternalSort(esquema_simple(), 1, dir=tmp_path)
+    assert len(list(s.sorted(quipudb.source_of([[i, -i] for i in range(10)])))) == 10
+    assert s.passes() == 0
+    assert s.stats().pages_written == 0
+
+
+def test_el_group_by_agrega_y_escribe_particiones_a_disco(tmp_path):
+    filas = [[i, i % 40] for i in range(2000)]
+    g = quipudb.ExternalGroupBy(
+        esquema_simple(),
+        1,
+        [quipudb.AggregateSpec.count(), quipudb.AggregateSpec.of(quipudb.Aggregate.SUM, 0)],
+        quipudb.ExternalGroupBy.Strategy.HASH,
+        buffers=4,
+        page_size=512,
+        dir=tmp_path,
+    )
+    salida = list(g.grouped(quipudb.source_of(filas)))
+
+    assert len(salida) == 40
+    assert g.used() == quipudb.ExternalGroupBy.Strategy.HASH
+    assert sum(f[1] for f in salida) == 2000
+    assert sum(f[2] for f in salida) == sum(range(2000))
+    # Si esto fuera 0 el hash no seria externo, que es el bug que se arreglo
+    # en el #21 despues de mergearlo.
+    assert g.stats().pages_written > 0
+
+
+def test_el_esquema_de_salida_del_group_by_no_es_el_de_la_entrada(tmp_path):
+    g = quipudb.ExternalGroupBy(
+        esquema_simple(),
+        1,
+        [quipudb.AggregateSpec.count(), quipudb.AggregateSpec.of(quipudb.Aggregate.AVG, 0)],
+        dir=tmp_path,
+    )
+    nombres = [c.name for c in g.output_schema().columns]
+    assert nombres == ["grupo", "COUNT_all", "AVG_id"]
+
+
+def test_los_dos_caminos_del_group_by_dan_lo_mismo(tmp_path):
+    """Si hash y sort no coinciden, comparar sus tiempos en el 2.1.6 no
+    significaria nada."""
+    filas = [[i, i % 17] for i in range(1200)]
+    resultados = []
+    for estrategia in (
+        quipudb.ExternalGroupBy.Strategy.HASH,
+        quipudb.ExternalGroupBy.Strategy.SORT,
+    ):
+        g = quipudb.ExternalGroupBy(
+            esquema_simple(),
+            1,
+            [quipudb.AggregateSpec.count()],
+            estrategia,
+            buffers=4,
+            page_size=512,
+            dir=tmp_path,
+        )
+        resultados.append(sorted(g.grouped(quipudb.source_of(filas))))
+    assert resultados[0] == resultados[1]
+
+
+def test_el_join_por_hash_coincide_con_un_join_en_memoria(tmp_path):
+    izq = [[i, i % 100] for i in range(300)]
+    der = [[i, i % 100, i % 21] for i in range(900)]
+
+    j = quipudb.ExternalJoin(
+        esquema_simple(),
+        1,
+        esquema_notas(),
+        1,
+        quipudb.ExternalJoin.Strategy.HASH,
+        buffers=6,
+        page_size=512,
+        dir=tmp_path,
+    )
+    obtenido = sorted(j.joined(quipudb.source_of(izq), quipudb.source_of(der)))
+
+    esperado = sorted(i + d for i in izq for d in der if i[1] == d[1])
+    assert obtenido == esperado
+    assert j.structure() == "external_hash"
+    assert j.stats().pages_written > 0
+
+
+def test_el_esquema_del_join_desambigua_solo_las_columnas_repetidas(tmp_path):
+    j = quipudb.ExternalJoin(esquema_simple(), 1, esquema_notas(), 1, dir=tmp_path)
+    nombres = [c.name for c in j.output_schema().columns]
+    # `id` esta en los dos lados y se prefija; `grupo`, `codigo` y `nota` no.
+    assert nombres == ["t.id", "grupo", "notas.id", "codigo", "nota"]
+
+
+def test_el_join_por_indice_da_lo_mismo_que_por_hash(db, tmp_path):
+    izq = [[i, i % 100] for i in range(200)]
+    der = [[i, i % 100, i % 21] for i in range(600)]
+
+    t = db.create_table(esquema_notas(), quipudb.kind.HEAP)
+    for f in der:
+        t.insert(f)
+    ix = db.create_index("notas", "por_codigo", "codigo", quipudb.kind.BPLUS_UNCLUSTERED)
+    sonda = quipudb.probe_of(ix, t)
+    assert sonda.structure() == quipudb.kind.BPLUS_UNCLUSTERED
+
+    por_indice = quipudb.ExternalJoin(
+        esquema_simple(), 1, esquema_notas(), 1,
+        quipudb.ExternalJoin.Strategy.INDEX_NESTED, buffers=6, page_size=512, dir=tmp_path,
+    )
+    a = sorted(
+        por_indice.joined(quipudb.source_of(izq), sonda, quipudb.source_of(der), len(izq))
+    )
+
+    por_hash = quipudb.ExternalJoin(
+        esquema_simple(), 1, esquema_notas(), 1,
+        quipudb.ExternalJoin.Strategy.HASH, buffers=6, page_size=512, dir=tmp_path,
+    )
+    b = sorted(por_hash.joined(quipudb.source_of(izq), quipudb.source_of(der)))
+
+    assert a == b
+    assert por_indice.used() == quipudb.ExternalJoin.Strategy.INDEX_NESTED
+    assert por_indice.structure() == quipudb.kind.BPLUS_UNCLUSTERED
+    # El INL no particiona: si escribio algo, no es un INL.
+    assert por_indice.stats().pages_written == 0
+
+
+def test_auto_elige_hash_con_dos_lados_grandes(db, tmp_path):
+    """La regla medida: el INL cuesta por FILA externa y el hash por PAGINA, asi
+    que con los dos lados grandes gana el hash aunque haya indice. Es justo el
+    caso donde el criterio original del #22 se equivocaba 85 veces."""
+    der = [[i, i % 500, i % 21] for i in range(1000)]
+    t = db.create_table(esquema_notas(), quipudb.kind.HEAP)
+    for f in der:
+        t.insert(f)
+    ix = db.create_index("notas", "por_codigo", "codigo", quipudb.kind.BPLUS_UNCLUSTERED)
+    sonda = quipudb.probe_of(ix, t)
+
+    izq = [[i, i % 500] for i in range(1000)]
+    j = quipudb.ExternalJoin(
+        esquema_simple(), 1, esquema_notas(), 1,
+        quipudb.ExternalJoin.Strategy.AUTO, buffers=6, page_size=512, dir=tmp_path,
+    )
+    list(j.joined(quipudb.source_of(izq), sonda, quipudb.source_of(der), len(izq)))
+    assert j.used() == quipudb.ExternalJoin.Strategy.HASH
+
+
+def test_auto_sin_saber_el_tamano_externo_elige_hash(db, tmp_path):
+    """Un 0 significa 'no lo se'. Equivocarse hacia hash cuesta un factor dos;
+    hacia INL, hasta 2180x."""
+    der = [[i, i % 50, i % 21] for i in range(200)]
+    t = db.create_table(esquema_notas(), quipudb.kind.HEAP)
+    for f in der:
+        t.insert(f)
+    ix = db.create_index("notas", "por_codigo", "codigo", quipudb.kind.BPLUS_UNCLUSTERED)
+    sonda = quipudb.probe_of(ix, t)
+
+    izq = [[i, i % 50] for i in range(5)]
+    j = quipudb.ExternalJoin(
+        esquema_simple(), 1, esquema_notas(), 1,
+        quipudb.ExternalJoin.Strategy.AUTO, buffers=6, page_size=512, dir=tmp_path,
+    )
+    list(j.joined(quipudb.source_of(izq), sonda, quipudb.source_of(der), 0))
+    assert j.used() == quipudb.ExternalJoin.Strategy.HASH
+
+
+def test_la_regla_de_eleccion_se_puede_consultar_sin_correr_el_join():
+    """El planner tiene que poder explicar por que eligio, no solo elegir."""
+    # Lado externo diminuto contra interno grande: gana el INL.
+    assert quipudb.ExternalJoin.conviene_index_nested(50, 1, 124, 4)
+    # Dos lados de 10 000: gana el hash, que es lo que la medicion mostro.
+    assert not quipudb.ExternalJoin.conviene_index_nested(10000, 124, 124, 4)
+
+
+def test_el_indice_nested_loop_exige_una_sonda(tmp_path):
+    j = quipudb.ExternalJoin(
+        esquema_simple(), 1, esquema_notas(), 1,
+        quipudb.ExternalJoin.Strategy.INDEX_NESTED, dir=tmp_path,
+    )
+    with pytest.raises(quipudb.Unsupported):
+        j.joined(quipudb.source_of([[1, 1]]), quipudb.source_of([[1, 1, 1]]))
+
+
+# ---------------------------------------------------------------------------
+# Tiempos de vida: lo que se caeria sin keep_alive
+# ---------------------------------------------------------------------------
+#
+# Los tres objetos son dueños de sus temporales, y su cabecera dice que el flujo
+# que devuelven deja de valer si el objeto muere. En C++ eso es una regla que se
+# lee y se respeta; en Python, donde el recolector decide cuando destruir, seria
+# un uso-despues-de-liberar dentro del interprete. Estas pruebas son el patron
+# exacto que se caeria.
+#
+# QUE PASA DE VERDAD SIN `py::keep_alive`, medido quitandolos de `module.cpp` y
+# corriendo cada prueba por separado:
+#
+#   sort       PASA.     `MergeSource` guarda `shared_ptr<Temporal>`, asi que
+#                        los archivos sobreviven al ExternalSort; y el camino en
+#                        memoria es dueño de su vector.
+#   group by   PASA.     `Salida` materializa el resultado, asi que el flujo no
+#                        referencia nada del ExternalGroupBy.
+#   INL        REVIENTA. Segmentation fault, exit 139. `SalidaIndexNested`
+#                        guarda punteros CRUDOS al join, al flujo izquierdo y a
+#                        la sonda, y los usa mientras se lee.
+#
+# O sea que hoy solo el INL depende de esto. Los `keep_alive` se quedan en los
+# tres igual: lo que los otros dos tienen no es una garantia del contrato sino
+# una casualidad de como estan implementados hoy, y el propio #21 dice que la
+# salida del group by deberia dejar de materializarse. El dia que eso pase, esta
+# prueba ya estaria puesta.
+
+
+def test_el_flujo_del_sort_sobrevive_al_sort(tmp_path):
+    def hacer():
+        s = quipudb.ExternalSort(esquema_simple(), 1, buffers=4, page_size=512, dir=tmp_path)
+        return s.sorted(quipudb.source_of([[i, -i] for i in range(2000)]))
+
+    import gc
+
+    flujo = hacer()
+    gc.collect()  # el ExternalSort y la fuente ya no tienen referencias visibles
+    assert len(list(flujo)) == 2000
+
+
+def test_el_flujo_del_group_by_sobrevive_al_group_by(tmp_path):
+    def hacer():
+        g = quipudb.ExternalGroupBy(
+            esquema_simple(), 1, [quipudb.AggregateSpec.count()],
+            quipudb.ExternalGroupBy.Strategy.HASH, buffers=4, page_size=512, dir=tmp_path,
+        )
+        return g.grouped(quipudb.source_of([[i, i % 30] for i in range(2000)]))
+
+    import gc
+
+    flujo = hacer()
+    gc.collect()
+    assert len(list(flujo)) == 30
+
+
+def test_el_flujo_del_index_nested_loop_sobrevive_a_todo(db, tmp_path):
+    """El caso peor: la salida del INL recorre el flujo externo y sondea el
+    indice MIENTRAS se lee, asi que guarda punteros al join, a la fuente
+    izquierda y a la sonda. Los tres tienen que sobrevivir."""
+    der = [[i, i % 40, i % 21] for i in range(400)]
+    t = db.create_table(esquema_notas(), quipudb.kind.HEAP)
+    for f in der:
+        t.insert(f)
+    db.create_index("notas", "por_codigo", "codigo", quipudb.kind.BPLUS_UNCLUSTERED)
+
+    def hacer():
+        ix = db.index("notas", "por_codigo")
+        sonda = quipudb.probe_of(ix, t)
+        j = quipudb.ExternalJoin(
+            esquema_simple(), 1, esquema_notas(), 1,
+            quipudb.ExternalJoin.Strategy.INDEX_NESTED, buffers=6, page_size=512, dir=tmp_path,
+        )
+        izq = [[i, i % 40] for i in range(50)]
+        return j.joined(quipudb.source_of(izq), sonda, quipudb.source_of(der), len(izq))
+
+    import gc
+
+    flujo = hacer()
+    gc.collect()
+    assert len(list(flujo)) == 50 * 10
+
+
+# ---------------------------------------------------------------------------
+# De punta a punta: lo que el #28 va a hacer de verdad
+# ---------------------------------------------------------------------------
+
+
+def test_order_by_group_by_y_join_sobre_tablas_reales(db, tmp_path):
+    """El recorrido completo desde tablas del catalogo, que es como lo va a usar
+    el parser: nada de listas en memoria fabricadas para la prueba.
+
+    Buffers bajos a proposito: con los 64 por omision esto cabria en memoria y
+    no se estaria probando ningun external algorithm."""
+    alumnos = quipudb.Schema(
+        table_name="alumnos",
+        columns=[
+            quipudb.Column("codigo", quipudb.DataType.INT),
+            quipudb.Column("ciclo", quipudb.DataType.INT),
+        ],
+        key_column=0,
+    )
+    ta = db.create_table(alumnos, quipudb.kind.HEAP)
+    for i in range(600):
+        ta.insert([i, i % 10])
+    tn = db.create_table(esquema_notas(), quipudb.kind.HEAP)
+    for i in range(1200):
+        tn.insert([i, i % 600, i % 21])
+
+    # ORDER BY ciclo
+    s = quipudb.ExternalSort(alumnos, 1, buffers=4, page_size=512, dir=tmp_path)
+    ordenado = list(s.sorted(quipudb.source_of(ta)))
+    assert len(ordenado) == 600
+    assert [f[1] for f in ordenado] == sorted(f[1] for f in ordenado)
+    assert s.passes() > 0
+
+    # GROUP BY ciclo
+    g = quipudb.ExternalGroupBy(
+        alumnos,
+        1,
+        [quipudb.AggregateSpec.count()],
+        quipudb.ExternalGroupBy.Strategy.HASH,
+        buffers=4,
+        page_size=512,
+        dir=tmp_path,
+    )
+    grupos = list(g.grouped(quipudb.source_of(ta)))
+    assert len(grupos) == 10
+    assert all(f[1] == 60 for f in grupos)
+    assert g.stats().pages_written > 0
+
+    # JOIN alumnos.codigo = notas.codigo
+    j = quipudb.ExternalJoin(
+        alumnos, 0, esquema_notas(), 1, quipudb.ExternalJoin.Strategy.HASH,
+        buffers=6, page_size=512, dir=tmp_path,
+    )
+    filas = list(j.joined(quipudb.source_of(ta), quipudb.source_of(tn)))
+    assert len(filas) == 1200
+    assert j.output_rows() == 1200
+    assert j.stats().pages_written > 0
+    # El esquema de salida es lo que el frontend (#37) pone de cabecera.
+    # `codigo` esta en LOS DOS lados, asi que se prefijan las dos, no solo una;
+    # `ciclo` y `nota` no colisionan y conservan su nombre. `id` tampoco
+    # colisiona aqui, porque el lado izquierdo no tiene ninguna columna `id`.
+    assert [c.name for c in j.output_schema().columns] == [
+        "alumnos.codigo",
+        "ciclo",
+        "id",
+        "notas.codigo",
+        "nota",
+    ]
