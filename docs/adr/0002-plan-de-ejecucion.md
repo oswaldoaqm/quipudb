@@ -93,6 +93,23 @@ capa Python.
    subarbol; el panel no tiene que restar nada.
 4. `detail` es para personas. Nadie lo parsea; si un dato hace falta como
    campo, se agrega un campo.
+5. El paso `join` lleva en `structure` **la estructura que resolvio la
+   busqueda**, no el nombre del algoritmo: `external_hash` cuando se
+   particiono, y el `kind::` del indice o de la tabla que se sondeo cuando fue
+   un index nested loop (`bplus_unclustered`, `extendible_hash`,
+   `bplus_clustered`, `sequential`). No se agrego un valor `index_nested_loop`
+   porque la columna `structure` responde "con que", y "cual de los dos
+   algoritmos" ya se lee del par (`op`, `structure`) y se explica en `detail`.
+   Es lo mismo que hace `index_search`, que tampoco dice "busqueda binaria".
+6. En un index nested loop el hijo derecho del `join` **representa el conjunto
+   de sondas, no un recorrido**: sus `stats` son la suma de todas las sondas
+   -- las paginas del indice mas las de la tabla, juntas -- y no hay una
+   pasada por el lado interno que dibujar. Sigue habiendo dos hijos, para que
+   el panel no tenga que distinguir casos; lo que cambia es como se lee el de
+   la derecha, y `detail` lo dice ("2 314 sondas por codigo").
+   La regla 1 no aplica aqui: no se parte en `index_search` + `fetch` porque
+   las dos mitades se pagan por fila externa y separarlas sugeriria dos
+   pasadas que no existen.
 
 ## Ejemplos
 
