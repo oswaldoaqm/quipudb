@@ -678,3 +678,71 @@ siguen abriendo.
 `ElArchivoNoCreceAlBorrarYVolverAInsertar` cierra el ciclo: vacia y rellena un
 indice de 600 claves tres veces y exige que el archivo no crezca, porque las
 paginas que libera un merge van a la free list y se reusan.
+
+## External algorithms
+
+### External Sorting: k-way merge para ORDER BY (#20)
+
+Ordena mas registros de los que caben en memoria, que es la primera mitad de la
+viñeta de External Algorithms del enunciado. El ORDER BY de la 2.1.3 (#28) se
+apoya en esto, y el plan de ejecucion (ADR 0002) ya tenia reservado el paso
+`op: "sort"` con `structure: "external_sort"`.
+
+**Fase 1.** Se lee de a B paginas -- todo lo que la memoria permite --, se
+ordena ese trozo en memoria y se escribe como un run ya ordenado. La entrada
+queda partida en N/B runs.
+
+**Fase 2.** Se abren k = B-1 runs, se reserva la pagina que sobra para la
+salida, y se saca el menor de los k frentes con un heap. Cada pasada reduce los
+runs por un factor k.
+
+Por que k = B-1 y no B: una pagina tiene que quedar libre para acumular la
+salida. Escribir de a un registro convertiria el merge en una escritura de
+pagina por registro.
+
+| | costo en paginas |
+|---|---|
+| fase 1 | 2N |
+| cada pasada | 2N |
+| pasadas | ceil(log_{B-1}(N/B)) |
+| **total** | **2N (1 + ceil(log_{B-1}(N/B)))** |
+
+De ahi que **B se cuente en paginas y no en megabytes**: la formula solo tiene
+sentido en paginas, y es la que el informe tiene que explicar. `predicted_pages`
+la calcula y `stats()` da lo medido, para que el 2.1.6 contraste una contra otra
+en vez de suponer que coinciden. `LasPaginasMedidasSeParecenALaFormula` ya lo
+comprueba con holgura de 2x.
+
+**Ordena un flujo, no una tabla.** Recibe un `RecordSource` y devuelve otro. El
+GROUP BY (#21) y el JOIN (#22) van a necesitar ordenar cosas que no son tablas
+-- la salida de un filtro, el resultado de un join -- y atarlo a `TableFile`
+obligaria a rehacerlo dos veces.
+
+`RecordCursor` (#56) no servia como esa entrada: exige `rid()`, y un registro
+que sale de un sort no tiene direccion fisica que ofrecer. `RecordSource` es la
+parte de `RecordCursor` que no depende de vivir en una tabla, y `source_of()`
+adapta cualquier `TableFile`.
+
+**Devuelve un flujo, no un vector.** El ADR 0002 dibuja `sort` como un paso con
+un hijo que le entrega su salida: un pipeline. Devolver un `vector<Record>` con
+100 000 registros dentro seria haber ordenado en disco para materializarlo todo
+al final, que es justo lo que el issue quiere evitar. La memoria queda acotada a
+B paginas de principio a fin.
+
+**Si todo cabe en memoria no se toca el disco.** Es el caso comun en tablas
+chicas, y `passes() == 0` es lo que lo distingue en el plan de ejecucion.
+
+**Los temporales se borran solos.** Se sigue el patron de la reorganizacion del
+secuencial (#12) -- escribir aparte, no tocar lo que todavia se lee -- pero aqui
+hay varios temporales vivos a la vez, asi que borrarlos al terminar no basta: si
+una excepcion interrumpe a media pasada, quedarian regados. Cada temporal se
+borra en su destructor, y `NoDejaArchivosTemporalesNiSiquieraSiFalla` lo
+comprueba lanzando a proposito desde la fuente.
+
+Ademas, los runs de una pasada se sueltan en cuanto la siguiente los consumio,
+asi que el espacio en disco queda acotado a dos pasadas y no a todas.
+
+**El orden es estable.** El desempate del heap va por numero de run, asi que dos
+registros con la misma clave conservan su orden relativo entre pasadas. Eso es
+lo que hace que las claves repetidas salgan juntas, que es justo lo que el GROUP
+BY del #21 necesita para agrupar sin otra pasada.
