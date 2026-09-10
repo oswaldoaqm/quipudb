@@ -1,5 +1,8 @@
 # ---- C++ / CMake ----
 build/
+build-py/
+build-san/
+build-*/
 cmake-build-*/
 *.o
 *.obj
@@ -8,6 +11,7 @@ cmake-build-*/
 *.so
 *.dylib
 *.dll
+*.pyd
 *.pdb
 CMakeCache.txt
 CMakeFiles/
@@ -34,6 +38,8 @@ data/
 *.idx
 *.heap
 *.seq
+*.hash
+*.bplus
 
 # ---- Frontend ----
 node_modules/
