@@ -31,6 +31,8 @@ para GROUP BY y JOIN). No sabe nada de SQL.
 **engine/ (Python)** traduce SQL a operaciones del core. El parser produce un
 arbol, el planner decide que estructura usar y en que orden, transactions
 coordina el acceso concurrente, y api expone todo por HTTP.
+El subconjunto SQL y la separacion entre AST, semantica, plan y ejecucion estan
+fijados en el [ADR 0003](adr/0003-procesamiento-consultas-sql.md).
 
 **frontend/** consume unicamente la API. No habla con el core.
 
@@ -42,9 +44,26 @@ cambio aqui se avisa en el issue correspondiente antes de hacerlo.
 | Contrato | Lo define | Lo consume |
 |---|---|---|
 | Operaciones de tabla e indice (`insert`, `remove`, `search`, `range_search`, `scan`) — [`core/include/quipudb/catalog/table.hpp`](../core/include/quipudb/catalog/table.hpp) | core (2.1.1, 2.1.2) | parser (2.1.3), planner, benchmarks (2.1.6) |
+| Sintaxis SQL, AST y errores — [ADR 0003](adr/0003-procesamiento-consultas-sql.md), [`engine/parser/`](../engine/parser/) | query processor (2.1.3) | semantica, planner y api |
 | Estructura del plan de ejecucion | planner + core | frontend (2.1.5) |
 | Manejo de bloqueos alrededor de las operaciones de tabla | transactions (2.1.4) | core |
 | Contrato HTTP de la API | api | frontend |
+
+## Contrato sintactico del Query Processor
+
+`engine.parser.parse_sql(source)` consume exactamente una sentencia y devuelve
+un AST inmutable. En esta fase no abre archivos, no consulta el catalogo y no
+importa `quipudb_native`; por eso el tokenizer y la gramatica se prueban sin
+compilar el core. Cada token y nodo conserva un `Span` con offset, linea y
+columna, y todos los errores SQL pertenecen a una familia comun con esa
+ubicacion.
+
+El AST representa `CREATE TABLE`, `INSERT INTO`, `SELECT` y `DELETE FROM`, con
+las clausulas requeridas por los issues #24 a #28. Aceptar una sentencia no
+significa que ya pueda ejecutarse: la validacion contra el esquema comienza en
+#25, la seleccion de una ruta fisica en #26 y los operadores externos de orden
+y agrupacion en #28. La EBNF completa y los limites deliberados viven en el
+[ADR 0003](adr/0003-procesamiento-consultas-sql.md).
 
 ## Por que el plan de ejecucion es un contrato y no un detalle
 
