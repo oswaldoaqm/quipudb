@@ -131,7 +131,14 @@ const TableInfo& Catalog::create_table(const Schema& schema, std::string_view st
   info.file = schema.table_name + "." + std::string(storage);
   info.page_size = page_size;
   auto [it, _] = tables_.emplace(schema.table_name, std::move(info));
-  save();
+  try {
+    save();
+  } catch (...) {
+    // La escritura atomica deja intacto el archivo anterior; la copia en
+    // memoria debe volver al mismo estado para que se pueda reintentar.
+    tables_.erase(it);
+    throw;
+  }
   return it->second;
 }
 

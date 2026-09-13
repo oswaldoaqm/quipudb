@@ -85,7 +85,8 @@ class Database {
 
   /// Registra la tabla en el catalogo, crea su archivo y devuelve el handle.
   /// Lanza SchemaError si el esquema o la organizacion no valen, o si la
-  /// tabla ya existe.
+  /// tabla ya existe. Nunca adopta un archivo preexistente; si no puede crear
+  /// el archivo nuevo, revierte la entrada del catalogo y lanza IoError.
   TableFile& create_table(const Schema& schema, std::string_view storage,
                           std::size_t page_size = kDefaultPageSize);
 

@@ -74,6 +74,19 @@ TEST_F(CatalogTest, CreateTableRegistraEsquemaStorageYArchivo) {
   EXPECT_THROW(static_cast<void>(c.table("otra")), SchemaError);
 }
 
+TEST_F(CatalogTest, CreateFallidoAlGuardarNoDejaMetadataEnMemoria) {
+  const fs::path temporal = path_.string() + ".tmp";
+  fs::create_directory(temporal);
+  Catalog c(path_);
+
+  EXPECT_THROW(c.create_table(alumnos(), kind::kHeap), IoError);
+  EXPECT_FALSE(c.has_table("alumnos"));
+
+  fs::remove(temporal);
+  EXPECT_NO_THROW(c.create_table(alumnos(), kind::kHeap));
+  EXPECT_TRUE(c.has_table("alumnos"));
+}
+
 TEST_F(CatalogTest, PersisteYSeRecargaIgual) {
   {
     Catalog c(path_);

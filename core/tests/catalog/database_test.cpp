@@ -55,6 +55,40 @@ TEST_F(DatabaseTest, CreaLaTablaYDevuelveUnHandleUsable) {
   EXPECT_TRUE(db.is_open("alumnos"));
 }
 
+TEST_F(DatabaseTest, CreateFallidoNoDejaUnaTablaFantasmaNiBorraLaRutaAjena) {
+  const fs::path ocupada = dir_ / "alumnos.heap";
+  fs::create_directory(ocupada);
+  Database db(path_);
+
+  EXPECT_THROW(db.create_table(alumnos(), kind::kHeap), IoError);
+  EXPECT_FALSE(db.catalog().has_table("alumnos"));
+  EXPECT_TRUE(fs::is_directory(ocupada));
+
+  Catalog recargado(path_);
+  EXPECT_FALSE(recargado.has_table("alumnos"));
+  fs::remove(ocupada);
+  EXPECT_NO_THROW(db.create_table(alumnos(), kind::kHeap));
+}
+
+TEST_F(DatabaseTest, CreateNoAdoptaUnArchivoValidoDeOtroCatalogo) {
+  const fs::path catalogo_original = dir_ / "original.txt";
+  {
+    Database original(catalogo_original);
+    original.create_table(alumnos(), kind::kHeap).insert(Record{7, std::string("previo")});
+    original.flush();
+  }
+
+  Database db(path_);
+  EXPECT_THROW(db.create_table(alumnos(), kind::kHeap), IoError);
+  EXPECT_FALSE(db.catalog().has_table("alumnos"));
+
+  Database original(catalogo_original);
+  const auto filas = original.table("alumnos").scan();
+  ASSERT_EQ(filas.size(), 1u);
+  EXPECT_EQ(std::get<std::int32_t>(filas[0][0]), 7);
+  EXPECT_EQ(std::get<std::string>(filas[0][1]), "previo");
+}
+
 TEST_F(DatabaseTest, DevuelveSiempreElMismoObjetoParaUnaTabla) {
   // Dos handles sobre el mismo archivo tienen cada uno su estado en memoria,
   // se pisan al escribir y dejan contadores que no cuadran. Por eso hay uno
