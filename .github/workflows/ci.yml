@@ -53,14 +53,20 @@ jobs:
         # pruebas se SALTAN y pasa en verde. Aqui no pueden saltarse: si el
         # modulo no esta, este paso falla en vez de dejar el job verde sin
         # haber probado nada.
-        run: test -n "$(find build-py -name 'quipudb_native*.so' -print -quit)"
-      - name: Probar los bindings
+        env:
+          PYTHONPATH: ${{ github.workspace }}/build-py/bindings
+        run: |
+          test -n "$(find build-py -name 'quipudb_native*.so' -print -quit)"
+          python -c "import quipudb_native"
+      - name: Probar bindings e integracion SQL
         env:
           PYTHONPATH: ${{ github.workspace }}/build-py/bindings
         # -p no:cacheprovider evita escribir .pytest_cache en el runner.
         # --no-skips no existe en pytest, asi que la garantia de que no se
         # saltan es el paso anterior mas este -rs, que lista lo salteado.
-        run: python -m pytest engine/test_bindings.py -q -rs
+        run: >
+          python -m pytest engine/test_bindings.py
+          engine/test_query_processor.py -q -rs
 
   commits:
     name: Validar mensajes de commit
