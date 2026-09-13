@@ -191,21 +191,27 @@ issues posteriores.
 
 ### Resultado y plan de ejecucion
 
-La fachada prevista sera `QueryProcessor.execute(source)`. Devolvera un
-`QueryResult` con cuatro campos estables a alto nivel:
+Desde #25, la fachada es `QueryProcessor.execute(source)` y devuelve un
+`QueryResult` inmutable con cuatro campos:
 
 ```text
-columns       nombres de las columnas devueltas
-rows          filas materializadas de una consulta SELECT
-affected_rows cantidad de filas modificadas
-plan          Plan del ADR 0002
+columns       tuple[str, ...] con los nombres devueltos
+rows          tuple[tuple[object, ...], ...] con las filas materializadas
+affected_rows int no negativo con la cantidad de filas modificadas
+plan          Plan del ADR 0002 o None mientras la sentencia no tenga plan
 ```
+
+El resultado rechaza filas cuyo ancho no coincida con `columns` y copia las
+colecciones recibidas a tuplas, por lo que no conserva listas mutables del
+binding. Cada ejecutor debe convertir tambien los escalares nativos antes de
+construir las filas que exponga a otras capas.
 
 Para `SELECT`, `columns` y `rows` contienen la salida y `affected_rows` es cero.
 Para `INSERT` y `DELETE`, `affected_rows` informa las filas modificadas y no se
 devuelven filas. `CREATE TABLE` no devuelve filas ni cuenta filas modificadas.
-La representacion concreta de esas colecciones se fijara al implementar #25
-sin acoplarla a objetos internos de pybind11.
+En #25, `CREATE TABLE` e `INSERT` devuelven `plan=None`: el ADR 0002 no define
+una operacion `CREATE`, y la atribucion de escrituras entre una tabla y varios
+indices todavia necesita el acuerdo descrito a continuacion.
 
 El optimizador de #26 elegira busqueda por clave o indice cuando la estructura
 y el operador lo permitan; en caso contrario usara scan y filtro. El ejecutor
