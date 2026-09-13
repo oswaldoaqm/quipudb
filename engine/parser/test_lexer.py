@@ -9,7 +9,6 @@ from engine.parser.lexer import tokenize
 from engine.parser.span import Span
 from engine.parser.tokens import TokenKind
 
-
 KEYWORDS = (
     ("create", TokenKind.CREATE),
     ("table", TokenKind.TABLE),

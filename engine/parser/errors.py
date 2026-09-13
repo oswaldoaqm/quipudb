@@ -6,7 +6,6 @@ import re
 
 from engine.parser.span import Span
 
-
 _LINE_BREAK = re.compile(r"\r\n|\r|\n")
 
 

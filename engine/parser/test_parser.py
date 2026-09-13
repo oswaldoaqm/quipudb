@@ -4,6 +4,7 @@ from datetime import date
 
 import pytest
 
+from engine.parser import parse_sql
 from engine.parser.ast import (
     AggregateCall,
     AggregateFunction,
@@ -26,7 +27,6 @@ from engine.parser.ast import (
     Wildcard,
 )
 from engine.parser.errors import SQLParseError, SQLUnsupportedError
-from engine.parser import parse_sql
 
 
 def test_create_table_parsea_tipos_primary_key_y_storage() -> None:

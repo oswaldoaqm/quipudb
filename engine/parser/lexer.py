@@ -8,7 +8,6 @@ from engine.parser.errors import SQLLexError, SQLUnsupportedError
 from engine.parser.span import Span
 from engine.parser.tokens import Token, TokenKind, TokenValue
 
-
 _KEYWORDS = {
     kind.value: kind
     for kind in (

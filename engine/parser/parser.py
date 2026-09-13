@@ -39,7 +39,6 @@ from engine.parser.lexer import tokenize
 from engine.parser.span import combine_spans
 from engine.parser.tokens import Token, TokenKind
 
-
 _DATE_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
 
 _AGGREGATES = {
