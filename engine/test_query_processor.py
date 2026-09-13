@@ -4,12 +4,12 @@ from datetime import date
 
 import pytest
 
+from engine.executor import QueryProcessor
+
 quipudb = pytest.importorskip(
     "quipudb_native",
     reason="los bindings no estan compilados: cmake -DQUIPUDB_BUILD_PYTHON=ON",
 )
-
-from engine.executor import QueryProcessor  # noqa: E402
 
 
 @pytest.fixture()
