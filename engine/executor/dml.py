@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from typing import Any
 
 
@@ -32,14 +33,10 @@ def insert_with_indexes(
             index.insert(key, rid)
     except Exception:
         for _metadata, index, key in reversed(attempted):
-            try:
+            with suppress(Exception):
                 index.remove_one(key, rid)
-            except Exception:
-                pass
-        try:
+        with suppress(Exception):
             table.remove(values[key_column])
-        except Exception:
-            pass
         raise
 
     return rid
