@@ -4,7 +4,7 @@
 **Última actualización**: 2026-09-13
 **Complejidad**: Alta
 **Issues asignados**: #24, #25, #26, #27 y #28
-**Estado**: Issue #24 implementado y validado; commits locales listos, push/PR pendientes
+**Estado**: Issue #24 implementado, validado y publicado; PR pendiente
 
 ## Registro de continuidad
 
@@ -44,10 +44,12 @@ Avance del 2026-09-13:
 - El DOCX continua fuera de Git.
 - Commits funcionales locales: `5152e33`, `d023605`, `b809171`; la regla de exclusion del DOCX esta
   en `5215b8e`.
+- Rama publicada en `origin/feat/parser-tokenizer-gramatica-base`; HEAD local y remoto verificados
+  en `c503a58` antes de registrar esta actualizacion.
 
 Siguiente acción:
 
-1. Publicar los commits lógicos de #24 y abrir un PR con `Closes #24`.
+1. Abrir un PR contra `main` con `Closes #24`.
 2. Confirmar CI y solicitar una revisión, conforme a `CONTRIBUTING.md`.
 3. Continuar con #25 únicamente desde la versión aprobada de #24.
 
