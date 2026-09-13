@@ -28,6 +28,9 @@ env/
 .mypy_cache/
 .ruff_cache/
 
+# ---- Enunciado local ----
+/Proyecto_Integrador_BD2.docx
+
 # ---- Datos y artefactos del motor ----
 # Los datasets y los archivos de paginas generados por el motor NO van al repo.
 benchmarks/datasets/*
