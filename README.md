@@ -109,9 +109,9 @@ db.flush()
 
 ### Procesar SQL
 
-Con los bindings compilados, `QueryProcessor` ejecuta `CREATE TABLE`, `INSERT INTO`
-y `SELECT`. El resultado de una consulta incluye las filas y el plan físico
-realmente recorrido:
+Con los bindings compilados, `QueryProcessor` ejecuta `CREATE TABLE`, `INSERT INTO`,
+`SELECT` y `DELETE FROM`. El resultado de una consulta incluye las filas y el
+plan físico realmente recorrido:
 
 ```python
 import quipudb_native as q
@@ -129,12 +129,17 @@ result = processor.execute("SELECT nombre, nota FROM cursos WHERE nota >= 14")
 print(result.columns)          # ('nombre', 'nota')
 print(result.rows)             # (('Bases de Datos 2', 18.0),)
 print(result.plan.to_dict())   # scan/filter/project y sus estadísticas
+
+deleted = processor.execute("DELETE FROM cursos WHERE nota < 11")
+print(deleted.affected_rows)   # 0
+print(deleted.plan)            # None: el plan DML aún requiere acuerdo en ADR 0002
 ```
 
 `WHERE` admite `=`, `<`, `<=`, `>`, `>=` y `BETWEEN` inclusivo. El planner usa
 la clave primaria o un índice secundario aplicable; si no existe uno, registra
-el `scan` y el filtro en memoria. `ORDER BY`, `GROUP BY` y `DELETE` se incorporan
-en los siguientes issues del procesador.
+el `scan` y el filtro en memoria. `DELETE` materializa todos sus candidatos antes
+de escribir y mantiene cada índice secundario. `ORDER BY` y `GROUP BY` se
+incorporan en el siguiente issue del procesador.
 
 Detalles que conviene saber:
 
@@ -148,8 +153,9 @@ Detalles que conviene saber:
   `InvalidRecord`, `DuplicateKey`, `Unsupported`, todas derivadas de
   `QuipuDBError`.
 - **`cursor()` no se expone**: deja de valer si la tabla se modifica, y desde
-  Python eso sería un uso-después-de-liberar. Existe para el external sorting
-  (#20), que es C++.
+  Python eso sería un uso-después-de-liberar. `scan_with_rids()` devuelve copias
+  materializadas para `DELETE`; `source_of()` lo envuelve sin entregarlo a los
+  algoritmos externos.
 
 ## Equipo
 
