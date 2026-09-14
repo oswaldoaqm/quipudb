@@ -16,8 +16,8 @@ from engine.parser.bound_ast import (
     BoundSchema,
     BoundSelectStatement,
 )
-from engine.parser.span import Span
 from engine.parser.semantic import bind_select
+from engine.parser.span import Span
 from engine.planner.native_catalog import from_native_table_info
 from engine.planner.optimizer import (
     AccessRoute,
