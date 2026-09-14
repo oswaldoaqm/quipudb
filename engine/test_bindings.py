@@ -356,6 +356,118 @@ def test_drop_table_se_lleva_los_indices(db):
     assert not db.has_table("alumnos")
 
 
+# ---------------------------------------------------------------------------
+# Metadata del catalogo para el procesador de consultas (#25)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("storage", [quipudb.kind.HEAP, quipudb.kind.SEQUENTIAL])
+def test_table_info_describe_tabla_y_esquema(db, storage):
+    db.create_table(esquema_alumnos(), storage, page_size=1024)
+
+    info = db.table_info("alumnos")
+    assert info.storage == storage
+    assert info.file
+    assert info.page_size == 1024
+    assert info.indexes == []
+
+    schema = info.schema
+    assert schema.table_name == "alumnos"
+    assert schema.key_column == 0
+    assert [column.name for column in schema.columns] == [
+        "codigo",
+        "nombre",
+        "promedio",
+        "activo",
+        "ingreso",
+    ]
+    assert schema.columns[1].type == quipudb.DataType.VARCHAR
+    assert schema.columns[1].length == 16
+
+
+def test_table_info_incluye_indices_registrados(db):
+    db.create_table(esquema_alumnos(), quipudb.kind.HEAP)
+    db.create_index(
+        "alumnos",
+        "por_promedio",
+        "promedio",
+        quipudb.kind.BPLUS_UNCLUSTERED,
+    )
+
+    (index,) = db.table_info("alumnos").indexes
+    assert index.name == "por_promedio"
+    assert index.column == 2
+    assert index.kind == quipudb.kind.BPLUS_UNCLUSTERED
+    assert index.file
+
+
+def test_table_info_enumera_varios_indices_despues_de_reabrir(tmp_path):
+    catalog = tmp_path / "catalogo.txt"
+    database = quipudb.Database(catalog)
+    database.create_table(esquema_alumnos(), quipudb.kind.HEAP)
+    database.create_index(
+        "alumnos",
+        "por_promedio",
+        "promedio",
+        quipudb.kind.BPLUS_UNCLUSTERED,
+    )
+    database.create_index(
+        "alumnos",
+        "por_nombre",
+        "nombre",
+        quipudb.kind.EXTENDIBLE_HASH,
+    )
+    database.flush()
+    del database
+
+    reopened = quipudb.Database(catalog)
+    indexes = reopened.table_info("alumnos").indexes
+
+    assert [(index.name, index.column, index.kind) for index in indexes] == [
+        ("por_promedio", 2, quipudb.kind.BPLUS_UNCLUSTERED),
+        ("por_nombre", 1, quipudb.kind.EXTENDIBLE_HASH),
+    ]
+
+
+def test_table_info_no_permite_modificar_el_catalogo_indirectamente(db):
+    db.create_table(esquema_alumnos(), quipudb.kind.HEAP)
+    db.create_index(
+        "alumnos",
+        "por_promedio",
+        "promedio",
+        quipudb.kind.EXTENDIBLE_HASH,
+    )
+
+    primera = db.table_info("alumnos")
+    schema = primera.schema
+    schema.table_name = "alterada"
+    schema.key_column = 4
+    schema.columns = []
+    indexes = primera.indexes
+    indexes.clear()
+
+    segunda = db.table_info("alumnos")
+    assert segunda.schema.table_name == "alumnos"
+    assert segunda.schema.key_column == 0
+    assert len(segunda.schema.columns) == 5
+    assert [index.name for index in segunda.indexes] == ["por_promedio"]
+
+    with pytest.raises(AttributeError):
+        segunda.storage = quipudb.kind.SEQUENTIAL
+    with pytest.raises(AttributeError):
+        segunda.indexes[0].name = "alterado"
+
+    with pytest.raises(TypeError):
+        quipudb.TableInfo()
+    with pytest.raises(TypeError):
+        quipudb.IndexInfo()
+
+
+def test_table_info_de_tabla_inexistente_conserva_schema_error(db):
+    with pytest.raises(quipudb.SchemaError):
+        db.table_info("no_existe")
+
+
 def test_no_se_expone_el_cursor(db):
     """Un cursor deja de valer en cuanto la tabla se modifica. En C++ eso es una
     regla que se respeta; en Python seria un uso-despues-de-liberar dentro del
