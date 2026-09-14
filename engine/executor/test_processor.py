@@ -308,12 +308,16 @@ def processor(database: _FakeDatabase) -> QueryProcessor:
     return QueryProcessor(database, native_module=_NativeModule)
 
 
-@pytest.mark.parametrize("buffers", [True, 2, 3.5])
+@pytest.mark.parametrize(
+    ("buffers", "error_type"),
+    [(True, TypeError), (2, ValueError), (3.5, TypeError)],
+)
 def test_query_processor_rechaza_buffers_externos_invalidos(
     database: _FakeDatabase,
     buffers: object,
+    error_type: type[Exception],
 ) -> None:
-    with pytest.raises(ValueError, match="external_buffers"):
+    with pytest.raises(error_type, match="external_buffers"):
         QueryProcessor(
             database,
             native_module=_NativeModule,
@@ -321,12 +325,16 @@ def test_query_processor_rechaza_buffers_externos_invalidos(
         )
 
 
-@pytest.mark.parametrize("page_size", [True, 127, 65537, 128.0])
+@pytest.mark.parametrize(
+    ("page_size", "error_type"),
+    [(True, TypeError), (127, ValueError), (65537, ValueError), (128.0, TypeError)],
+)
 def test_query_processor_rechaza_tamano_de_pagina_externo_invalido(
     database: _FakeDatabase,
     page_size: object,
+    error_type: type[Exception],
 ) -> None:
-    with pytest.raises(ValueError, match="external_page_size"):
+    with pytest.raises(error_type, match="external_page_size"):
         QueryProcessor(
             database,
             native_module=_NativeModule,

@@ -661,7 +661,7 @@ def test_iterar_un_flujo_no_retiene_su_archivo_temporal(tmp_path):
     s = quipudb.ExternalSort(
         esquema_simple(), 1, buffers=3, page_size=128, dir=tmp_path
     )
-    source = quipudb.source_of(([i, i % 7] for i in range(300)))
+    source = quipudb.source_of([i, i % 7] for i in range(300))
     output = s.sorted(source)
     assert len(list(output)) == 300
     assert list(tmp_path.glob("*.run")), "la prueba no llego al camino externo"
