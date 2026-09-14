@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from time import perf_counter_ns
 from typing import Any
 
 from engine.executor.dml import insert_with_indexes
@@ -11,6 +12,7 @@ from engine.executor.native import (
     to_native_schema,
     to_native_values,
 )
+from engine.executor.operators import execute_select
 from engine.executor.result import QueryResult
 from engine.parser import (
     CreateTableStatement,
@@ -21,7 +23,10 @@ from engine.parser import (
     SQLUnsupportedError,
     parse_sql,
 )
-from engine.parser.semantic import bind_create_table, bind_insert
+from engine.parser.semantic import bind_create_table, bind_insert, bind_select
+from engine.planner.native_catalog import from_native_table_info
+from engine.planner.optimizer import optimize_select
+from engine.planner.plan import Plan
 
 
 class QueryProcessor:
@@ -38,19 +43,16 @@ class QueryProcessor:
         )
 
     def execute(self, source: str) -> QueryResult:
-        """Ejecuta una sentencia; SELECT y DELETE llegan en sus propios issues."""
+        """Ejecuta una sentencia del subconjunto disponible."""
 
+        started_ns = perf_counter_ns()
         statement = parse_sql(source)
         if isinstance(statement, CreateTableStatement):
             return self._create_table(statement, source)
         if isinstance(statement, InsertStatement):
             return self._insert(statement, source)
         if isinstance(statement, SelectStatement):
-            raise SQLUnsupportedError(
-                "la ejecucion de SELECT se implementa en el issue #26",
-                statement.span,
-                source,
-            )
+            return self._select(statement, source, started_ns)
         if isinstance(statement, DeleteStatement):
             raise SQLUnsupportedError(
                 "la ejecucion de DELETE se implementa en el issue #27",
@@ -114,6 +116,43 @@ class QueryProcessor:
                 source,
             )
         return QueryResult(affected_rows=1)
+
+    def _select(
+        self,
+        statement: SelectStatement,
+        source: str,
+        started_ns: int,
+    ) -> QueryResult:
+        try:
+            table_info = self._database.table_info(statement.table.name)
+        except self._domain_errors as error:
+            self._raise_semantic(
+                error,
+                f"la tabla {statement.table.name!r} no existe",
+                statement.table.span,
+                source,
+            )
+
+        schema = from_native_schema(table_info.schema, self._native)
+        bound = bind_select(statement, schema, source)
+        physical_plan = optimize_select(bound, from_native_table_info(table_info))
+        try:
+            execution = execute_select(self._database, self._native, physical_plan, source)
+        except self._domain_errors as error:
+            self._raise_semantic(
+                error,
+                f"no se pudo consultar la tabla {statement.table.name!r}",
+                statement.table.span,
+                source,
+            )
+
+        elapsed_ms = (perf_counter_ns() - started_ns) / 1_000_000
+        plan = Plan(query=source, root=execution.root, time_ms=elapsed_ms)
+        return QueryResult(
+            columns=execution.columns,
+            rows=execution.rows,
+            plan=plan,
+        )
 
     @staticmethod
     def _raise_semantic(
