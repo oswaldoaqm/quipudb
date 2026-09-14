@@ -364,6 +364,33 @@ def test_delete_pk_por_igualdad_y_rango_en_cada_organizacion(db, storage):
     assert [row[0] for row in db.table("datos").scan()] == [2]
 
 
+@pytest.mark.parametrize(
+    "storage",
+    [quipudb.kind.SEQUENTIAL, quipudb.kind.BPLUS_CLUSTERED],
+)
+def test_delete_materializa_el_rango_antes_de_reorganizar_la_tabla(db, storage):
+    schema = quipudb.Schema(
+        "grande",
+        [
+            quipudb.Column("id", quipudb.DataType.INT),
+            quipudb.Column("valor", quipudb.DataType.INT),
+        ],
+        0,
+    )
+    db.create_table(schema, storage)
+    processor = QueryProcessor(db)
+    for key in range(1, 121):
+        processor.execute(f"INSERT INTO grande VALUES ({key}, {key % 5})")
+
+    result = processor.execute("DELETE FROM grande WHERE id BETWEEN 21 AND 90")
+
+    assert result.affected_rows == 70
+    assert [row[0] for row in db.table("grande").scan()] == [
+        *range(1, 21),
+        *range(91, 121),
+    ]
+
+
 def test_delete_pk_actualiza_dos_indices_y_preserva_claves_repetidas(db):
     processor = _create_select_table(db, quipudb.kind.HEAP)
     by_name = db.create_index(
