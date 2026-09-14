@@ -1,4 +1,4 @@
-"""Enlace semantico puro para CREATE TABLE e INSERT INTO."""
+"""Enlace semantico puro para CREATE TABLE, INSERT INTO y SELECT."""
 
 from __future__ import annotations
 
@@ -6,25 +6,36 @@ import math
 import re
 
 from engine.parser.ast import (
+    AggregateCall,
+    BetweenCondition,
     BooleanLiteral,
+    ColumnReference,
+    ComparisonCondition,
     CreateTableStatement,
     DateLiteral,
     DoubleLiteral,
     InsertStatement,
     IntegerLiteral,
     Literal,
+    SelectStatement,
     SqlTypeName,
     StorageKind,
     StringLiteral,
+    Wildcard,
 )
 from engine.parser.bound_ast import (
+    BoundBetweenCondition,
     BoundColumn,
+    BoundColumnReference,
+    BoundComparisonCondition,
+    BoundCondition,
     BoundCreateTable,
     BoundInsertStatement,
     BoundSchema,
+    BoundSelectStatement,
     BoundValue,
 )
-from engine.parser.errors import SQLSemanticError
+from engine.parser.errors import SQLSemanticError, SQLUnsupportedError
 from engine.parser.span import Span
 
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
@@ -128,6 +139,110 @@ def bind_insert(
         for literal, column in zip(statement.values, schema.columns, strict=True)
     )
     return BoundInsertStatement(statement.table.name, values, statement.span)
+
+
+def bind_select(
+    statement: SelectStatement,
+    schema: BoundSchema,
+    source: str | None = None,
+) -> BoundSelectStatement:
+    """Resuelve una consulta SELECT sin acceder al catalogo ni al core nativo."""
+
+    if statement.table.name != schema.table_name:
+        _fail(
+            f"el SELECT apunta a {statement.table.name}, pero el esquema es de {schema.table_name}",
+            statement.table.span,
+            source,
+        )
+
+    if statement.group_by is not None:
+        raise SQLUnsupportedError(
+            "GROUP BY se implementa en el issue #28",
+            statement.group_by.span,
+            source,
+        )
+    if statement.order_by is not None:
+        raise SQLUnsupportedError(
+            "ORDER BY se implementa en el issue #28",
+            statement.order_by.span,
+            source,
+        )
+
+    wildcard = any(isinstance(projection, Wildcard) for projection in statement.projections)
+    if wildcard:
+        if len(statement.projections) != 1:
+            wildcard_projection = next(
+                projection
+                for projection in statement.projections
+                if isinstance(projection, Wildcard)
+            )
+            _fail(
+                "'*' no se puede combinar con otras proyecciones",
+                wildcard_projection.span,
+                source,
+            )
+        wildcard_span = statement.projections[0].span
+        projections = tuple(
+            BoundColumnReference(index, column, wildcard_span)
+            for index, column in enumerate(schema.columns)
+        )
+    else:
+        projections = tuple(
+            _bind_projection(projection, schema, source) for projection in statement.projections
+        )
+
+    if not statement.projections:
+        _fail("SELECT requiere al menos una proyeccion", statement.span, source)
+
+    where = _bind_condition(statement.where, schema, source)
+    return BoundSelectStatement(schema, projections, wildcard, where, statement.span)
+
+
+def _bind_projection(
+    projection: ColumnReference | AggregateCall,
+    schema: BoundSchema,
+    source: str | None,
+) -> BoundColumnReference:
+    if isinstance(projection, AggregateCall):
+        raise SQLUnsupportedError(
+            "las funciones de agregado se implementan en el issue #28",
+            projection.span,
+            source,
+        )
+    return _resolve_column(projection, schema, source)
+
+
+def _bind_condition(
+    condition: ComparisonCondition | BetweenCondition | None,
+    schema: BoundSchema,
+    source: str | None,
+) -> BoundCondition | None:
+    if condition is None:
+        return None
+
+    column = _resolve_column(condition.column, schema, source)
+    if isinstance(condition, ComparisonCondition):
+        value = _bind_value(condition.value, column.column, source)
+        return BoundComparisonCondition(column, condition.operator, value, condition.span)
+
+    lower = _bind_value(condition.lower, column.column, source)
+    upper = _bind_value(condition.upper, column.column, source)
+    return BoundBetweenCondition(column, lower, upper, condition.span)
+
+
+def _resolve_column(
+    reference: ColumnReference,
+    schema: BoundSchema,
+    source: str | None,
+) -> BoundColumnReference:
+    for index, column in enumerate(schema.columns):
+        if reference.name.name == column.name:
+            return BoundColumnReference(index, column, reference.span)
+    _fail(
+        f"la columna {reference.name.name!r} no existe en la tabla {schema.table_name!r}",
+        reference.name.span,
+        source,
+    )
 
 
 def _validate_identifier(name: str, role: str, span: Span, source: str | None) -> None:
@@ -271,4 +386,4 @@ def _fail(message: str, span: Span, source: str | None) -> None:
     raise SQLSemanticError(message, span, source)
 
 
-__all__ = ["bind_create_table", "bind_insert"]
+__all__ = ["bind_create_table", "bind_insert", "bind_select"]

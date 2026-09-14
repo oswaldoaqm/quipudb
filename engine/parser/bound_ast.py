@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import TypeAlias
 
-from engine.parser.ast import SqlTypeName, StorageKind
+from engine.parser.ast import ComparisonOperator, SqlTypeName, StorageKind
 from engine.parser.span import Span
 
 _FIXED_TYPE_SIZES = {
@@ -72,10 +72,58 @@ class BoundInsertStatement:
     span: Span
 
 
+@dataclass(frozen=True, slots=True)
+class BoundColumnReference:
+    """Columna resuelta a su posicion exacta dentro del esquema."""
+
+    index: int
+    column: BoundColumn
+    span: Span
+
+
+@dataclass(frozen=True, slots=True)
+class BoundComparisonCondition:
+    """Comparacion simple con su literal convertido al tipo de la columna."""
+
+    column: BoundColumnReference
+    operator: ComparisonOperator
+    value: BoundValue
+    span: Span
+
+
+@dataclass(frozen=True, slots=True)
+class BoundBetweenCondition:
+    """Rango inclusivo con ambos limites semanticamente validados."""
+
+    column: BoundColumnReference
+    lower: BoundValue
+    upper: BoundValue
+    span: Span
+
+
+BoundCondition: TypeAlias = BoundComparisonCondition | BoundBetweenCondition
+
+
+@dataclass(frozen=True, slots=True)
+class BoundSelectStatement:
+    """SELECT con nombres resueltos y predicado listo para planificar."""
+
+    schema: BoundSchema
+    projections: tuple[BoundColumnReference, ...]
+    wildcard: bool
+    where: BoundCondition | None
+    span: Span
+
+
 __all__ = [
+    "BoundBetweenCondition",
     "BoundColumn",
+    "BoundColumnReference",
+    "BoundComparisonCondition",
+    "BoundCondition",
     "BoundCreateTable",
     "BoundInsertStatement",
     "BoundSchema",
+    "BoundSelectStatement",
     "BoundValue",
 ]
