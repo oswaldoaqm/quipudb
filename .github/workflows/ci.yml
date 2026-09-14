@@ -66,7 +66,8 @@ jobs:
         # saltan es el paso anterior mas este -rs, que lista lo salteado.
         run: >
           python -m pytest engine/test_bindings.py
-          engine/test_query_processor.py -q -rs
+          engine/test_query_processor.py
+          engine/executor/test_order_group.py -q -rs -p no:cacheprovider
 
   commits:
     name: Validar mensajes de commit

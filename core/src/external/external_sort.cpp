@@ -45,6 +45,29 @@ class FuenteDeVector final : public RecordSource {
   std::size_t i_ = 0;
 };
 
+/// Devuelve un registro ya leido y despues continua con la fuente original.
+/// Permite mirar un elemento mas para distinguir "lleno exactamente" de
+/// "desborda" sin perder ese elemento ni materializar el resto del flujo.
+class FuenteConPrimero final : public RecordSource {
+ public:
+  FuenteConPrimero(Record primero, RecordSource& resto)
+      : primero_(std::move(primero)), resto_(&resto) {}
+
+  bool next(Record& out) override {
+    if (pendiente_) {
+      out = std::move(primero_);
+      pendiente_ = false;
+      return true;
+    }
+    return resto_->next(out);
+  }
+
+ private:
+  Record primero_;
+  RecordSource* resto_;
+  bool pendiente_ = true;
+};
+
 }  // namespace
 
 std::unique_ptr<RecordSource> source_of(TableFile& tabla) {
@@ -117,12 +140,14 @@ class LectorDeRun {
 // ---------------------------------------------------------------------------
 
 ExternalSort::ExternalSort(Schema schema, std::size_t key_column, std::size_t buffers,
-                           std::size_t page_size, std::filesystem::path dir)
+                           std::size_t page_size, std::filesystem::path dir,
+                           Direction direction)
     : schema_(std::move(schema)),
       key_column_(key_column),
       buffers_(buffers),
       page_size_(page_size),
-      dir_(std::move(dir)) {
+      dir_(std::move(dir)),
+      direction_(direction) {
   if (key_column_ >= schema_.columns.size()) {
     throw SchemaError("la columna " + std::to_string(key_column_) + " no existe en " +
                       schema_.table_name + ", que tiene " +
@@ -132,6 +157,12 @@ ExternalSort::ExternalSort(Schema schema, std::size_t key_column, std::size_t bu
     throw SchemaError("hacen falta al menos " + std::to_string(kMinBuffers) +
                       " buffers para un k-way merge (uno para la salida y dos frentes "
                       "que fusionar), y se pidieron " + std::to_string(buffers_));
+  }
+  if (page_size_ < Page::kMinSize || page_size_ > Page::kMaxSize) {
+    throw SchemaError("el tamano de pagina debe estar entre " +
+                      std::to_string(Page::kMinSize) + " y " +
+                      std::to_string(Page::kMaxSize) + " bytes; se pidieron " +
+                      std::to_string(page_size_));
   }
 
   const RecordCodec codec{schema_};
@@ -151,8 +182,9 @@ std::filesystem::path ExternalSort::nueva_ruta() {
                  std::to_string(serie_++) + ".run");
 }
 
-bool ExternalSort::menor(const Record& a, const Record& b) const {
-  return compare(a[key_column_], b[key_column_]) < 0;
+bool ExternalSort::antes(const Record& a, const Record& b) const {
+  const int order = compare(a[key_column_], b[key_column_]);
+  return direction_ == Direction::kAsc ? order < 0 : order > 0;
 }
 
 std::uint64_t ExternalSort::predicted_pages(std::uint64_t n) const noexcept {
@@ -192,7 +224,7 @@ std::vector<Record> ExternalSort::leer_trozo(RecordSource& entrada) {
     trozo.push_back(r);
   }
   std::stable_sort(trozo.begin(), trozo.end(),
-                   [this](const Record& a, const Record& b) { return menor(a, b); });
+                   [this](const Record& a, const Record& b) { return antes(a, b); });
   return trozo;
 }
 
@@ -241,17 +273,18 @@ std::shared_ptr<ExternalSort::Temporal> ExternalSort::fusionar(
   }
 
   // El heap guarda un frente por run: el registro y de que run salio. Es lo
-  // que hace que sacar el menor de k cueste log(k) en vez de k.
+  // que hace que sacar el siguiente segun ASC/DESC cueste log(k) en vez de k.
   struct Frente {
     Record registro;
     std::size_t run = 0;
   };
   auto peor = [this](const Frente& a, const Frente& b) {
-    // `priority_queue` saca el MAYOR, asi que se invierte para sacar el menor.
+    // `priority_queue` saca su prioridad maxima; se invierte para que esa
+    // prioridad sea el siguiente registro de la direccion solicitada.
     // El desempate por numero de run conserva el orden entre iguales: es lo
     // que hace que el sort sea estable de una pasada a la otra.
-    if (menor(a.registro, b.registro)) return false;
-    if (menor(b.registro, a.registro)) return true;
+    if (antes(a.registro, b.registro)) return false;
+    if (antes(b.registro, a.registro)) return true;
     return a.run > b.run;
   };
   std::priority_queue<Frente, std::vector<Frente>, decltype(peor)> heap(peor);
@@ -345,18 +378,23 @@ std::unique_ptr<RecordSource> ExternalSort::sorted(RecordSource& entrada) {
   total_ += primero.size();
 
   // Si el primer trozo no lleno los buffers, la entrada cabia entera en
-  // memoria: no hay nada que escribir a disco. Es el caso comun en tablas
-  // chicas, y `passes() == 0` es lo que lo distingue en el plan de ejecucion.
-  if (primero.size() < buffers_ * por_pagina_) {
+  // memoria. Si los lleno exactamente, hace falta mirar un registro mas para
+  // distinguir EOF de un desborde: ese lookahead se conserva abajo como el
+  // primer registro del siguiente trozo.
+  const std::size_t capacidad = buffers_ * por_pagina_;
+  if (primero.size() < capacidad) {
     return std::make_unique<MemorySource>(std::move(primero));
   }
+  Record siguiente;
+  if (!entrada.next(siguiente)) return std::make_unique<MemorySource>(std::move(primero));
 
   runs.push_back(escribir_run(primero));
   primero.clear();
   primero.shrink_to_fit();
 
+  FuenteConPrimero resto(std::move(siguiente), entrada);
   for (;;) {
-    auto trozo = leer_trozo(entrada);
+    auto trozo = leer_trozo(resto);
     if (trozo.empty()) break;
     total_ += trozo.size();
     runs.push_back(escribir_run(trozo));

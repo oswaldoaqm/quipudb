@@ -86,8 +86,23 @@ secundario o `scan_with_rids()`, y el ejecutor captura todas las filas antes de
 la primera mutacion. Despues quita exactamente `(clave secundaria, RID)` de
 cada indice con `remove_one` y borra por PK. Un fallo intermedio restaura de
 mejor esfuerzo las entradas conocidas y reinserta las filas con su RID nuevo;
-la atomicidad completa queda para transacciones. Solo `ORDER BY` y `GROUP BY`
-continuan diferidos a #28.
+la atomicidad completa queda para transacciones.
+
+Desde #28, `ORDER BY` encadena la ruta de acceso y el filtro con
+`ExternalSort`; ordena la fila completa antes de proyectar y soporta `ASC` y
+`DESC` estables. `GROUP BY` traduce los agregados a `AggregateSpec` y usa
+`ExternalGroupBy` en estrategia `AUTO`: comienza con hashing externo y registra
+si tuvo que caer a sort. Un adaptador de iterable Python a `RecordSource`
+mantiene `WHERE -> sort/group` como flujo de una pasada. Los pasos `sort` y
+`group` del plan incluyen dirección, runs, pasadas, particiones, estrategia
+real y motivo; los buffers, el tamaño de página y el directorio temporal son
+configurables en `QueryProcessor` con valores anteriores como defaults.
+
+El `scan` de tabla y el `fetch` de RIDs alimentan ese flujo registro por
+registro. Las operaciones `TableFile.search()` y `range_search()` conservan el
+contrato previo del core y entregan un vector; en esas rutas el adaptador evita
+una segunda copia, pero volver el rango completamente incremental exigiría
+ampliar la interfaz compartida de 2.1.2.
 
 ## Por que el plan de ejecucion es un contrato y no un detalle
 
@@ -741,8 +756,8 @@ ordena ese trozo en memoria y se escribe como un run ya ordenado. La entrada
 queda partida en N/B runs.
 
 **Fase 2.** Se abren k = B-1 runs, se reserva la pagina que sobra para la
-salida, y se saca el menor de los k frentes con un heap. Cada pasada reduce los
-runs por un factor k.
+salida, y un heap saca el siguiente frente segun la direccion `ASC` o `DESC`.
+Cada pasada reduce los runs por un factor k y conserva estables los empates.
 
 Por que k = B-1 y no B: una pagina tiene que quedar libre para acumular la
 salida. Escribir de a un registro convertiria el merge en una escritura de

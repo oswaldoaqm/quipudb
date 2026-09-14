@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from time import perf_counter_ns
 from typing import Any
 
 from engine.executor.dml import execute_delete, insert_with_indexes
+from engine.executor.external import ExternalExecutionOptions, execute_external_select
 from engine.executor.native import (
     from_native_schema,
     load_native,
@@ -31,9 +33,25 @@ from engine.planner.plan import Plan
 class QueryProcessor:
     """Parsea, valida y ejecuta el subconjunto SQL disponible."""
 
-    def __init__(self, database: Any, native_module: Any | None = None) -> None:
+    def __init__(
+        self,
+        database: Any,
+        native_module: Any | None = None,
+        *,
+        external_buffers: int = 64,
+        external_page_size: int = 4096,
+        temp_dir: str | Path | None = None,
+    ) -> None:
         self._database = database
         self._native = native_module if native_module is not None else load_native()
+        external_temp_dir = None if temp_dir is None else Path(temp_dir)
+        if external_temp_dir is not None:
+            external_temp_dir.mkdir(parents=True, exist_ok=True)
+        self._external_options = ExternalExecutionOptions(
+            buffers=external_buffers,
+            page_size=external_page_size,
+            temp_dir=external_temp_dir,
+        )
         self._domain_errors = tuple(
             error_type
             for name in ("SchemaError", "InvalidRecord", "DuplicateKey")
@@ -132,7 +150,16 @@ class QueryProcessor:
         bound = bind_select(statement, schema, source)
         physical_plan = optimize_select(bound, from_native_table_info(table_info))
         try:
-            execution = execute_select(self._database, self._native, physical_plan, source)
+            if bound.group_by is not None or bound.order_by is not None:
+                execution = execute_external_select(
+                    self._database,
+                    self._native,
+                    physical_plan,
+                    source,
+                    self._external_options,
+                )
+            else:
+                execution = execute_select(self._database, self._native, physical_plan, source)
         except self._domain_errors as error:
             self._raise_semantic(
                 error,

@@ -104,6 +104,18 @@ void ExternalGroupBy::validar() {
     throw SchemaError("hacen falta al menos " + std::to_string(ExternalSort::kMinBuffers) +
                       " buffers y se pidieron " + std::to_string(buffers_));
   }
+  if (page_size_ < Page::kMinSize || page_size_ > Page::kMaxSize) {
+    throw SchemaError("el tamano de pagina debe estar entre " +
+                      std::to_string(Page::kMinSize) + " y " +
+                      std::to_string(Page::kMaxSize) + " bytes; se pidieron " +
+                      std::to_string(page_size_));
+  }
+  const RecordCodec codec{entrada_};
+  if (codec.size() > page_size_ - Page::kHeaderSize) {
+    throw SchemaError("un registro de " + std::to_string(codec.size()) +
+                      " bytes no entra en una pagina de " +
+                      std::to_string(page_size_));
+  }
   for (const auto& a : aggs_) {
     // COUNT no mira la columna, asi que no se le exige que exista.
     if (a.func == Aggregate::Count) continue;

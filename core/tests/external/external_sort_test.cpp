@@ -65,11 +65,16 @@ std::vector<Record> drenar(RecordSource& s) {
 /// Comprueba que sale ordenado por esa columna y que no se perdio ni se
 /// invento nada: compara el multiconjunto de codigos contra el de la entrada.
 void verificar(const std::vector<Record>& salida, const std::vector<Record>& entrada,
-               std::size_t columna) {
+               std::size_t columna,
+               ExternalSort::Direction direccion = ExternalSort::Direction::kAsc) {
   ASSERT_EQ(salida.size(), entrada.size()) << "se perdieron o duplicaron registros";
   for (std::size_t i = 1; i < salida.size(); ++i) {
-    ASSERT_LE(compare(salida[i - 1][columna], salida[i][columna]), 0)
-        << "desordenado en la posicion " << i;
+    const int orden = compare(salida[i - 1][columna], salida[i][columna]);
+    if (direccion == ExternalSort::Direction::kAsc) {
+      ASSERT_LE(orden, 0) << "desordenado en la posicion " << i;
+    } else {
+      ASSERT_GE(orden, 0) << "desordenado en la posicion " << i;
+    }
   }
   std::vector<std::int32_t> a, b;
   for (const auto& r : salida) a.push_back(std::get<std::int32_t>(r[kCodigo]));
@@ -120,12 +125,52 @@ TEST_F(SortTest, SiTodoCabeEnMemoriaNoSeUsaElDisco) {
   EXPECT_EQ(temporales(), 0u);
 }
 
+TEST_F(SortTest, DescendenteTambienOrdenaEnMemoriaSinTocarDisco) {
+  const auto entrada = muestra(50, 2);
+  ExternalSort sort(alumnos(), kNombre, 16, 512, dir_, ExternalSort::Direction::kDesc);
+  auto fuente = source_of(entrada);
+  const auto salida = drenar(*sort.sorted(*fuente));
+
+  verificar(salida, entrada, kNombre, ExternalSort::Direction::kDesc);
+  EXPECT_EQ(sort.direction(), ExternalSort::Direction::kDesc);
+  EXPECT_EQ(sort.passes(), 0u);
+  EXPECT_EQ(sort.stats().pages_written, 0u);
+}
+
 TEST_F(SortTest, UnaEntradaVaciaDaUnaSalidaVacia) {
   ExternalSort sort(alumnos(), kNombre, 8, 512, dir_);
   auto fuente = source_of(std::vector<Record>{});
   EXPECT_TRUE(drenar(*sort.sorted(*fuente)).empty());
   EXPECT_EQ(sort.size(), 0u);
   EXPECT_EQ(sort.passes(), 0u);
+}
+
+TEST_F(SortTest, SoloLaCapacidadMasUnoCruzaLaFronteraAlDisco) {
+  ExternalSort en_memoria(alumnos(), kNombre, ExternalSort::kMinBuffers, 128, dir_);
+  const std::size_t capacidad = en_memoria.buffers() * en_memoria.records_per_page();
+  const auto exacta = muestra(static_cast<int>(capacidad), 41);
+  auto fuente_exacta = source_of(exacta);
+  const auto salida_exacta = drenar(*en_memoria.sorted(*fuente_exacta));
+
+  verificar(salida_exacta, exacta, kNombre);
+  EXPECT_EQ(en_memoria.size(), capacidad);
+  EXPECT_EQ(en_memoria.runs(), 0u);
+  EXPECT_EQ(en_memoria.passes(), 0u);
+  EXPECT_EQ(en_memoria.stats().pages_read, 0u);
+  EXPECT_EQ(en_memoria.stats().pages_written, 0u);
+  EXPECT_EQ(en_memoria.temp_bytes(), 0u);
+
+  ExternalSort en_disco(alumnos(), kNombre, ExternalSort::kMinBuffers, 128, dir_);
+  const auto desborde = muestra(static_cast<int>(capacidad + 1), 43);
+  auto fuente_desborde = source_of(desborde);
+  const auto salida_desborde = drenar(*en_disco.sorted(*fuente_desborde));
+
+  verificar(salida_desborde, desborde, kNombre);
+  EXPECT_EQ(en_disco.size(), capacidad + 1);
+  EXPECT_EQ(en_disco.runs(), 2u);
+  EXPECT_GT(en_disco.passes(), 0u);
+  EXPECT_GT(en_disco.stats().pages_read, 0u);
+  EXPECT_GT(en_disco.stats().pages_written, 0u);
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +190,19 @@ TEST_F(SortTest, OrdenaMasDeLoQueCabeEnMemoriaYHaceVariasPasadas) {
   EXPECT_EQ(sort.size(), 2000u);
   EXPECT_GT(sort.runs(), 1u) << "la fase 1 no partio la entrada en runs";
   EXPECT_GT(sort.passes(), 1u) << "no llego a hacer mas de una pasada de fusion";
+  EXPECT_GT(sort.stats().pages_written, 0u);
+}
+
+TEST_F(SortTest, DescendenteSeConservaEnTodasLasPasadasDeFusion) {
+  const auto entrada = muestra(2000, 4);
+  ExternalSort sort(alumnos(), kNombre, ExternalSort::kMinBuffers, 256, dir_,
+                    ExternalSort::Direction::kDesc);
+  auto fuente = source_of(entrada);
+  const auto salida = drenar(*sort.sorted(*fuente));
+
+  verificar(salida, entrada, kNombre, ExternalSort::Direction::kDesc);
+  EXPECT_GT(sort.runs(), 1u);
+  EXPECT_GT(sort.passes(), 1u);
   EXPECT_GT(sort.stats().pages_written, 0u);
 }
 
@@ -189,6 +247,30 @@ TEST_F(SortTest, LasClavesRepetidasSalenTodasYJuntas) {
       EXPECT_EQ(std::find(vistos.begin(), vistos.end(), p), vistos.end())
           << "el valor " << p << " aparece en dos corridas distintas";
       vistos.push_back(p);
+    }
+  }
+}
+
+TEST_F(SortTest, LosEmpatesSonEstablesEnAmbasDireccionesYVariasPasadas) {
+  std::vector<Record> entrada;
+  entrada.reserve(2400);
+  for (std::int32_t i = 0; i < 2400; ++i) {
+    entrada.push_back({i, std::string{"igual"}, static_cast<double>((i * 17) % 11)});
+  }
+
+  for (const auto direccion :
+       {ExternalSort::Direction::kAsc, ExternalSort::Direction::kDesc}) {
+    ExternalSort sort(alumnos(), kPromedio, ExternalSort::kMinBuffers, 256, dir_, direccion);
+    auto fuente = source_of(entrada);
+    const auto salida = drenar(*sort.sorted(*fuente));
+
+    verificar(salida, entrada, kPromedio, direccion);
+    ASSERT_GT(sort.passes(), 1u);
+    for (std::size_t i = 1; i < salida.size(); ++i) {
+      if (compare(salida[i - 1][kPromedio], salida[i][kPromedio]) == 0) {
+        EXPECT_LT(std::get<std::int32_t>(salida[i - 1][kCodigo]),
+                  std::get<std::int32_t>(salida[i][kCodigo]));
+      }
     }
   }
 }
@@ -352,6 +434,13 @@ TEST_F(SortTest, RechazaUnRegistroQueNoEntraEnUnaPagina) {
       .key_column = 0,
   };
   EXPECT_THROW(ExternalSort(gordo, 0, 8, 256, dir_), SchemaError);
+}
+
+TEST_F(SortTest, RechazaTamanosDePaginaFueraDelContrato) {
+  EXPECT_THROW(ExternalSort(alumnos(), kNombre, 8, 127, dir_), SchemaError);
+  EXPECT_NO_THROW(ExternalSort(alumnos(), kNombre, 8, 128, dir_));
+  EXPECT_NO_THROW(ExternalSort(alumnos(), kNombre, 8, 65536, dir_));
+  EXPECT_THROW(ExternalSort(alumnos(), kNombre, 8, 65537, dir_), SchemaError);
 }
 
 TEST_F(SortTest, RechazaUnRegistroQueNoCalzaConElEsquema) {

@@ -6,16 +6,19 @@ from datetime import date
 import pytest
 
 from engine.parser import SelectStatement, Wildcard, parse_sql
-from engine.parser.ast import ComparisonOperator, SqlTypeName
+from engine.parser.ast import AggregateFunction, ComparisonOperator, OrderDirection, SqlTypeName
 from engine.parser.bound_ast import (
+    BoundAggregateCall,
     BoundBetweenCondition,
     BoundColumn,
     BoundColumnReference,
     BoundComparisonCondition,
+    BoundGroupBy,
+    BoundOrderBy,
     BoundSchema,
     BoundSelectStatement,
 )
-from engine.parser.errors import SQLSemanticError, SQLUnsupportedError
+from engine.parser.errors import SQLSemanticError
 from engine.parser.semantic import bind_select
 
 
@@ -259,34 +262,163 @@ def test_bind_select_acepta_clave_varchar_que_no_se_podria_insertar(value: str) 
     assert bound.where.value == value
 
 
+def test_bind_select_resuelve_order_by_sin_exigir_que_se_proyecte() -> None:
+    statement = _select("SELECT nombre FROM datos ORDER BY ingreso DESC")
+
+    bound = bind_select(statement, _schema())
+
+    assert isinstance(bound.order_by, BoundOrderBy)
+    assert bound.order_by.column.index == 4
+    assert bound.order_by.direction is OrderDirection.DESC
+    assert bound.order_by.span == statement.order_by.span  # type: ignore[union-attr]
+    assert bound.group_by is None
+
+
+def test_bind_select_agrupado_conserva_orden_sql_y_resuelve_todos_los_agregados() -> None:
+    source = (
+        "SELECT MAX(nombre), activo, COUNT(*), SUM(id), MIN(ingreso), AVG(promedio) "
+        "FROM datos GROUP BY activo ORDER BY activo DESC"
+    )
+    statement = _select(source)
+
+    bound = bind_select(statement, _schema(), source)
+
+    assert isinstance(bound.group_by, BoundGroupBy)
+    assert bound.group_by.column.index == 3
+    assert isinstance(bound.order_by, BoundOrderBy)
+    assert bound.order_by.column.index == bound.group_by.column.index
+    assert bound.order_by.column.column == bound.group_by.column.column
+    assert bound.order_by.direction is OrderDirection.DESC
+    assert [
+        projection.function
+        for projection in bound.projections
+        if isinstance(projection, BoundAggregateCall)
+    ] == [
+        AggregateFunction.MAX,
+        AggregateFunction.COUNT,
+        AggregateFunction.SUM,
+        AggregateFunction.MIN,
+        AggregateFunction.AVG,
+    ]
+    assert isinstance(bound.projections[0], BoundAggregateCall)
+    assert bound.projections[0].argument.index == 2  # type: ignore[union-attr]
+    assert isinstance(bound.projections[1], BoundColumnReference)
+    assert bound.projections[1].index == 3
+    assert isinstance(bound.projections[2], BoundAggregateCall)
+    assert bound.projections[2].argument is None
+    assert [projection.span for projection in bound.projections] == [
+        projection.span for projection in statement.projections
+    ]
+
+
+def test_bind_select_permite_omitir_la_clave_de_la_salida_agrupada() -> None:
+    bound = bind_select(_select("SELECT COUNT(*) FROM datos GROUP BY activo"), _schema())
+
+    assert isinstance(bound.projections[0], BoundAggregateCall)
+    assert bound.group_by is not None
+    assert bound.group_by.column.index == 3
+
+
+def test_bind_select_rechaza_agregado_sin_group_by_con_span_preciso() -> None:
+    source = "SELECT id, COUNT(*) FROM datos"
+    statement = _select(source)
+
+    with pytest.raises(SQLSemanticError, match="requieren una clausula GROUP BY") as caught:
+        bind_select(statement, _schema(), source)
+
+    assert caught.value.span == statement.projections[1].span
+    assert caught.value.source == source
+
+
+def test_bind_select_rechaza_group_by_sin_agregado() -> None:
+    source = "SELECT activo FROM datos GROUP BY activo"
+    statement = _select(source)
+
+    with pytest.raises(SQLSemanticError, match="al menos una funcion") as caught:
+        bind_select(statement, _schema(), source)
+
+    assert caught.value.span == statement.group_by.span  # type: ignore[union-attr]
+
+
+def test_bind_select_rechaza_wildcard_con_group_by() -> None:
+    source = "SELECT * FROM datos GROUP BY activo"
+    statement = _select(source)
+
+    with pytest.raises(SQLSemanticError, match="no se admite") as caught:
+        bind_select(statement, _schema(), source)
+
+    assert caught.value.span == statement.projections[0].span
+
+
+def test_bind_select_rechaza_columna_simple_distinta_de_la_clave_de_grupo() -> None:
+    source = "SELECT nombre, COUNT(*) FROM datos GROUP BY activo"
+    statement = _select(source)
+
+    with pytest.raises(SQLSemanticError, match="columna de GROUP BY") as caught:
+        bind_select(statement, _schema(), source)
+
+    assert caught.value.span == statement.projections[0].span
+
+
+@pytest.mark.parametrize("function", ["SUM", "AVG"])
+@pytest.mark.parametrize("column", ["nombre", "activo", "ingreso"])
+def test_bind_select_rechaza_sum_y_avg_sobre_columnas_no_numericas(
+    function: str,
+    column: str,
+) -> None:
+    source = f"SELECT {function}({column}) FROM datos GROUP BY activo"
+    statement = _select(source)
+
+    with pytest.raises(SQLSemanticError, match="requiere una columna INT o DOUBLE") as caught:
+        bind_select(statement, _schema(), source)
+
+    aggregate = statement.projections[0]
+    assert caught.value.span == aggregate.argument.span  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize("function", ["MIN", "MAX"])
+@pytest.mark.parametrize("column", ["id", "promedio", "nombre", "activo", "ingreso"])
+def test_bind_select_admite_min_y_max_sobre_todos_los_tipos_comparables(
+    function: str,
+    column: str,
+) -> None:
+    bound = bind_select(
+        _select(f"SELECT {function}({column}) FROM datos GROUP BY activo"),
+        _schema(),
+    )
+
+    assert isinstance(bound.projections[0], BoundAggregateCall)
+    assert bound.projections[0].argument is not None
+
+
 @pytest.mark.parametrize(
-    ("source", "feature"),
+    ("source", "clause"),
     [
-        ("SELECT COUNT(*) FROM datos", "funciones de agregado"),
-        ("SELECT activo FROM datos GROUP BY activo", "GROUP BY"),
-        ("SELECT * FROM datos ORDER BY id", "ORDER BY"),
+        ("SELECT COUNT(*) FROM datos GROUP BY ausente", "group_by"),
+        ("SELECT * FROM datos ORDER BY ausente", "order_by"),
     ],
 )
-def test_bind_select_difiere_agregados_group_y_order_al_issue_28(
+def test_bind_select_rechaza_columnas_inexistentes_de_group_y_order(
     source: str,
-    feature: str,
+    clause: str,
 ) -> None:
     statement = _select(source)
 
-    with pytest.raises(SQLUnsupportedError) as caught:
+    with pytest.raises(SQLSemanticError, match="no existe") as caught:
         bind_select(statement, _schema(), source)
 
-    expected_span = (
-        statement.projections[0].span
-        if "COUNT" in source
-        else statement.group_by.span
-        if statement.group_by is not None
-        else statement.order_by.span  # type: ignore[union-attr]
-    )
-    assert caught.value.span == expected_span
-    assert caught.value.source == source
-    assert feature in caught.value.message
-    assert "#28" in caught.value.message
+    node = getattr(statement, clause)
+    assert caught.value.span == node.column.span
+
+
+def test_bind_select_agrupado_solo_ordena_por_la_clave_de_grupo() -> None:
+    source = "SELECT activo, COUNT(*) FROM datos GROUP BY activo ORDER BY id"
+    statement = _select(source)
+
+    with pytest.raises(SQLSemanticError, match="solo puede usar") as caught:
+        bind_select(statement, _schema(), source)
+
+    assert caught.value.span == statement.order_by.column.span  # type: ignore[union-attr]
 
 
 def test_bind_select_rechaza_ast_manual_con_wildcard_y_otra_proyeccion() -> None:

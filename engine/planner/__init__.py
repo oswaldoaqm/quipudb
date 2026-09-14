@@ -8,6 +8,7 @@ el core, el parser y el frontend, y no un detalle interno.
 from engine.planner.native_catalog import from_native_table_info, load_table_metadata
 from engine.planner.optimizer import (
     AccessRoute,
+    GroupStrategy,
     IndexMetadata,
     PhysicalDeletePlan,
     PhysicalSelectPlan,
@@ -18,6 +19,7 @@ from engine.planner.optimizer import (
 
 __all__ = [
     "AccessRoute",
+    "GroupStrategy",
     "IndexMetadata",
     "PhysicalDeletePlan",
     "PhysicalSelectPlan",
