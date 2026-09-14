@@ -7,6 +7,7 @@ import re
 
 from engine.parser.ast import (
     AggregateCall,
+    AggregateFunction,
     BetweenCondition,
     BooleanLiteral,
     ColumnReference,
@@ -25,6 +26,7 @@ from engine.parser.ast import (
     Wildcard,
 )
 from engine.parser.bound_ast import (
+    BoundAggregateCall,
     BoundBetweenCondition,
     BoundColumn,
     BoundColumnReference,
@@ -32,12 +34,15 @@ from engine.parser.bound_ast import (
     BoundCondition,
     BoundCreateTable,
     BoundDeleteStatement,
+    BoundGroupBy,
     BoundInsertStatement,
+    BoundOrderBy,
+    BoundProjection,
     BoundSchema,
     BoundSelectStatement,
     BoundValue,
 )
-from engine.parser.errors import SQLSemanticError, SQLUnsupportedError
+from engine.parser.errors import SQLSemanticError
 from engine.parser.span import Span
 
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
@@ -157,17 +162,29 @@ def bind_select(
             source,
         )
 
-    if statement.group_by is not None:
-        raise SQLUnsupportedError(
-            "GROUP BY se implementa en el issue #28",
-            statement.group_by.span,
+    if not statement.projections:
+        _fail("SELECT requiere al menos una proyeccion", statement.span, source)
+
+    first_aggregate = next(
+        (
+            projection
+            for projection in statement.projections
+            if isinstance(projection, AggregateCall)
+        ),
+        None,
+    )
+    if statement.group_by is None and first_aggregate is not None:
+        _fail(
+            "las funciones de agregado requieren una clausula GROUP BY",
+            first_aggregate.span,
             source,
         )
-    if statement.order_by is not None:
-        raise SQLUnsupportedError(
-            "ORDER BY se implementa en el issue #28",
-            statement.order_by.span,
-            source,
+
+    group_by = None
+    if statement.group_by is not None:
+        group_by = BoundGroupBy(
+            _resolve_column(statement.group_by.column, schema, source),
+            statement.group_by.span,
         )
 
     wildcard = any(isinstance(projection, Wildcard) for projection in statement.projections)
@@ -183,8 +200,14 @@ def bind_select(
                 wildcard_projection.span,
                 source,
             )
+        if group_by is not None:
+            _fail(
+                "'*' no se admite en una consulta con GROUP BY",
+                statement.projections[0].span,
+                source,
+            )
         wildcard_span = statement.projections[0].span
-        projections = tuple(
+        projections: tuple[BoundProjection, ...] = tuple(
             BoundColumnReference(index, column, wildcard_span)
             for index, column in enumerate(schema.columns)
         )
@@ -193,11 +216,49 @@ def bind_select(
             _bind_projection(projection, schema, source) for projection in statement.projections
         )
 
-    if not statement.projections:
-        _fail("SELECT requiere al menos una proyeccion", statement.span, source)
+    if group_by is not None:
+        if not any(isinstance(projection, BoundAggregateCall) for projection in projections):
+            _fail(
+                "GROUP BY requiere al menos una funcion de agregado",
+                statement.group_by.span,  # type: ignore[union-attr]
+                source,
+            )
+        for projection in projections:
+            if (
+                isinstance(projection, BoundColumnReference)
+                and projection.index != group_by.column.index
+            ):
+                _fail(
+                    "toda columna proyectada sin agregar debe ser la columna de GROUP BY",
+                    projection.span,
+                    source,
+                )
+
+    order_by = None
+    if statement.order_by is not None:
+        order_column = _resolve_column(statement.order_by.column, schema, source)
+        if group_by is not None and order_column.index != group_by.column.index:
+            _fail(
+                "ORDER BY solo puede usar la columna de GROUP BY en una consulta agrupada",
+                statement.order_by.column.span,
+                source,
+            )
+        order_by = BoundOrderBy(
+            order_column,
+            statement.order_by.direction,
+            statement.order_by.span,
+        )
 
     where = _bind_condition(statement.where, schema, source)
-    return BoundSelectStatement(schema, projections, wildcard, where, statement.span)
+    return BoundSelectStatement(
+        schema=schema,
+        projections=projections,
+        wildcard=wildcard,
+        where=where,
+        group_by=group_by,
+        order_by=order_by,
+        span=statement.span,
+    )
 
 
 def bind_delete(
@@ -225,14 +286,29 @@ def _bind_projection(
     projection: ColumnReference | AggregateCall,
     schema: BoundSchema,
     source: str | None,
-) -> BoundColumnReference:
-    if isinstance(projection, AggregateCall):
-        raise SQLUnsupportedError(
-            "las funciones de agregado se implementan en el issue #28",
-            projection.span,
+) -> BoundProjection:
+    if isinstance(projection, ColumnReference):
+        return _resolve_column(projection, schema, source)
+
+    if projection.function is AggregateFunction.COUNT:
+        if not isinstance(projection.argument, Wildcard):
+            _fail("COUNT requiere '*' como argumento", projection.argument.span, source)
+        return BoundAggregateCall(projection.function, None, projection.span)
+
+    if isinstance(projection.argument, Wildcard):
+        _fail("solo COUNT admite '*' como argumento", projection.argument.span, source)
+    argument = _resolve_column(projection.argument, schema, source)
+    if projection.function in {
+        AggregateFunction.SUM,
+        AggregateFunction.AVG,
+    } and argument.column.data_type not in {SqlTypeName.INT, SqlTypeName.DOUBLE}:
+        _fail(
+            f"{projection.function.value} requiere una columna INT o DOUBLE; "
+            f"{argument.column.name} es {argument.column.data_type.value}",
+            projection.argument.span,
             source,
         )
-    return _resolve_column(projection, schema, source)
+    return BoundAggregateCall(projection.function, argument, projection.span)
 
 
 def _bind_condition(
