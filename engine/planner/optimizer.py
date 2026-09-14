@@ -91,6 +91,16 @@ class PhysicalSelectPlan:
             raise ValueError("las rutas de indice necesitan exactamente un indice")
         if self.table.name != self.statement.schema.table_name:
             raise ValueError("la metadata y el SELECT pertenecen a tablas distintas")
+        if self.index is None:
+            return
+        if self.index not in self.table.indexes:
+            raise ValueError("el indice elegido no pertenece a la metadata de la tabla")
+        if self.statement.where is None:
+            raise ValueError("una ruta de indice necesita una condicion")
+        if self.index.column != self.statement.where.column.index:
+            raise ValueError("el indice elegido no corresponde a la columna del predicado")
+        if self.route is AccessRoute.INDEX_RANGE and not self.index.supports_range:
+            raise ValueError("INDEX_RANGE necesita un indice que soporte rangos")
 
 
 def optimize_select(
@@ -144,7 +154,18 @@ def _plan_equality(
     if is_primary_key:
         return PhysicalSelectPlan(statement, table, AccessRoute.TABLE_SEARCH)
 
-    index = _best_index(table, column, for_range=False)
+    condition = statement.where
+    allow_hash = not (
+        isinstance(condition.value, str)
+        and (
+            "\0" in condition.value
+            or (
+                condition.column.column.length is not None
+                and len(condition.value.encode("utf-8")) > condition.column.column.length
+            )
+        )
+    )
+    index = _best_index(table, column, for_range=False, allow_hash=allow_hash)
     if index is not None:
         return PhysicalSelectPlan(
             statement,
@@ -197,12 +218,17 @@ def _best_index(
     column: int,
     *,
     for_range: bool,
+    allow_hash: bool = True,
 ) -> IndexMetadata | None:
     candidates = [index for index in table.indexes if index.column == column]
     if for_range:
         candidates = [index for index in candidates if index.supports_range]
         ranking = {Structure.BPLUS_UNCLUSTERED: 0}
     else:
+        if not allow_hash:
+            candidates = [
+                index for index in candidates if index.structure is not Structure.EXTENDIBLE_HASH
+            ]
         ranking = {
             Structure.EXTENDIBLE_HASH: 0,
             Structure.BPLUS_UNCLUSTERED: 1,

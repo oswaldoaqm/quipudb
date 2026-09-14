@@ -209,6 +209,21 @@ def test_igualdad_sin_indice_hace_scan_y_filter() -> None:
     assert plan.residual_filter is True
 
 
+@pytest.mark.parametrize("value", ["x" * 41, "a\0b"])
+def test_hash_no_recibe_clave_varchar_que_su_codec_no_representa(value: str) -> None:
+    condition = BoundComparisonCondition(_column(2), ComparisonOperator.EQUAL, value, _SPAN)
+    hash_index = _index("por_nombre_hash", Structure.EXTENDIBLE_HASH, column=2)
+    bplus_index = _index("por_nombre_bplus", Structure.BPLUS_UNCLUSTERED, column=2)
+
+    with_bplus = optimize_select(_select(condition), _table(hash_index, bplus_index))
+    only_hash = optimize_select(_select(condition), _table(hash_index))
+
+    assert with_bplus.route is AccessRoute.INDEX_SEARCH
+    assert with_bplus.index == bplus_index
+    assert only_hash.route is AccessRoute.SCAN
+    assert only_hash.residual_filter is True
+
+
 def test_ir_fisico_y_metadata_son_inmutables() -> None:
     plan = optimize_select(_select(), _table())
 
@@ -228,6 +243,37 @@ def test_ir_rechaza_indice_en_una_ruta_de_tabla() -> None:
             table,
             AccessRoute.SCAN,
             index=_index("sobrante", Structure.EXTENDIBLE_HASH),
+        )
+
+
+def test_ir_rechaza_hash_en_una_ruta_de_rango() -> None:
+    statement = _select(_between())
+    index = _index("solo_hash", Structure.EXTENDIBLE_HASH)
+    table = _table(index)
+
+    with pytest.raises(ValueError, match="soporte rangos"):
+        PhysicalSelectPlan(statement, table, AccessRoute.INDEX_RANGE, index=index)
+
+
+def test_ir_rechaza_indice_ajeno_o_de_otra_columna() -> None:
+    statement = _select(_comparison(1, ComparisonOperator.EQUAL))
+    listed = _index("listado", Structure.EXTENDIBLE_HASH)
+
+    with pytest.raises(ValueError, match="no pertenece"):
+        PhysicalSelectPlan(
+            statement,
+            _table(listed),
+            AccessRoute.INDEX_SEARCH,
+            index=_index("ajeno", Structure.EXTENDIBLE_HASH),
+        )
+
+    wrong_column = _index("por_nombre", Structure.EXTENDIBLE_HASH, column=2)
+    with pytest.raises(ValueError, match="columna del predicado"):
+        PhysicalSelectPlan(
+            statement,
+            _table(wrong_column),
+            AccessRoute.INDEX_SEARCH,
+            index=wrong_column,
         )
 
 
