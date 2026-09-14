@@ -1,4 +1,4 @@
-"""Seleccion de rutas fisicas para ``SELECT`` del issue #26.
+"""Seleccion de rutas fisicas para ``SELECT`` y ``DELETE``.
 
 El optimizador trabaja solo con metadata copiada y con el arbol semantico. No
 abre archivos ni construye ``Step``: esos pasos incluyen medidas reales y los
@@ -14,6 +14,8 @@ from engine.parser.ast import ComparisonOperator
 from engine.parser.bound_ast import (
     BoundBetweenCondition,
     BoundComparisonCondition,
+    BoundCondition,
+    BoundDeleteStatement,
     BoundSelectStatement,
 )
 from engine.planner.plan import Structure
@@ -86,21 +88,45 @@ class PhysicalSelectPlan:
     residual_filter: bool = False
 
     def __post_init__(self) -> None:
-        index_route = self.route in {AccessRoute.INDEX_SEARCH, AccessRoute.INDEX_RANGE}
-        if index_route != (self.index is not None):
-            raise ValueError("las rutas de indice necesitan exactamente un indice")
-        if self.table.name != self.statement.schema.table_name:
-            raise ValueError("la metadata y el SELECT pertenecen a tablas distintas")
-        if self.index is None:
-            return
-        if self.index not in self.table.indexes:
-            raise ValueError("el indice elegido no pertenece a la metadata de la tabla")
-        if self.statement.where is None:
-            raise ValueError("una ruta de indice necesita una condicion")
-        if self.index.column != self.statement.where.column.index:
-            raise ValueError("el indice elegido no corresponde a la columna del predicado")
-        if self.route is AccessRoute.INDEX_RANGE and not self.index.supports_range:
-            raise ValueError("INDEX_RANGE necesita un indice que soporte rangos")
+        _validate_access(
+            self.statement.schema.table_name,
+            self.statement.where,
+            self.table,
+            self.route,
+            self.index,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PhysicalDeletePlan:
+    """IR fisico para capturar las filas que se borraran antes de mutar."""
+
+    statement: BoundDeleteStatement
+    table: TableMetadata
+    route: AccessRoute
+    index: IndexMetadata | None = None
+    residual_filter: bool = False
+
+    def __post_init__(self) -> None:
+        _validate_access(
+            self.statement.schema.table_name,
+            self.statement.where,
+            self.table,
+            self.route,
+            self.index,
+        )
+        if self.table.indexes and self.route in {
+            AccessRoute.TABLE_SEARCH,
+            AccessRoute.TABLE_RANGE,
+        }:
+            raise ValueError("DELETE con indices necesita una ruta que conserve el RID")
+
+
+@dataclass(frozen=True, slots=True)
+class _AccessChoice:
+    route: AccessRoute
+    index: IndexMetadata | None = None
+    residual_filter: bool = False
 
 
 def optimize_select(
@@ -115,20 +141,78 @@ def optimize_select(
     nombre como desempate estable, no el orden en que llegaron del catalogo.
     """
 
-    where = statement.where
+    choice = _choose_access(
+        statement.where,
+        statement.schema.key_column,
+        table,
+        primary_table_allowed=True,
+    )
+    return PhysicalSelectPlan(
+        statement,
+        table,
+        choice.route,
+        choice.index,
+        choice.residual_filter,
+    )
+
+
+def optimize_delete(
+    statement: BoundDeleteStatement,
+    table: TableMetadata,
+) -> PhysicalDeletePlan:
+    """Elige candidatos sin perder los RID que necesitan los indices.
+
+    Las tablas con indices secundarios son heap files. Si el predicado no
+    tiene un indice aplicable, DELETE hace scan con RID y filtra; una busqueda
+    de tabla devolveria solo registros y no permitiria retirar cada par
+    secundario exacto.
+    """
+
+    choice = _choose_access(
+        statement.where,
+        statement.schema.key_column,
+        table,
+        primary_table_allowed=not table.indexes,
+    )
+    return PhysicalDeletePlan(
+        statement,
+        table,
+        choice.route,
+        choice.index,
+        choice.residual_filter,
+    )
+
+
+def _choose_access(
+    where: BoundCondition | None,
+    key_column: int,
+    table: TableMetadata,
+    *,
+    primary_table_allowed: bool,
+) -> _AccessChoice:
     if where is None:
-        return PhysicalSelectPlan(statement, table, AccessRoute.SCAN)
+        return _AccessChoice(AccessRoute.SCAN)
 
     column = where.column.index
-    is_primary_key = column == statement.schema.key_column
+    is_primary_key = column == key_column
     if isinstance(where, BoundBetweenCondition):
-        return _plan_range(statement, table, column, is_primary_key, strict=False)
+        return _plan_range(
+            table,
+            column,
+            is_primary_key and primary_table_allowed,
+            strict=False,
+        )
 
     if not isinstance(where, BoundComparisonCondition):
         raise TypeError(f"condicion enlazada desconocida: {type(where).__name__}")
 
     if where.operator is ComparisonOperator.EQUAL:
-        return _plan_equality(statement, table, column, is_primary_key)
+        return _plan_equality(
+            where,
+            table,
+            column,
+            is_primary_key and primary_table_allowed,
+        )
 
     if where.operator in {
         ComparisonOperator.LESS_THAN,
@@ -140,21 +224,25 @@ def optimize_select(
             ComparisonOperator.LESS_THAN,
             ComparisonOperator.GREATER_THAN,
         }
-        return _plan_range(statement, table, column, is_primary_key, strict)
+        return _plan_range(
+            table,
+            column,
+            is_primary_key and primary_table_allowed,
+            strict,
+        )
 
     raise ValueError(f"operador de comparacion desconocido: {where.operator!r}")
 
 
 def _plan_equality(
-    statement: BoundSelectStatement,
+    condition: BoundComparisonCondition,
     table: TableMetadata,
     column: int,
-    is_primary_key: bool,
-) -> PhysicalSelectPlan:
-    if is_primary_key:
-        return PhysicalSelectPlan(statement, table, AccessRoute.TABLE_SEARCH)
+    use_primary_table: bool,
+) -> _AccessChoice:
+    if use_primary_table:
+        return _AccessChoice(AccessRoute.TABLE_SEARCH)
 
-    condition = statement.where
     allow_hash = not (
         isinstance(condition.value, str)
         and (
@@ -167,50 +255,63 @@ def _plan_equality(
     )
     index = _best_index(table, column, for_range=False, allow_hash=allow_hash)
     if index is not None:
-        return PhysicalSelectPlan(
-            statement,
-            table,
+        return _AccessChoice(
             AccessRoute.INDEX_SEARCH,
             index=index,
         )
-    return PhysicalSelectPlan(
-        statement,
-        table,
+    return _AccessChoice(
         AccessRoute.SCAN,
         residual_filter=True,
     )
 
 
 def _plan_range(
-    statement: BoundSelectStatement,
     table: TableMetadata,
     column: int,
-    is_primary_key: bool,
+    use_primary_table: bool,
     strict: bool,
-) -> PhysicalSelectPlan:
-    if is_primary_key:
-        return PhysicalSelectPlan(
-            statement,
-            table,
+) -> _AccessChoice:
+    if use_primary_table:
+        return _AccessChoice(
             AccessRoute.TABLE_RANGE,
             residual_filter=strict,
         )
 
     index = _best_index(table, column, for_range=True)
     if index is not None:
-        return PhysicalSelectPlan(
-            statement,
-            table,
+        return _AccessChoice(
             AccessRoute.INDEX_RANGE,
             index=index,
             residual_filter=strict,
         )
-    return PhysicalSelectPlan(
-        statement,
-        table,
+    return _AccessChoice(
         AccessRoute.SCAN,
         residual_filter=True,
     )
+
+
+def _validate_access(
+    table_name: str,
+    where: BoundCondition | None,
+    table: TableMetadata,
+    route: AccessRoute,
+    index: IndexMetadata | None,
+) -> None:
+    index_route = route in {AccessRoute.INDEX_SEARCH, AccessRoute.INDEX_RANGE}
+    if index_route != (index is not None):
+        raise ValueError("las rutas de indice necesitan exactamente un indice")
+    if table.name != table_name:
+        raise ValueError("la metadata y la sentencia pertenecen a tablas distintas")
+    if index is None:
+        return
+    if index not in table.indexes:
+        raise ValueError("el indice elegido no pertenece a la metadata de la tabla")
+    if where is None:
+        raise ValueError("una ruta de indice necesita una condicion")
+    if index.column != where.column.index:
+        raise ValueError("el indice elegido no corresponde a la columna del predicado")
+    if route is AccessRoute.INDEX_RANGE and not index.supports_range:
+        raise ValueError("INDEX_RANGE necesita un indice que soporte rangos")
 
 
 def _best_index(
@@ -239,7 +340,9 @@ def _best_index(
 __all__ = [
     "AccessRoute",
     "IndexMetadata",
+    "PhysicalDeletePlan",
     "PhysicalSelectPlan",
     "TableMetadata",
+    "optimize_delete",
     "optimize_select",
 ]

@@ -1,4 +1,4 @@
-"""Enlace semantico puro para CREATE TABLE, INSERT INTO y SELECT."""
+"""Enlace semantico puro para CREATE TABLE, INSERT, SELECT y DELETE."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from engine.parser.ast import (
     ComparisonCondition,
     CreateTableStatement,
     DateLiteral,
+    DeleteStatement,
     DoubleLiteral,
     InsertStatement,
     IntegerLiteral,
@@ -30,6 +31,7 @@ from engine.parser.bound_ast import (
     BoundComparisonCondition,
     BoundCondition,
     BoundCreateTable,
+    BoundDeleteStatement,
     BoundInsertStatement,
     BoundSchema,
     BoundSelectStatement,
@@ -196,6 +198,27 @@ def bind_select(
 
     where = _bind_condition(statement.where, schema, source)
     return BoundSelectStatement(schema, projections, wildcard, where, statement.span)
+
+
+def bind_delete(
+    statement: DeleteStatement,
+    schema: BoundSchema,
+    source: str | None = None,
+) -> BoundDeleteStatement:
+    """Resuelve la tabla y la condicion obligatoria de un ``DELETE``."""
+
+    if statement.table.name != schema.table_name:
+        _fail(
+            f"el DELETE apunta a {statement.table.name}, pero el esquema es de {schema.table_name}",
+            statement.table.span,
+            source,
+        )
+
+    where = _bind_condition(statement.where, schema, source)
+    if where is None:
+        # El parser no construye este caso; protege AST creados a mano.
+        _fail("DELETE requiere una clausula WHERE", statement.span, source)
+    return BoundDeleteStatement(schema, where, statement.span)
 
 
 def _bind_projection(
@@ -413,4 +436,4 @@ def _fail(message: str, span: Span, source: str | None) -> None:
     raise SQLSemanticError(message, span, source)
 
 
-__all__ = ["bind_create_table", "bind_insert", "bind_select"]
+__all__ = ["bind_create_table", "bind_delete", "bind_insert", "bind_select"]
