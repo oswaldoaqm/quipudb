@@ -31,6 +31,13 @@ class AccessRoute(StrEnum):
     INDEX_RANGE = "index_range"
 
 
+class GroupStrategy(StrEnum):
+    """Estrategia solicitada al agrupador externo del core."""
+
+    AUTO = "auto"
+    HASH = "hash"
+
+
 @dataclass(frozen=True, slots=True)
 class IndexMetadata:
     """Descripcion inmutable de un indice secundario disponible."""
@@ -86,6 +93,8 @@ class PhysicalSelectPlan:
     route: AccessRoute
     index: IndexMetadata | None = None
     residual_filter: bool = False
+    external_sort: bool = False
+    group_strategy: GroupStrategy | None = None
 
     def __post_init__(self) -> None:
         _validate_access(
@@ -95,6 +104,10 @@ class PhysicalSelectPlan:
             self.route,
             self.index,
         )
+        if self.external_sort != (self.statement.order_by is not None):
+            raise ValueError("ORDER BY y external_sort deben aparecer juntos")
+        if (self.group_strategy is not None) != (self.statement.group_by is not None):
+            raise ValueError("GROUP BY necesita exactamente una estrategia de agrupacion")
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,11 +161,13 @@ def optimize_select(
         primary_table_allowed=True,
     )
     return PhysicalSelectPlan(
-        statement,
-        table,
-        choice.route,
-        choice.index,
-        choice.residual_filter,
+        statement=statement,
+        table=table,
+        route=choice.route,
+        index=choice.index,
+        residual_filter=choice.residual_filter,
+        external_sort=statement.order_by is not None,
+        group_strategy=(GroupStrategy.AUTO if statement.group_by is not None else None),
     )
 
 
@@ -339,6 +354,7 @@ def _best_index(
 
 __all__ = [
     "AccessRoute",
+    "GroupStrategy",
     "IndexMetadata",
     "PhysicalDeletePlan",
     "PhysicalSelectPlan",
