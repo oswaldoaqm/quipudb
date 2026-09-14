@@ -208,7 +208,7 @@ def _validate_plan(plan: PhysicalSelectPlan) -> None:
 
 def _equality_key(condition: BoundCondition, native: Any) -> object:
     if not isinstance(condition, BoundComparisonCondition):
-        raise ValueError("una busqueda puntual necesita una comparacion")
+        raise TypeError("una busqueda puntual necesita una comparacion")
     if condition.operator is not ComparisonOperator.EQUAL:
         raise ValueError("una busqueda puntual necesita el operador =")
     return to_native_value(condition.value, native)
