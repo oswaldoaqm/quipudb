@@ -564,6 +564,58 @@ def test_un_flujo_no_se_recorre_dos_veces():
     assert list(flujo) == []
 
 
+def test_source_of_consume_un_generador_de_forma_incremental():
+    consumidos = []
+
+    def generar():
+        for i in range(4):
+            consumidos.append(i)
+            yield [i, i % 2]
+
+    flujo = quipudb.source_of(generar())
+    assert consumidos == [], "source_of materializo el generador al construir el flujo"
+    assert next(flujo) == [0, 0]
+    assert consumidos == [0]
+    assert list(flujo) == [[1, 1], [2, 0], [3, 1]]
+    assert list(flujo) == []
+
+
+def test_source_of_no_copia_una_secuencia_ni_invoca_iter_dos_veces():
+    class IterableDeAperturaUnica:
+        def __init__(self, records):
+            self.records = records
+            self.calls = 0
+
+        def __iter__(self):
+            self.calls += 1
+            if self.calls > 1:
+                raise RuntimeError("el iterable se abrio dos veces")
+            return iter(self.records)
+
+    records = [[1, 1]]
+    iterable = IterableDeAperturaUnica(records)
+    flujo = quipudb.source_of(iterable)
+    records.append([2, 0])
+
+    assert iterable.calls == 1
+    assert list(flujo) == [[1, 1], [2, 0]]
+    assert iterable.calls == 1
+
+
+def test_source_of_propaga_la_excepcion_del_generador():
+    class FuenteRotaError(RuntimeError):
+        pass
+
+    def generar():
+        yield [1, 1]
+        raise FuenteRotaError("fallo intencional")
+
+    flujo = quipudb.source_of(generar())
+    assert next(flujo) == [1, 1]
+    with pytest.raises(FuenteRotaError, match="fallo intencional"):
+        next(flujo)
+
+
 def test_una_tabla_se_recorre_como_flujo_sin_materializarla(db):
     t = db.create_table(esquema_simple(), quipudb.kind.HEAP)
     for i in range(50):
@@ -584,6 +636,56 @@ def test_el_sort_externo_ordena_y_usa_disco(tmp_path):
     assert [f[1] for f in salida] == sorted(f[1] for f in filas)
     assert s.passes() > 0, "no llego a tocar disco, la prueba no prueba el merge"
     assert s.stats().pages_written > 0
+
+
+def test_el_sort_descendente_cruza_el_binding_y_usa_disco(tmp_path):
+    filas = [[i, (i * 7919) % 1000] for i in range(2000)]
+    s = quipudb.ExternalSort(
+        esquema_simple(),
+        1,
+        buffers=4,
+        page_size=512,
+        dir=tmp_path,
+        direction=quipudb.ExternalSort.Direction.DESC,
+    )
+    salida = list(s.sorted(quipudb.source_of(filas)))
+
+    assert [f[1] for f in salida] == sorted((f[1] for f in filas), reverse=True)
+    assert s.direction() == quipudb.ExternalSort.Direction.DESC
+    assert s.passes() > 0
+
+
+def test_iterar_un_flujo_no_retiene_su_archivo_temporal(tmp_path):
+    import gc
+
+    s = quipudb.ExternalSort(
+        esquema_simple(), 1, buffers=3, page_size=128, dir=tmp_path
+    )
+    source = quipudb.source_of(([i, i % 7] for i in range(300)))
+    output = s.sorted(source)
+    assert len(list(output)) == 300
+    assert list(tmp_path.glob("*.run")), "la prueba no llego al camino externo"
+
+    del output, source, s
+    gc.collect()
+    assert list(tmp_path.glob("*.run")) == []
+
+
+def test_un_generador_que_falla_no_deja_runs_del_sort(tmp_path):
+    class FuenteRotaError(RuntimeError):
+        pass
+
+    def generar():
+        for i in range(300):
+            yield [i, i % 13]
+        raise FuenteRotaError("fallo despues de escribir runs")
+
+    s = quipudb.ExternalSort(
+        esquema_simple(), 1, buffers=3, page_size=128, dir=tmp_path
+    )
+    with pytest.raises(FuenteRotaError, match="fallo despues de escribir runs"):
+        s.sorted(quipudb.source_of(generar()))
+    assert list(tmp_path.glob("*.run")) == []
 
 
 def test_el_sort_sin_disco_reporta_cero_pasadas(tmp_path):
@@ -615,6 +717,28 @@ def test_el_group_by_agrega_y_escribe_particiones_a_disco(tmp_path):
     # Si esto fuera 0 el hash no seria externo, que es el bug que se arreglo
     # en el #21 despues de mergearlo.
     assert g.stats().pages_written > 0
+
+
+def test_group_rechaza_registro_mayor_que_pagina_sin_crear_temporales(tmp_path):
+    schema = quipudb.Schema(
+        table_name="ancha",
+        columns=[
+            quipudb.Column("id", quipudb.DataType.INT),
+            quipudb.Column("grupo", quipudb.DataType.VARCHAR, 200),
+        ],
+        key_column=0,
+    )
+
+    with pytest.raises(quipudb.SchemaError, match="no entra"):
+        quipudb.ExternalGroupBy(
+            schema,
+            1,
+            [quipudb.AggregateSpec.count()],
+            buffers=3,
+            page_size=128,
+            dir=tmp_path,
+        )
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_el_esquema_de_salida_del_group_by_no_es_el_de_la_entrada(tmp_path):
