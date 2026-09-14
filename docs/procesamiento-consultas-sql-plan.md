@@ -4,7 +4,7 @@
 **Última actualización**: 2026-09-14
 **Complejidad**: Alta
 **Issues asignados**: #24, #25, #26, #27 y #28
-**Estado**: Issues #24–#27 integrados; issue #28 implementado, validado y publicado en el PR #80
+**Estado**: Issues #24–#28 integrados; corrección de lint posterior preparada en el PR #81
 
 ## Registro de continuidad
 
@@ -23,14 +23,16 @@ Decisiones confirmadas por el responsable de 2.1.3:
 - Mantener `Proyecto_Integrador_BD2.docx` fuera de Git.
 - Trabajar por issue y por rama; nunca directamente sobre `main`.
 
-Estado de cierre del issue #28:
+Estado posterior a la integración del issue #28:
 
-- `main` coincide con `origin/main` en `a7154b7`; la rama activa es
-  `feat/parser-order-by-group`, creada desde esa revisión.
+- El PR #80 se integró en `main` mediante `d0a7316` y cerró el issue #28.
+- La rama activa es `fix/parser-lint-operadores-externos`, creada desde ese merge para corregir tres
+  reglas que la versión de Ruff del runner dejó señaladas en el PR ya integrado.
 - Gate local aprobado: 306 pruebas C++, 378 pruebas Python puras con 3 omisiones esperadas y 103
   pruebas con bindings reales sin omisiones.
 - Ruff, `git diff --check` y el validador del historial pasan sin errores.
-- La rama está publicada y el PR #80 enlaza `Closes #28`.
+- La corrección está publicada en el PR #81 y añade pruebas para distinguir tipos inválidos de
+  valores fuera de rango.
 - `Proyecto_Integrador_BD2.docx` continúa ignorado y fuera de Git.
 
 Avance del issue #24 (2026-09-13):
@@ -133,15 +135,15 @@ Avance del issue #28 (2026-09-14):
 - Gate local aprobado: 306/306 pruebas C++, 378 pruebas Python puras con 3 omisiones esperadas y
   103 pruebas con bindings reales sin omisiones; Ruff, `git diff --check` y el validador del
   historial están verdes.
-- Rama publicada en `origin/feat/parser-order-by-group`; PR #80 abierto con `Closes #28`. El DOCX
-  continúa fuera de Git.
+- La rama se publicó en `origin/feat/parser-order-by-group` y el PR #80 se integró mediante el merge
+  commit `d0a7316`, cerrando #28. El runner señaló después tres reglas nuevas de Ruff; la corrección
+  mínima quedó en `fix/parser-lint-operadores-externos` y el PR #81. El DOCX continúa fuera de Git.
 
 Siguiente acción:
 
-1. Confirmar los cuatro checks del PR #80.
+1. Confirmar los cuatro checks del PR correctivo #81.
 2. Solicitar una revisión e integrar sin squash cuando el CI quede verde y exista aprobación.
-3. Tras el merge, actualizar `main`, verificar que #28 quedó cerrado y declarar concluidos los
-   issues #24–#28 de la sección 2.1.3.
+3. Tras el merge, actualizar `main` y declarar concluida y limpia la sección 2.1.3.
 
 ## Resultado esperado
 
@@ -239,7 +241,7 @@ adicional requiere actualizar primero este plan y el ADR.
 ## Issues verificados y orden de entrega
 
 Los cinco issues están asignados a `Sebastian1byte` y pertenecen al milestone de Parte 1. Los issues
-#24–#27 están cerrados e integrados; #28 permanece abierto hasta que se integre el PR #80. Sus
+#24–#28 están cerrados e integrados; el PR #81 solo corrige el lint posterior del runner. Sus
 dependencias de core (#3, #7, #9, #15, #20 y #21) están cerradas.
 
 | Issue | Resultado exigido | Rama sugerida en GitHub |
