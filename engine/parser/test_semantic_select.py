@@ -237,18 +237,26 @@ def test_bind_select_rechaza_cada_limite_between_con_span_preciso(
     assert caught.value.source == source
 
 
-@pytest.mark.parametrize(
-    "condition",
-    [
-        "id = 2147483648",
-        "nombre = 'ñññññ'",
-    ],
-)
-def test_bind_select_reutiliza_limites_de_insert(condition: str) -> None:
-    statement = _select(f"SELECT * FROM datos WHERE {condition}")
+def test_bind_select_rechaza_int_fuera_del_dominio_fisico() -> None:
+    statement = _select("SELECT * FROM datos WHERE id = 2147483648")
 
     with pytest.raises(SQLSemanticError):
         bind_select(statement, _schema())
+
+
+@pytest.mark.parametrize("value", ["ñññññ", "a\0b"])
+def test_bind_select_acepta_clave_varchar_que_no_se_podria_insertar(value: str) -> None:
+    statement = _select("SELECT * FROM datos WHERE nombre = 'ok'")
+    literal = replace(statement.where.value, value=value)  # type: ignore[union-attr]
+    statement = replace(
+        statement,
+        where=replace(statement.where, value=literal),  # type: ignore[arg-type]
+    )
+
+    bound = bind_select(statement, _schema())
+
+    assert isinstance(bound.where, BoundComparisonCondition)
+    assert bound.where.value == value
 
 
 @pytest.mark.parametrize(
