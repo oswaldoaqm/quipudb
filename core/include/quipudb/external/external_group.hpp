@@ -149,7 +149,7 @@ class ExternalGroupBy {
   ///
   /// Lanza SchemaError si la columna de agrupacion o alguna de las agregadas no
   /// existe, si se pide SUM o AVG sobre una columna que no es numerica, o si
-  /// `buffers` no alcanza.
+  /// `buffers` no alcanza o un registro no entra en `page_size`.
   ExternalGroupBy(Schema schema, std::size_t key_column, std::vector<AggregateSpec> aggregates,
                   Strategy strategy = Strategy::kAuto,
                   std::size_t buffers = ExternalSort::kDefaultBuffers,
