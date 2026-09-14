@@ -113,12 +113,14 @@ class _Stats:
 
 
 class _FakeIndex:
-    def __init__(self) -> None:
+    def __init__(self, kind: str = _Kind.EXTENDIBLE_HASH) -> None:
+        self.kind = kind
         self.entries: list[tuple[object, _RID]] = []
         self.insert_calls: list[tuple[object, _RID]] = []
         self.remove_calls: list[tuple[object, _RID]] = []
         self.fail_insert: _NativeError | None = None
         self.fail_remove: _NativeError | None = None
+        self.current_stats = _Stats()
 
     def insert(self, key: object, rid: _RID) -> None:
         self.insert_calls.append((key, rid))
@@ -136,11 +138,26 @@ class _FakeIndex:
             return False
         return True
 
+    def supports_range(self) -> bool:
+        return self.kind == _Kind.BPLUS_UNCLUSTERED
+
+    def search(self, key: object) -> list[_RID]:
+        matches = [rid for current, rid in self.entries if current == key]
+        self.current_stats.records_examined = len(matches)
+        self.current_stats.records_returned = len(matches)
+        return matches
+
+    def range_search(self, lower: object, upper: object) -> list[_RID]:
+        matches = [rid for key, rid in self.entries if lower <= key <= upper]  # type: ignore[operator]
+        self.current_stats.records_examined = len(matches)
+        self.current_stats.records_returned = len(matches)
+        return matches
+
     def stats(self) -> _Stats:
-        return _Stats()
+        return self.current_stats
 
     def reset_stats(self) -> None:
-        pass
+        self.current_stats = _Stats()
 
 
 class _FakeTable:
@@ -153,6 +170,8 @@ class _FakeTable:
         self.fail_insert: _NativeError | None = None
         self.fail_remove: _NativeError | None = None
         self._next_slot = 0
+        self.rids: list[_RID] = []
+        self.current_stats = _Stats()
 
     def insert(self, record: list[object]) -> _RID:
         self.insert_calls.append(record)
@@ -164,6 +183,7 @@ class _FakeTable:
         rid = _RID(1, self._next_slot)
         self._next_slot += 1
         self.records.append(record)
+        self.rids.append(rid)
         return rid
 
     def remove(self, key: object) -> int:
@@ -174,14 +194,47 @@ class _FakeTable:
         for position, record in enumerate(self.records):
             if record[key_column] == key:
                 self.records.pop(position)
+                self.rids.pop(position)
                 return 1
         return 0
 
+    def search(self, key: object) -> list[list[object]]:
+        key_column = self.schema.key_column
+        matches = [record for record in self.records if record[key_column] == key]
+        self.current_stats.records_examined = len(self.records)
+        self.current_stats.records_returned = len(matches)
+        return list(matches)
+
+    def range_search(self, lower: object, upper: object) -> list[list[object]]:
+        key_column = self.schema.key_column
+        matches = [
+            record
+            for record in self.records
+            if lower <= record[key_column] <= upper  # type: ignore[operator]
+        ]
+        self.current_stats.records_examined = len(self.records)
+        self.current_stats.records_returned = len(matches)
+        return list(matches)
+
+    def scan(self) -> list[list[object]]:
+        self.current_stats.records_examined = len(self.records)
+        self.current_stats.records_returned = len(self.records)
+        return list(self.records)
+
+    def read(self, rid: _RID) -> list[object] | None:
+        self.current_stats.records_examined += 1
+        try:
+            position = self.rids.index(rid)
+        except ValueError:
+            return None
+        self.current_stats.records_returned += 1
+        return self.records[position]
+
     def stats(self) -> _Stats:
-        return _Stats()
+        return self.current_stats
 
     def reset_stats(self) -> None:
-        pass
+        self.current_stats = _Stats()
 
 
 class _FakeDatabase:
@@ -224,10 +277,16 @@ class _FakeDatabase:
             raise self.fail_index_open
         return self.indexes[(table, name)]
 
-    def add_index(self, table: str, name: str, column: int) -> _FakeIndex:
-        index = _FakeIndex()
+    def add_index(
+        self,
+        table: str,
+        name: str,
+        column: int,
+        kind: str = _Kind.EXTENDIBLE_HASH,
+    ) -> _FakeIndex:
+        index = _FakeIndex(kind)
         self.indexes[(table, name)] = index
-        self.infos[table].indexes.append(_IndexInfo(name, column))
+        self.infos[table].indexes.append(_IndexInfo(name, column, kind))
         return index
 
 
@@ -366,22 +425,80 @@ def test_fallo_al_abrir_indice_ocurre_antes_de_insertar(
     assert database.tables["datos"].insert_calls == []
 
 
+def test_delete_se_rechaza_hasta_su_issue(
+    database: _FakeDatabase,
+    processor: QueryProcessor,
+) -> None:
+    with pytest.raises(SQLUnsupportedError):
+        processor.execute("DELETE FROM datos WHERE id = 1")
+
+    assert database.create_calls == []
+
+
+def test_select_pasa_por_semantica_planner_ejecutor(
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("CREATE TABLE datos (id INT PRIMARY KEY, nombre VARCHAR(20)) USING HEAP")
+    processor.execute("INSERT INTO datos VALUES (1, 'Ada')")
+    processor.execute("INSERT INTO datos VALUES (2, 'Grace')")
+    processor.execute("INSERT INTO datos VALUES (3, 'Edsger')")
+
+    result = processor.execute("SELECT nombre, id FROM datos WHERE id >= 2")
+
+    assert result.columns == ("nombre", "id")
+    assert result.rows == (("Grace", 2), ("Edsger", 3))
+    assert result.affected_rows == 0
+    assert result.plan is not None
+    assert [step.op.value for step in result.plan.root.walk()] == ["range_search", "project"]
+    assert result.plan.query == "SELECT nombre, id FROM datos WHERE id >= 2"
+    assert result.plan.time_ms >= result.plan.root.subtree_time_ms()
+
+
+def test_select_por_indice_secundario_hace_search_y_fetch(
+    database: _FakeDatabase,
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("CREATE TABLE datos (id INT PRIMARY KEY, nombre VARCHAR(20)) USING HEAP")
+    database.add_index("datos", "por_nombre", 1, _Kind.BPLUS_UNCLUSTERED)
+    processor.execute("INSERT INTO datos VALUES (1, 'Ada')")
+    processor.execute("INSERT INTO datos VALUES (2, 'Ada')")
+
+    result = processor.execute("SELECT id FROM datos WHERE nombre = 'Ada'")
+
+    assert result.rows == ((1,), (2,))
+    assert result.plan is not None
+    assert [step.op.value for step in result.plan.root.walk()] == [
+        "index_search",
+        "fetch",
+        "project",
+    ]
+
+
+def test_select_en_tabla_inexistente_conserva_schema_error(
+    processor: QueryProcessor,
+) -> None:
+    with pytest.raises(SQLSemanticError, match="no existe") as captured:
+        processor.execute("SELECT * FROM ausente")
+
+    assert isinstance(captured.value.__cause__, _SchemaError)
+
+
 @pytest.mark.parametrize(
     "sql",
     [
-        "SELECT * FROM datos",
-        "DELETE FROM datos WHERE id = 1",
+        "SELECT COUNT(*) FROM datos",
+        "SELECT id FROM datos GROUP BY id",
+        "SELECT * FROM datos ORDER BY id",
     ],
 )
-def test_select_y_delete_se_rechazan_hasta_sus_issues(
-    database: _FakeDatabase,
+def test_select_difiere_agregados_group_y_order_al_issue_28(
     processor: QueryProcessor,
     sql: str,
 ) -> None:
-    with pytest.raises(SQLUnsupportedError):
-        processor.execute(sql)
+    processor.execute("CREATE TABLE datos (id INT PRIMARY KEY) USING HEAP")
 
-    assert database.create_calls == []
+    with pytest.raises(SQLUnsupportedError, match="#28"):
+        processor.execute(sql)
 
 
 def test_insert_mantiene_todos_los_indices_existentes(
