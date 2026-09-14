@@ -31,10 +31,12 @@ class ExternalExecutionOptions:
     temp_dir: Path | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.buffers, int) or isinstance(self.buffers, bool) or self.buffers < 3:
+        if not isinstance(self.buffers, int) or isinstance(self.buffers, bool):
+            raise TypeError("external_buffers debe ser un entero mayor o igual que 3")
+        if self.buffers < 3:
             raise ValueError("external_buffers debe ser un entero mayor o igual que 3")
         if not isinstance(self.page_size, int) or isinstance(self.page_size, bool):
-            raise ValueError("external_page_size debe ser un entero entre 128 y 65536")
+            raise TypeError("external_page_size debe ser un entero entre 128 y 65536")
         if not 128 <= self.page_size <= 65536:
             raise ValueError("external_page_size debe estar entre 128 y 65536")
         if self.temp_dir is not None:
