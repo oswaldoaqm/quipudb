@@ -70,7 +70,16 @@ INTO`. El import del binding es diferido, de modo que importar y probar el
 parser sigue sin exigir una compilacion C++. Antes de insertar se valida el
 registro completo; despues se actualizan todos los indices secundarios del
 catalogo y, si uno falla, se revierten de mejor esfuerzo las escrituras ya
-hechas. `SELECT` y `DELETE` continuan rechazandose en ejecucion hasta sus issues.
+hechas.
+
+Desde #26 tambien ejecuta `SELECT`, proyeccion y `WHERE` con igualdad o rango.
+La semantica resuelve nombres y tipos sin abrir archivos; despues el optimizador
+elige busqueda por PK, hash para igualdad, B+ secundario para igualdad/rango o
+`scan + filter`. Los rangos `<` y `>` usan la ruta inclusiva disponible y un
+filtro residual para conservar la frontera estricta. Cada acceso reinicia y
+copia sus propios `OpStats`, por lo que el arbol `Plan` separa indice, `fetch`,
+filtro y proyeccion sin mezclar consultas sucesivas. `DELETE`, `ORDER BY` y
+`GROUP BY` continuan diferidos a #27 y #28.
 
 ## Por que el plan de ejecucion es un contrato y no un detalle
 

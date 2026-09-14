@@ -211,12 +211,16 @@ Para `INSERT` y `DELETE`, `affected_rows` informa las filas modificadas y no se
 devuelven filas. `CREATE TABLE` no devuelve filas ni cuenta filas modificadas.
 En #25, `CREATE TABLE` e `INSERT` devuelven `plan=None`: el ADR 0002 no define
 una operacion `CREATE`, y la atribucion de escrituras entre una tabla y varios
-indices todavia necesita el acuerdo descrito a continuacion.
+indices todavia necesita el acuerdo descrito a continuacion. Desde #26, todo
+`SELECT` devuelve el `Plan` medido de la ruta que realmente recorrio.
 
-El optimizador de #26 elegira busqueda por clave o indice cuando la estructura
-y el operador lo permitan; en caso contrario usara scan y filtro. El ejecutor
-de #28 conectara `ORDER BY` con external sorting y `GROUP BY` con external
-hashing. En todos los casos, `plan` respetara el arbol, los nombres de
+El optimizador de #26 elige busqueda por clave o indice cuando la estructura y
+el operador lo permiten; en caso contrario usa scan y filtro. La clave primaria
+tiene prioridad; para columnas secundarias se prefiere hash en igualdad y B+
+en rango. Como el core ofrece rangos inclusivos, `<` y `>` conservan un filtro
+residual que excluye la frontera. El ejecutor de #28 conectara `ORDER BY` con
+external sorting y `GROUP BY` con external hashing. En todos los casos, `plan`
+respetara el arbol, los nombres de
 operaciones y las estadisticas propias de cada paso definidos por el ADR 0002.
 La forma de representar `CREATE TABLE` y de atribuir las escrituras de
 `INSERT`/`DELETE` entre tabla e indices requiere un acuerdo previo con quien
