@@ -237,11 +237,11 @@ def _rollback_delete(
 ) -> None:
     restored_rows: list[tuple[DeleteCandidate, Any]] = []
     for candidate in reversed(removed_rows):
-        try:
+        rid = None
+        with suppress(Exception):
             rid = table.insert(list(candidate.record))
-        except Exception:
-            continue
-        restored_rows.append((candidate, rid))
+        if rid is not None:
+            restored_rows.append((candidate, rid))
 
     for entry in reversed(removed_entries):
         rid = _restored_rid(table, entry.candidate, removed_rows, restored_rows)
@@ -262,10 +262,9 @@ def _restored_rid(
             return rid
     if any(removed_candidate is candidate for removed_candidate in removed_rows):
         return None
-    try:
+    record = None
+    with suppress(Exception):
         record = table.read(candidate.rid)
-    except Exception:
-        return None
     return candidate.rid if record is not None else None
 
 
