@@ -1,4 +1,4 @@
-"""Pruebas E2E de CREATE TABLE e INSERT INTO contra el core compilado."""
+"""Pruebas E2E del Query Processor contra el core compilado."""
 
 from datetime import date
 
@@ -123,3 +123,219 @@ def test_insert_actualiza_todos_los_indices_secundarios_existentes(db):
     (id_rid,) = by_id.search(1)
     assert name_rid == id_rid
     assert db.table("personas").read(name_rid) == [1, "Ada"]
+
+
+def _create_select_table(db, storage):
+    processor = QueryProcessor(db)
+    if storage == quipudb.kind.BPLUS_CLUSTERED:
+        schema = quipudb.Schema(
+            "datos",
+            [
+                quipudb.Column("id", quipudb.DataType.INT),
+                quipudb.Column("promedio", quipudb.DataType.DOUBLE),
+                quipudb.Column("nombre", quipudb.DataType.VARCHAR, 20),
+                quipudb.Column("activo", quipudb.DataType.BOOL),
+                quipudb.Column("ingreso", quipudb.DataType.DATE),
+            ],
+            0,
+        )
+        db.create_table(schema, storage)
+    else:
+        sql_storage = "HEAP" if storage == quipudb.kind.HEAP else "SEQUENTIAL"
+        processor.execute(
+            "CREATE TABLE datos (id INT PRIMARY KEY, promedio DOUBLE, "
+            "nombre VARCHAR(20), activo BOOL, ingreso DATE) "
+            f"USING {sql_storage}"
+        )
+
+    rows = [
+        "(1, 10, 'Ada', FALSE, DATE '2024-01-01')",
+        "(2, 15, 'Luis', TRUE, DATE '2024-02-01')",
+        "(3, 15, 'Zoe', FALSE, DATE '2024-03-01')",
+        "(4, 20, 'Nora', TRUE, DATE '2024-04-01')",
+    ]
+    for row in rows:
+        processor.execute(f"INSERT INTO datos VALUES {row}")
+    return processor
+
+
+def _ids(result):
+    return {row[0] for row in result.rows}
+
+
+def test_select_scan_proyecta_y_convierte_los_cinco_tipos(db):
+    processor = _create_select_table(db, quipudb.kind.HEAP)
+
+    wildcard = processor.execute("SELECT * FROM datos WHERE id = 2")
+    projected = processor.execute("SELECT nombre, id, nombre FROM datos")
+
+    assert wildcard.columns == ("id", "promedio", "nombre", "activo", "ingreso")
+    assert wildcard.rows == ((2, 15.0, "Luis", True, date(2024, 2, 1)),)
+    assert wildcard.affected_rows == 0
+    assert wildcard.plan is not None
+    assert [step.op.value for step in wildcard.plan.root.walk()] == ["search"]
+
+    assert projected.columns == ("nombre", "id", "nombre")
+    assert set(projected.rows) == {
+        ("Ada", 1, "Ada"),
+        ("Luis", 2, "Luis"),
+        ("Zoe", 3, "Zoe"),
+        ("Nora", 4, "Nora"),
+    }
+    assert projected.plan is not None
+    assert [step.op.value for step in projected.plan.root.walk()] == ["scan", "project"]
+
+
+@pytest.mark.parametrize(
+    "storage",
+    [
+        quipudb.kind.HEAP,
+        quipudb.kind.SEQUENTIAL,
+        quipudb.kind.BPLUS_CLUSTERED,
+    ],
+)
+def test_select_pk_elige_search_y_range_en_cada_organizacion(db, storage):
+    processor = _create_select_table(db, storage)
+
+    equality = processor.execute("SELECT * FROM datos WHERE id = 3")
+    between = processor.execute("SELECT * FROM datos WHERE id BETWEEN 2 AND 4")
+
+    assert _ids(equality) == {3}
+    assert _ids(between) == {2, 3, 4}
+    assert equality.plan is not None
+    assert between.plan is not None
+    assert equality.plan.root.op.value == "search"
+    assert equality.plan.root.structure.value == storage
+    assert between.plan.root.op.value == "range_search"
+    assert between.plan.root.structure.value == storage
+
+
+@pytest.mark.parametrize(
+    ("operator", "expected", "ops"),
+    [
+        ("<", {1, 2}, ["range_search", "filter"]),
+        ("<=", {1, 2, 3}, ["range_search"]),
+        (">", {4}, ["range_search", "filter"]),
+        (">=", {3, 4}, ["range_search"]),
+    ],
+)
+def test_select_pk_respeta_operadores_estrictos_e_inclusivos(db, operator, expected, ops):
+    processor = _create_select_table(db, quipudb.kind.SEQUENTIAL)
+
+    result = processor.execute(f"SELECT * FROM datos WHERE id {operator} 3")
+
+    assert _ids(result) == expected
+    assert result.plan is not None
+    assert [step.op.value for step in result.plan.root.walk()] == ops
+
+
+def test_select_secundario_prefiere_hash_para_igualdad_y_bplus_para_rango(db):
+    processor = _create_select_table(db, quipudb.kind.HEAP)
+    db.create_index("datos", "z_promedio_bplus", "promedio", quipudb.kind.BPLUS_UNCLUSTERED)
+    db.create_index("datos", "a_promedio_hash", "promedio", quipudb.kind.EXTENDIBLE_HASH)
+
+    equality = processor.execute("SELECT id FROM datos WHERE promedio = 15")
+    between = processor.execute("SELECT id FROM datos WHERE promedio BETWEEN 15 AND 20")
+    strict = processor.execute("SELECT id FROM datos WHERE promedio < 15")
+
+    assert {row[0] for row in equality.rows} == {2, 3}
+    assert {row[0] for row in between.rows} == {2, 3, 4}
+    assert {row[0] for row in strict.rows} == {1}
+    assert equality.plan is not None
+    assert between.plan is not None
+    assert strict.plan is not None
+    assert [step.op.value for step in equality.plan.root.walk()] == [
+        "index_search",
+        "fetch",
+        "project",
+    ]
+    assert equality.plan.root.walk()[0].structure.value == quipudb.kind.EXTENDIBLE_HASH
+    assert [step.op.value for step in between.plan.root.walk()] == [
+        "index_range",
+        "fetch",
+        "project",
+    ]
+    assert between.plan.root.walk()[0].structure.value == quipudb.kind.BPLUS_UNCLUSTERED
+    assert [step.op.value for step in strict.plan.root.walk()] == [
+        "index_range",
+        "fetch",
+        "filter",
+        "project",
+    ]
+
+
+def test_select_rango_con_solo_hash_hace_scan_y_filter(db):
+    processor = _create_select_table(db, quipudb.kind.HEAP)
+    db.create_index("datos", "por_activo", "activo", quipudb.kind.EXTENDIBLE_HASH)
+
+    result = processor.execute("SELECT id FROM datos WHERE activo > FALSE")
+
+    assert {row[0] for row in result.rows} == {2, 4}
+    assert result.plan is not None
+    assert [step.op.value for step in result.plan.root.walk()] == [
+        "scan",
+        "filter",
+        "project",
+    ]
+    assert quipudb.kind.EXTENDIBLE_HASH not in {
+        structure.value for structure in result.plan.structures_used()
+    }
+
+
+def test_select_vacio_y_between_invertido_no_son_error(db):
+    processor = _create_select_table(db, quipudb.kind.HEAP)
+    db.create_index("datos", "por_nombre", "nombre", quipudb.kind.EXTENDIBLE_HASH)
+
+    missing = processor.execute("SELECT * FROM datos WHERE nombre = 'nombre demasiado largo'")
+    embedded_nul = processor.execute("SELECT * FROM datos WHERE nombre = 'A\0da'")
+    inverted = processor.execute("SELECT * FROM datos WHERE id BETWEEN 4 AND 2")
+
+    assert missing.rows == ()
+    assert embedded_nul.rows == ()
+    assert inverted.rows == ()
+    assert missing.plan is not None
+    assert embedded_nul.plan is not None
+    assert inverted.plan is not None
+    assert missing.plan.root.op.value == "filter"
+    assert embedded_nul.plan.root.op.value == "filter"
+    assert inverted.plan.root.op.value == "range_search"
+
+
+def test_select_resetea_stats_y_suma_el_arbol_sin_contaminacion(db):
+    processor = _create_select_table(db, quipudb.kind.HEAP)
+    table = db.table("datos")
+    table.scan()
+
+    first = processor.execute("SELECT id FROM datos WHERE nombre < 'N'")
+    table.scan()
+    second = processor.execute("SELECT id FROM datos WHERE nombre < 'N'")
+
+    assert first.plan is not None
+    assert second.plan is not None
+    assert first.plan.root.subtree_stats() == second.plan.root.subtree_stats()
+    assert first.plan.to_dict()["totals"] == first.plan.root.subtree_stats().to_dict()
+    assert first.plan.time_ms >= first.plan.root.subtree_time_ms()
+    assert all(step.time_ms >= 0 for step in first.plan.root.walk())
+
+
+def test_select_por_indice_funciona_despues_de_reabrir(tmp_path):
+    catalog = tmp_path / "catalogo.txt"
+    db = quipudb.Database(catalog)
+    processor = _create_select_table(db, quipudb.kind.HEAP)
+    db.create_index("datos", "por_promedio", "promedio", quipudb.kind.BPLUS_UNCLUSTERED)
+    db.flush()
+    db.close("datos")
+    del processor, db
+
+    reopened = quipudb.Database(catalog)
+    result = QueryProcessor(reopened).execute(
+        "SELECT id, ingreso FROM datos WHERE promedio BETWEEN 15 AND 20"
+    )
+
+    assert set(result.rows) == {
+        (2, date(2024, 2, 1)),
+        (3, date(2024, 3, 1)),
+        (4, date(2024, 4, 1)),
+    }
+    assert result.plan is not None
+    assert result.plan.root.walk()[0].op.value == "index_range"
