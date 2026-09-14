@@ -222,11 +222,11 @@ def _bind_condition(
 
     column = _resolve_column(condition.column, schema, source)
     if isinstance(condition, ComparisonCondition):
-        value = _bind_value(condition.value, column.column, source)
+        value = _bind_predicate_value(condition.value, column.column, source)
         return BoundComparisonCondition(column, condition.operator, value, condition.span)
 
-    lower = _bind_value(condition.lower, column.column, source)
-    upper = _bind_value(condition.upper, column.column, source)
+    lower = _bind_predicate_value(condition.lower, column.column, source)
+    upper = _bind_predicate_value(condition.upper, column.column, source)
     return BoundBetweenCondition(column, lower, upper, condition.span)
 
 
@@ -304,6 +304,33 @@ def _bind_value(literal: Literal, column: BoundColumn, source: str | None) -> Bo
             _wrong_type(literal, column, source)
         return literal.value
     raise AssertionError(f"tipo SQL desconocido: {column.data_type!r}")
+
+
+def _bind_predicate_value(
+    literal: Literal,
+    column: BoundColumn,
+    source: str | None,
+) -> BoundValue:
+    """Convierte una clave de consulta sin imponer limites de almacenamiento.
+
+    Un texto mayor que ``VARCHAR(n)`` no puede estar guardado en la columna,
+    pero sigue siendo una clave comparable y puede producir cero filas o
+    delimitar un rango. La aridad y capacidad solo se exigen al insertar.
+    """
+
+    if column.data_type is not SqlTypeName.VARCHAR:
+        return _bind_value(literal, column, source)
+    if not isinstance(literal, StringLiteral):
+        _wrong_type(literal, column, source)
+    try:
+        literal.value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise SQLSemanticError(
+            f"columna {column.name}: el texto no se puede codificar como UTF-8",
+            literal.span,
+            source,
+        ) from exc
+    return literal.value
 
 
 def _bind_int(literal: Literal, column: BoundColumn, source: str | None) -> int:
