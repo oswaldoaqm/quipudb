@@ -6,7 +6,13 @@ from dataclasses import dataclass
 from datetime import date
 from typing import TypeAlias
 
-from engine.parser.ast import ComparisonOperator, SqlTypeName, StorageKind
+from engine.parser.ast import (
+    AggregateFunction,
+    ComparisonOperator,
+    OrderDirection,
+    SqlTypeName,
+    StorageKind,
+)
 from engine.parser.span import Span
 
 _FIXED_TYPE_SIZES = {
@@ -82,6 +88,35 @@ class BoundColumnReference:
 
 
 @dataclass(frozen=True, slots=True)
+class BoundAggregateCall:
+    """Agregado validado; ``argument=None`` representa exactamente ``COUNT(*)``."""
+
+    function: AggregateFunction
+    argument: BoundColumnReference | None
+    span: Span
+
+
+BoundProjection: TypeAlias = BoundColumnReference | BoundAggregateCall
+
+
+@dataclass(frozen=True, slots=True)
+class BoundGroupBy:
+    """Unica clave de agrupacion resuelta contra el esquema de entrada."""
+
+    column: BoundColumnReference
+    span: Span
+
+
+@dataclass(frozen=True, slots=True)
+class BoundOrderBy:
+    """Unica clave y direccion del ordenamiento resueltas semanticamente."""
+
+    column: BoundColumnReference
+    direction: OrderDirection
+    span: Span
+
+
+@dataclass(frozen=True, slots=True)
 class BoundComparisonCondition:
     """Comparacion simple con su literal convertido al tipo de la columna."""
 
@@ -109,10 +144,12 @@ class BoundSelectStatement:
     """SELECT con nombres resueltos y predicado listo para planificar."""
 
     schema: BoundSchema
-    projections: tuple[BoundColumnReference, ...]
+    projections: tuple[BoundProjection, ...]
     wildcard: bool
     where: BoundCondition | None
     span: Span
+    group_by: BoundGroupBy | None = None
+    order_by: BoundOrderBy | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +162,7 @@ class BoundDeleteStatement:
 
 
 __all__ = [
+    "BoundAggregateCall",
     "BoundBetweenCondition",
     "BoundColumn",
     "BoundColumnReference",
@@ -132,7 +170,10 @@ __all__ = [
     "BoundCondition",
     "BoundCreateTable",
     "BoundDeleteStatement",
+    "BoundGroupBy",
     "BoundInsertStatement",
+    "BoundOrderBy",
+    "BoundProjection",
     "BoundSchema",
     "BoundSelectStatement",
     "BoundValue",

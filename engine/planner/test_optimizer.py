@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from engine.parser import SelectStatement, parse_sql
 from engine.parser.ast import ComparisonOperator, SqlTypeName
 from engine.parser.bound_ast import (
     BoundBetweenCondition,
@@ -16,9 +17,11 @@ from engine.parser.bound_ast import (
     BoundSelectStatement,
 )
 from engine.parser.span import Span
+from engine.parser.semantic import bind_select
 from engine.planner.native_catalog import from_native_table_info
 from engine.planner.optimizer import (
     AccessRoute,
+    GroupStrategy,
     IndexMetadata,
     PhysicalDeletePlan,
     PhysicalSelectPlan,
@@ -70,6 +73,12 @@ def _delete(where) -> BoundDeleteStatement:
     return BoundDeleteStatement(schema=_SCHEMA, where=where, span=_SPAN)
 
 
+def _select_sql(source: str) -> BoundSelectStatement:
+    statement = parse_sql(source)
+    assert isinstance(statement, SelectStatement)
+    return bind_select(statement, _SCHEMA, source)
+
+
 def _index(
     name: str,
     structure: Structure,
@@ -93,6 +102,59 @@ def test_select_sin_where_hace_scan_sin_filtro_residual() -> None:
     assert plan.route is AccessRoute.SCAN
     assert plan.index is None
     assert plan.residual_filter is False
+    assert plan.external_sort is False
+    assert plan.group_strategy is None
+
+
+def test_order_by_agrega_external_sort_sin_cambiar_la_ruta_de_acceso() -> None:
+    statement = _select_sql("SELECT nombre FROM alumnos WHERE promedio = 15 ORDER BY codigo DESC")
+    by_average = _index("por_promedio", Structure.EXTENDIBLE_HASH)
+
+    plan = optimize_select(statement, _table(by_average))
+
+    assert plan.route is AccessRoute.INDEX_SEARCH
+    assert plan.index == by_average
+    assert plan.residual_filter is False
+    assert plan.external_sort is True
+    assert plan.group_strategy is None
+
+
+def test_group_by_elige_auto_y_conserva_where_y_order_como_operadores_independientes() -> None:
+    statement = _select_sql(
+        "SELECT nombre, COUNT(*), AVG(promedio) FROM alumnos "
+        "WHERE codigo >= 7 GROUP BY nombre ORDER BY nombre"
+    )
+
+    plan = optimize_select(statement, _table())
+
+    assert plan.route is AccessRoute.TABLE_RANGE
+    assert plan.residual_filter is False
+    assert plan.group_strategy is GroupStrategy.AUTO
+    assert plan.external_sort is True
+
+
+def test_ir_select_rechaza_operadores_externos_que_no_coinciden_con_la_sentencia() -> None:
+    ordered = _select_sql("SELECT * FROM alumnos ORDER BY nombre")
+    grouped = _select_sql("SELECT nombre, COUNT(*) FROM alumnos GROUP BY nombre")
+
+    with pytest.raises(ValueError, match="ORDER BY"):
+        PhysicalSelectPlan(ordered, _table(), AccessRoute.SCAN)
+    with pytest.raises(ValueError, match="GROUP BY"):
+        PhysicalSelectPlan(grouped, _table(), AccessRoute.SCAN)
+    with pytest.raises(ValueError, match="ORDER BY"):
+        PhysicalSelectPlan(
+            _select(),
+            _table(),
+            AccessRoute.SCAN,
+            external_sort=True,
+        )
+    with pytest.raises(ValueError, match="GROUP BY"):
+        PhysicalSelectPlan(
+            _select(),
+            _table(),
+            AccessRoute.SCAN,
+            group_strategy=GroupStrategy.HASH,
+        )
 
 
 @pytest.mark.parametrize(

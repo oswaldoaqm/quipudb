@@ -15,8 +15,8 @@
 //   como un "run" ya ordenado. La entrada queda partida en N/B runs.
 //
 //   Fase 2 (fusion k-way). Se abren k = B-1 runs a la vez, se reserva la
-//   pagina que sobra para la salida, y se van sacando registros del menor de
-//   los k frentes con un heap. Cada pasada reduce los runs por un factor k,
+//   pagina que sobra para la salida, y se va sacando el siguiente registro
+//   segun la direccion pedida con un heap. Cada pasada reduce los runs por un factor k,
 //   asi que hacen falta ceil(log_k(N/B)) pasadas.
 //
 //   Por que k = B-1 y no B: una pagina tiene que quedar libre para acumular la
@@ -117,6 +117,13 @@ class RecordSource {
 /// que seguir vivo: es el dueño de los archivos temporales.
 class ExternalSort {
  public:
+  /// Direccion del orden. ASC queda como valor por omision para conservar el
+  /// contrato de todas las llamadas anteriores al ORDER BY de #28.
+  enum class Direction : std::uint8_t {
+    kAsc,
+    kDesc,
+  };
+
   /// Buffers minimos. Con menos de 3 no hay k-way merge posible: uno para la
   /// salida y al menos dos frentes que fusionar. Con 2 el merge seria binario
   /// y con 1 no habria merge.
@@ -137,14 +144,15 @@ class ExternalSort {
   /// pruebas.
   ///
   /// `dir` es donde viven los archivos temporales. Si esta vacio se usa el
-  /// directorio temporal del sistema.
+  /// directorio temporal del sistema. `direction` se agrega al final para no
+  /// cambiar el significado de los argumentos posicionales existentes.
   ///
   /// Lanza SchemaError si `key_column` no existe, si `buffers` es menor que
   /// `kMinBuffers`, o si un registro no entra en una pagina.
   ExternalSort(Schema schema, std::size_t key_column,
                std::size_t buffers = kDefaultBuffers,
                std::size_t page_size = kDefaultPageSize,
-               std::filesystem::path dir = {});
+               std::filesystem::path dir = {}, Direction direction = Direction::kAsc);
 
   ~ExternalSort();
 
@@ -176,6 +184,9 @@ class ExternalSort {
 
   /// Registros que entran en una pagina.
   [[nodiscard]] std::size_t records_per_page() const noexcept { return por_pagina_; }
+
+  /// Direccion solicitada.
+  [[nodiscard]] Direction direction() const noexcept { return direction_; }
 
   /// Paginas leidas y escritas de verdad. Es lo que el 2.1.6 contrasta contra
   /// la formula 2N(1 + ceil(log_{B-1}(N/B))).
@@ -220,7 +231,7 @@ class ExternalSort {
   std::shared_ptr<Temporal> fusionar(const std::vector<std::shared_ptr<Temporal>>& entradas);
 
   [[nodiscard]] std::filesystem::path nueva_ruta();
-  [[nodiscard]] bool menor(const Record& a, const Record& b) const;
+  [[nodiscard]] bool antes(const Record& a, const Record& b) const;
 
   Schema schema_;
   std::size_t key_column_ = 0;
@@ -228,6 +239,7 @@ class ExternalSort {
   std::size_t page_size_ = 0;
   std::size_t por_pagina_ = 0;
   std::filesystem::path dir_;
+  Direction direction_ = Direction::kAsc;
 
   std::size_t total_ = 0;
   std::size_t runs_iniciales_ = 0;

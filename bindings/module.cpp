@@ -168,6 +168,28 @@ Record adaptar_registro(const Schema& esquema, Record r) {
 
 Value adaptar_clave(const Schema& esquema, Value k) { return adaptar(esquema.key(), std::move(k)); }
 
+/// Convierte un iterable Python en un flujo de una sola pasada sin construir
+/// primero un `vector<Record>`. El iterador es dueño de la referencia que
+/// necesita (lista, generador u otro iterable), y cualquier excepcion distinta
+/// de StopIteration vuelve intacta a Python.
+class PythonRecordSource final : public RecordSource {
+ public:
+  explicit PythonRecordSource(const py::object& records) : iterator_(py::iter(records)) {}
+
+  bool next(Record& out) override {
+    PyObject* item = PyIter_Next(iterator_.ptr());
+    if (item == nullptr) {
+      if (PyErr_Occurred() != nullptr) throw py::error_already_set();
+      return false;
+    }
+    out = py::reinterpret_steal<py::object>(item).cast<Record>();
+    return true;
+  }
+
+ private:
+  py::iterator iterator_;
+};
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -469,9 +491,7 @@ PYBIND11_MODULE(quipudb_native, m) {
       "Flujo de registros de a uno: la entrada y la salida de los external "
       "algorithms. Se recorre con un for; no se puede rebobinar ni recorrer dos "
       "veces.")
-      .def(
-          "__iter__", [](RecordSource& s) -> RecordSource& { return s; },
-          py::keep_alive<0, 1>())
+      .def("__iter__", [](py::object self) { return self; })
       .def("__next__", [](RecordSource& s) {
         Record r;
         if (!s.next(r)) throw py::stop_iteration();
@@ -487,10 +507,13 @@ PYBIND11_MODULE(quipudb_native, m) {
       "borrar mientras se lee es comportamiento indefinido, no una excepcion.");
 
   m.def(
-      "source_of", [](std::vector<Record> rs) { return source_of(std::move(rs)); },
+      "source_of",
+      [](const py::object& records) -> std::unique_ptr<RecordSource> {
+        return std::make_unique<PythonRecordSource>(records);
+      },
       py::arg("records"),
-      "Adapta una lista ya materializada. Para pruebas y para trozos chicos que "
-      "alguien ya tiene en memoria; una tabla entera va por la otra forma.");
+      "Adapta un iterable Python sin materializarlo. Se consume una sola vez y "
+      "mantiene vivo su iterador; las excepciones del productor se propagan.");
 
   // --- external sorting (#20) ----------------------------------------------
 
@@ -502,11 +525,16 @@ PYBIND11_MODULE(quipudb_native, m) {
       "interpretable la formula de costo 2N(1 + ceil(log_{B-1}(N/B))).");
   sort.attr("MIN_BUFFERS") = ExternalSort::kMinBuffers;
   sort.attr("DEFAULT_BUFFERS") = ExternalSort::kDefaultBuffers;
-  sort.def(py::init<Schema, std::size_t, std::size_t, std::size_t, std::filesystem::path>(),
+  py::enum_<ExternalSort::Direction>(sort, "Direction")
+      .value("ASC", ExternalSort::Direction::kAsc)
+      .value("DESC", ExternalSort::Direction::kDesc);
+  sort.def(py::init<Schema, std::size_t, std::size_t, std::size_t, std::filesystem::path,
+                    ExternalSort::Direction>(),
            py::arg("schema"), py::arg("key_column"),
            py::arg("buffers") = ExternalSort::kDefaultBuffers,
            py::arg("page_size") = kDefaultPageSize,
-           py::arg("dir") = std::filesystem::path{})
+           py::arg("dir") = std::filesystem::path{},
+           py::arg("direction") = ExternalSort::Direction::kAsc)
       .def("sorted", &ExternalSort::sorted, py::arg("source"), py::keep_alive<0, 1>(),
            py::keep_alive<0, 2>(),
            "Ordena el flujo y devuelve otro. Si todo cabe en `buffers` paginas "
@@ -516,6 +544,7 @@ PYBIND11_MODULE(quipudb_native, m) {
       .def("passes", &ExternalSort::passes, "Pasadas de fusion; 0 si todo cupo en memoria")
       .def("buffers", &ExternalSort::buffers)
       .def("records_per_page", &ExternalSort::records_per_page)
+      .def("direction", &ExternalSort::direction, "Direccion ASC o DESC solicitada")
       .def("stats", &ExternalSort::stats, py::return_value_policy::copy,
            "Paginas leidas y escritas de verdad, para contrastar contra la formula")
       .def("reset_stats", &ExternalSort::reset_stats)

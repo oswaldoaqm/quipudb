@@ -10,7 +10,7 @@ from typing import ClassVar
 import pytest
 
 from engine.executor.processor import QueryProcessor
-from engine.parser.errors import SQLSemanticError, SQLUnsupportedError
+from engine.parser.errors import SQLSemanticError
 
 
 class _NativeError(Exception):
@@ -308,6 +308,32 @@ def processor(database: _FakeDatabase) -> QueryProcessor:
     return QueryProcessor(database, native_module=_NativeModule)
 
 
+@pytest.mark.parametrize("buffers", [True, 2, 3.5])
+def test_query_processor_rechaza_buffers_externos_invalidos(
+    database: _FakeDatabase,
+    buffers: object,
+) -> None:
+    with pytest.raises(ValueError, match="external_buffers"):
+        QueryProcessor(
+            database,
+            native_module=_NativeModule,
+            external_buffers=buffers,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("page_size", [True, 127, 65537, 128.0])
+def test_query_processor_rechaza_tamano_de_pagina_externo_invalido(
+    database: _FakeDatabase,
+    page_size: object,
+) -> None:
+    with pytest.raises(ValueError, match="external_page_size"):
+        QueryProcessor(
+            database,
+            native_module=_NativeModule,
+            external_page_size=page_size,  # type: ignore[arg-type]
+        )
+
+
 @pytest.mark.parametrize(
     ("storage_sql", "expected_storage"),
     [
@@ -508,20 +534,20 @@ def test_select_en_tabla_inexistente_conserva_schema_error(
 
 
 @pytest.mark.parametrize(
-    "sql",
+    ("sql", "message"),
     [
-        "SELECT COUNT(*) FROM datos",
-        "SELECT id FROM datos GROUP BY id",
-        "SELECT * FROM datos ORDER BY id",
+        ("SELECT COUNT(*) FROM datos", "requieren una clausula GROUP BY"),
+        ("SELECT id FROM datos GROUP BY id", "requiere al menos"),
     ],
 )
-def test_select_difiere_agregados_group_y_order_al_issue_28(
+def test_select_rechaza_agregacion_incompleta_antes_del_core(
     processor: QueryProcessor,
     sql: str,
+    message: str,
 ) -> None:
     processor.execute("CREATE TABLE datos (id INT PRIMARY KEY) USING HEAP")
 
-    with pytest.raises(SQLUnsupportedError, match="#28"):
+    with pytest.raises(SQLSemanticError, match=message):
         processor.execute(sql)
 
 
