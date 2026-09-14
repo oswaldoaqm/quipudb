@@ -107,6 +107,35 @@ print(t.stats().as_dict())          # lo que consume el plan de ejecucion
 db.flush()
 ```
 
+### Procesar SQL
+
+Con los bindings compilados, `QueryProcessor` ejecuta `CREATE TABLE`, `INSERT INTO`
+y `SELECT`. El resultado de una consulta incluye las filas y el plan físico
+realmente recorrido:
+
+```python
+import quipudb_native as q
+
+from engine.executor import QueryProcessor
+
+db = q.Database("catalogo.txt")
+processor = QueryProcessor(db)
+processor.execute(
+    "CREATE TABLE cursos (id INT PRIMARY KEY, nombre VARCHAR(40), nota DOUBLE) USING HEAP"
+)
+processor.execute("INSERT INTO cursos VALUES (1, 'Bases de Datos 2', 18)")
+
+result = processor.execute("SELECT nombre, nota FROM cursos WHERE nota >= 14")
+print(result.columns)          # ('nombre', 'nota')
+print(result.rows)             # (('Bases de Datos 2', 18.0),)
+print(result.plan.to_dict())   # scan/filter/project y sus estadísticas
+```
+
+`WHERE` admite `=`, `<`, `<=`, `>`, `>=` y `BETWEEN` inclusivo. El planner usa
+la clave primaria o un índice secundario aplicable; si no existe uno, registra
+el `scan` y el filtro en memoria. `ORDER BY`, `GROUP BY` y `DELETE` se incorporan
+en los siguientes issues del procesador.
+
 Detalles que conviene saber:
 
 - **`Database` es la puerta de entrada.** Devuelve siempre el mismo objeto para

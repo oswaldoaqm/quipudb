@@ -4,7 +4,7 @@
 **Última actualización**: 2026-09-13
 **Complejidad**: Alta
 **Issues asignados**: #24, #25, #26, #27 y #28
-**Estado**: Issue #24 integrado; issue #25 implementado y publicado en el PR #76
+**Estado**: Issues #24 y #25 integrados; issue #26 implementado y publicado en el PR #77
 
 ## Registro de continuidad
 
@@ -63,14 +63,34 @@ Avance del issue #25 (2026-09-13):
   import sorting, `git diff --check` y validador del historial.
 - Commits funcionales previos a este registro: `0815e15`, `e2b2fc2`, `ac95f51`, `3f0ce53`,
   `aa8d19c`, `0c39088` y `4b913a0`.
-- Rama publicada en `origin/feat/parser-create-table-insert`; PR #76 abierto contra `main` con
+- Rama publicada en `origin/feat/parser-create-table-insert`; PR #76 integrado en `main` con
   `Closes #25`. El DOCX continua fuera de Git.
+
+Avance del issue #26 (2026-09-13):
+
+- El PR #76 se integro en `main` mediante el merge commit `f681607`; desde esa revision se creo
+  `feat/parser-select-where-igualdad`.
+- Se implementaron el enlace semantico de proyecciones y predicados, un IR fisico inmutable, el
+  adaptador de metadata y la seleccion determinista de PK, hash, B+ secundario o scan.
+- El ejecutor cubre `SELECT *`, proyeccion, `=`, `<`, `<=`, `>`, `>=` y `BETWEEN`; los rangos
+  estrictos agregan un filtro residual sobre la ruta inclusiva del core.
+- Los planes separan busqueda de indice, `fetch`, scan, filtro y proyeccion, con tiempos y
+  `OpStats` propios. Cada operacion reinicia sus contadores para no contaminar la siguiente.
+- Las filas convierten los cinco tipos a escalares Python, incluido `quipudb_native.Date` a
+  `datetime.date`; un RID secundario colgado se denuncia en vez de omitir una fila.
+- Gate local aprobado: 299 pruebas C++, 390 pruebas Python con bindings reales, 319 pruebas sin
+  bindings (2 omitidas como se espera), Ruff 0.16.7, `git diff --check` y validador del historial.
+- Commits funcionales previos a este registro: `1988636`, `2c22f15`, `81c5486`, `64dd44a`,
+  `675137e`, `1590b5c` y `9b1ac29`.
+- Rama publicada en `origin/feat/parser-select-where-igualdad`; PR #77 abierto contra `main` con
+  `Closes #26`. La correccion de referencia #2 -> #4 quedo registrada en el issue. El DOCX
+  continua fuera de Git.
 
 Siguiente acción:
 
-1. Confirmar los checks del PR #76 y solicitar una revision, conforme a `CONTRIBUTING.md`.
-2. Integrar #76 sin squash cuando tenga CI verde y aprobacion.
-3. Continuar con #26 unicamente desde `main` actualizado con el issue #25.
+1. Confirmar los checks del PR #77 y solicitar una revision, conforme a `CONTRIBUTING.md`.
+2. Integrar #77 sin squash cuando tenga CI verde y aprobacion.
+3. Continuar con #27 unicamente desde `main` actualizado con el issue #26.
 
 ## Resultado esperado
 
