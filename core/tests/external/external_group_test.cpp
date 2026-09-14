@@ -588,6 +588,32 @@ TEST_F(GroupTest, RechazaColumnasQueNoExistenYPocosBuffers) {
                SchemaError);
 }
 
+TEST_F(GroupTest, RechazaUnRegistroQueNoEntraEnLaPaginaAntesDeCrearTemporales) {
+  const Schema ancho{
+      .table_name = "ancho",
+      .columns = {{"id", DataType::Int}, {"grupo", DataType::Varchar, 200}},
+      .key_column = 0,
+  };
+
+  EXPECT_THROW(ExternalGroupBy(ancho, 1, {AggregateSpec::count()},
+                               ExternalGroupBy::Strategy::kAuto, 3, 128, dir_),
+               SchemaError);
+  EXPECT_TRUE(fs::is_empty(dir_));
+}
+
+TEST_F(GroupTest, RechazaTamanosDePaginaFueraDelContrato) {
+  EXPECT_THROW(ExternalGroupBy(ventas(), kRegion, todas(),
+                               ExternalGroupBy::Strategy::kAuto, 3, 127, dir_),
+               SchemaError);
+  EXPECT_NO_THROW(ExternalGroupBy(ventas(), kRegion, todas(),
+                                  ExternalGroupBy::Strategy::kAuto, 3, 128, dir_));
+  EXPECT_NO_THROW(ExternalGroupBy(ventas(), kRegion, todas(),
+                                  ExternalGroupBy::Strategy::kAuto, 3, 65536, dir_));
+  EXPECT_THROW(ExternalGroupBy(ventas(), kRegion, todas(),
+                               ExternalGroupBy::Strategy::kAuto, 3, 65537, dir_),
+               SchemaError);
+}
+
 TEST_F(GroupTest, RechazaUnRegistroQueNoCalzaConElEsquema) {
   ExternalGroupBy g(ventas(), kRegion, todas(), ExternalGroupBy::Strategy::kHash, 8, 512, dir_);
   auto f = source_of(std::vector<Record>{{std::int32_t{1}, std::string{"lima"}}});
