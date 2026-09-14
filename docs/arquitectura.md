@@ -78,8 +78,16 @@ elige busqueda por PK, hash para igualdad, B+ secundario para igualdad/rango o
 `scan + filter`. Los rangos `<` y `>` usan la ruta inclusiva disponible y un
 filtro residual para conservar la frontera estricta. Cada acceso reinicia y
 copia sus propios `OpStats`, por lo que el arbol `Plan` separa indice, `fetch`,
-filtro y proyeccion sin mezclar consultas sucesivas. `DELETE`, `ORDER BY` y
-`GROUP BY` continuan diferidos a #27 y #28.
+filtro y proyeccion sin mezclar consultas sucesivas.
+
+Desde #27 tambien ejecuta `DELETE FROM ... WHERE`. El enlace semantico reutiliza
+los predicados de `SELECT`; el optimizador conserva los RID mediante hash, B+
+secundario o `scan_with_rids()`, y el ejecutor captura todas las filas antes de
+la primera mutacion. Despues quita exactamente `(clave secundaria, RID)` de
+cada indice con `remove_one` y borra por PK. Un fallo intermedio restaura de
+mejor esfuerzo las entradas conocidas y reinserta las filas con su RID nuevo;
+la atomicidad completa queda para transacciones. Solo `ORDER BY` y `GROUP BY`
+continuan diferidos a #28.
 
 ## Por que el plan de ejecucion es un contrato y no un detalle
 
@@ -172,6 +180,11 @@ class Index {                                      // indice secundario
 mismo con memoria acotada a una pagina (heap file) o a un grupo (secuencial):
 0 MB medibles de RSS adicional. Es lo que permite que el external sorting del
 #20 sea externo de verdad, y lo que usa `SequentialFile::reorganize`.
+
+El binding no expone ese cursor invalidable. Para #27 ofrece
+`TableFile.scan_with_rids()`, que lo consume completamente dentro de C++ y
+devuelve copias materializadas de `(RID, Record)`. Asi Python puede mantener
+indices durante `DELETE` sin conservar un iterador despues de empezar a mutar.
 
 `update(clave, registro)` reescribe el registro en su slot sin cambiar el RID,
 asi que los indices secundarios que lo apuntan siguen valiendo. La clave nueva

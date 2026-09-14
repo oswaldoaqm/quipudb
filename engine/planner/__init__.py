@@ -9,17 +9,21 @@ from engine.planner.native_catalog import from_native_table_info, load_table_met
 from engine.planner.optimizer import (
     AccessRoute,
     IndexMetadata,
+    PhysicalDeletePlan,
     PhysicalSelectPlan,
     TableMetadata,
+    optimize_delete,
     optimize_select,
 )
 
 __all__ = [
     "AccessRoute",
     "IndexMetadata",
+    "PhysicalDeletePlan",
     "PhysicalSelectPlan",
     "TableMetadata",
     "from_native_table_info",
     "load_table_metadata",
+    "optimize_delete",
     "optimize_select",
 ]

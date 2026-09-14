@@ -339,3 +339,184 @@ def test_select_por_indice_funciona_despues_de_reabrir(tmp_path):
     }
     assert result.plan is not None
     assert result.plan.root.walk()[0].op.value == "index_range"
+
+
+@pytest.mark.parametrize(
+    "storage",
+    [
+        quipudb.kind.HEAP,
+        quipudb.kind.SEQUENTIAL,
+        quipudb.kind.BPLUS_CLUSTERED,
+    ],
+)
+def test_delete_pk_por_igualdad_y_rango_en_cada_organizacion(db, storage):
+    processor = _create_select_table(db, storage)
+
+    equality = processor.execute("DELETE FROM datos WHERE id = 1")
+    between = processor.execute("DELETE FROM datos WHERE id BETWEEN 3 AND 4")
+
+    assert equality.affected_rows == 1
+    assert between.affected_rows == 2
+    assert equality.plan is None
+    assert between.plan is None
+    assert db.table("datos").search(1) == []
+    assert db.table("datos").range_search(3, 4) == []
+    assert [row[0] for row in db.table("datos").scan()] == [2]
+
+
+@pytest.mark.parametrize(
+    "storage",
+    [quipudb.kind.SEQUENTIAL, quipudb.kind.BPLUS_CLUSTERED],
+)
+def test_delete_materializa_el_rango_antes_de_reorganizar_la_tabla(db, storage):
+    schema = quipudb.Schema(
+        "grande",
+        [
+            quipudb.Column("id", quipudb.DataType.INT),
+            quipudb.Column("valor", quipudb.DataType.INT),
+        ],
+        0,
+    )
+    db.create_table(schema, storage)
+    processor = QueryProcessor(db)
+    for key in range(1, 121):
+        processor.execute(f"INSERT INTO grande VALUES ({key}, {key % 5})")
+
+    result = processor.execute("DELETE FROM grande WHERE id BETWEEN 21 AND 90")
+
+    assert result.affected_rows == 70
+    assert [row[0] for row in db.table("grande").scan()] == [
+        *range(1, 21),
+        *range(91, 121),
+    ]
+
+
+def test_delete_pk_actualiza_dos_indices_y_preserva_claves_repetidas(db):
+    processor = _create_select_table(db, quipudb.kind.HEAP)
+    by_name = db.create_index(
+        "datos",
+        "por_nombre",
+        "nombre",
+        quipudb.kind.EXTENDIBLE_HASH,
+    )
+    by_average = db.create_index(
+        "datos",
+        "por_promedio",
+        "promedio",
+        quipudb.kind.BPLUS_UNCLUSTERED,
+    )
+
+    result = processor.execute("DELETE FROM datos WHERE id = 2")
+
+    assert result.affected_rows == 1
+    assert db.table("datos").search(2) == []
+    assert by_name.search("Luis") == []
+    remaining_average = by_average.search(15.0)
+    assert len(remaining_average) == 1
+    assert db.table("datos").read(remaining_average[0])[0] == 3
+    assert all(
+        db.table("datos").read(rid) is not None
+        for index in (by_name, by_average)
+        for _key, rid in index.scan()
+    )
+
+
+def test_delete_secundario_usa_hash_para_igualdad_y_bplus_para_rango(db):
+    processor = _create_select_table(db, quipudb.kind.HEAP)
+    db.create_index(
+        "datos",
+        "por_activo",
+        "activo",
+        quipudb.kind.EXTENDIBLE_HASH,
+    )
+    db.create_index(
+        "datos",
+        "por_promedio",
+        "promedio",
+        quipudb.kind.BPLUS_UNCLUSTERED,
+    )
+
+    equality = processor.execute("DELETE FROM datos WHERE activo = FALSE")
+    range_result = processor.execute(
+        "DELETE FROM datos WHERE promedio BETWEEN 15 AND 20"
+    )
+
+    assert equality.affected_rows == 2
+    assert range_result.affected_rows == 2
+    assert db.table("datos").scan() == []
+    for info in db.table_info("datos").indexes:
+        assert db.index("datos", info.name).scan() == []
+
+
+def test_delete_rango_con_solo_hash_hace_fallback_sin_dejar_rids(db):
+    processor = _create_select_table(db, quipudb.kind.HEAP)
+    by_active = db.create_index(
+        "datos",
+        "por_activo",
+        "activo",
+        quipudb.kind.EXTENDIBLE_HASH,
+    )
+
+    result = processor.execute("DELETE FROM datos WHERE activo > FALSE")
+
+    assert result.affected_rows == 2
+    assert {row[0] for row in db.table("datos").scan()} == {1, 3}
+    assert by_active.search(True) == []
+    false_rids = by_active.search(False)
+    assert len(false_rids) == 2
+    assert {db.table("datos").read(rid)[0] for rid in false_rids} == {1, 3}
+
+
+def test_delete_cero_coincidencias_y_between_invertido_no_modifican(db):
+    processor = _create_select_table(db, quipudb.kind.HEAP)
+    index = db.create_index(
+        "datos",
+        "por_nombre",
+        "nombre",
+        quipudb.kind.EXTENDIBLE_HASH,
+    )
+    before_rows = db.table("datos").scan()
+    before_entries = index.scan()
+
+    missing = processor.execute("DELETE FROM datos WHERE nombre = 'ausente'")
+    inverted = processor.execute("DELETE FROM datos WHERE id BETWEEN 4 AND 2")
+
+    assert missing.affected_rows == 0
+    assert inverted.affected_rows == 0
+    assert db.table("datos").scan() == before_rows
+    assert index.scan() == before_entries
+
+
+def test_delete_e_indices_permanecen_consistentes_despues_de_reabrir(tmp_path):
+    catalog = tmp_path / "catalogo.txt"
+    db = quipudb.Database(catalog)
+    processor = _create_select_table(db, quipudb.kind.HEAP)
+    db.create_index(
+        "datos",
+        "por_promedio",
+        "promedio",
+        quipudb.kind.BPLUS_UNCLUSTERED,
+    )
+    db.create_index(
+        "datos",
+        "por_nombre",
+        "nombre",
+        quipudb.kind.EXTENDIBLE_HASH,
+    )
+    assert processor.execute("DELETE FROM datos WHERE promedio = 15").affected_rows == 2
+    db.flush()
+    db.close("datos")
+    del processor, db
+
+    reopened = quipudb.Database(catalog)
+    table = reopened.table("datos")
+
+    assert {row[0] for row in table.scan()} == {1, 4}
+    assert reopened.index("datos", "por_promedio").search(15.0) == []
+    assert reopened.index("datos", "por_nombre").search("Luis") == []
+    assert reopened.index("datos", "por_nombre").search("Zoe") == []
+    assert all(
+        table.read(rid) is not None
+        for info in reopened.table_info("datos").indexes
+        for _key, rid in reopened.index("datos", info.name).scan()
+    )

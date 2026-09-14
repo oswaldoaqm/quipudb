@@ -480,6 +480,44 @@ def test_no_se_expone_el_cursor(db):
     assert hasattr(quipudb, "source_of")
 
 
+@pytest.mark.parametrize(
+    "organizacion",
+    [quipudb.kind.HEAP, quipudb.kind.SEQUENTIAL, quipudb.kind.BPLUS_CLUSTERED],
+)
+def test_scan_with_rids_materializa_copias_resolubles(db, organizacion):
+    t = db.create_table(esquema_alumnos(), organizacion)
+    for codigo in range(1, 21):
+        t.insert(alumno(codigo))
+    t.remove(7)
+
+    filas = t.scan_with_rids()
+
+    assert [fila[0] for _rid, fila in filas] == [
+        codigo for codigo in range(1, 21) if codigo != 7
+    ]
+    assert all(t.read(rid) == fila for rid, fila in filas)
+
+    # La lista contiene valores, no un cursor que quede invalidado al mutar.
+    t.remove(8)
+    assert [fila[0] for _rid, fila in filas][-1] == 20
+
+
+def test_scan_with_rids_respeta_huecos_reutilizados_del_heap(db):
+    t = db.create_table(esquema_alumnos(), quipudb.kind.HEAP)
+    for codigo in range(1, 101):
+        t.insert(alumno(codigo))
+    rid_eliminado = next(rid for rid, fila in t.scan_with_rids() if fila[0] == 42)
+    t.remove(42)
+
+    rid_reutilizado = t.insert(alumno(142))
+    filas = t.scan_with_rids()
+
+    assert rid_reutilizado == rid_eliminado
+    assert all(fila[0] != 42 for _rid, fila in filas)
+    assert next(fila for rid, fila in filas if rid == rid_reutilizado)[0] == 142
+    assert all(t.read(rid) == fila for rid, fila in filas)
+
+
 def test_la_version_del_motor_es_legible():
     assert isinstance(quipudb.version(), str)
     assert quipudb.version()
