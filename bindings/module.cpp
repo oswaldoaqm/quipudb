@@ -356,6 +356,18 @@ PYBIND11_MODULE(quipudb_native, m) {
            },
            py::arg("lo"), py::arg("hi"), "Registros con clave en [lo, hi], ambos inclusive")
       .def("scan", &TableFile::scan, "Todos los registros vivos")
+      .def(
+          "scan_with_rids",
+          [](TableFile& t) {
+            std::vector<std::pair<RID, Record>> filas;
+            filas.reserve(t.size());
+            auto cursor = t.cursor();
+            Record registro;
+            while (cursor->next(registro)) filas.emplace_back(cursor->rid(), registro);
+            return filas;
+          },
+          "Materializa copias (RID, registro) de todas las filas vivas. El cursor "
+          "se consume dentro del binding y nunca queda expuesto a Python")
       .def("read", &TableFile::read, py::arg("rid"),
            "Registro en esa direccion fisica, o None")
       .def("size", &TableFile::size)
