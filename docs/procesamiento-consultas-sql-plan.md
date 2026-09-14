@@ -4,7 +4,7 @@
 **Última actualización**: 2026-09-14
 **Complejidad**: Alta
 **Issues asignados**: #24, #25, #26, #27 y #28
-**Estado**: Issues #24, #25 y #26 integrados; issue #27 implementado y validado
+**Estado**: Issues #24–#27 integrados; issue #28 implementado, validado y publicado en el PR #80
 
 ## Registro de continuidad
 
@@ -23,14 +23,15 @@ Decisiones confirmadas por el responsable de 2.1.3:
 - Mantener `Proyecto_Integrador_BD2.docx` fuera de Git.
 - Trabajar por issue y por rama; nunca directamente sobre `main`.
 
-Estado local al redactar este plan:
+Estado de cierre del issue #28:
 
-- `main` coincide con `origin/main` en `1421693`.
-- Python: 10 pruebas pasan, un módulo se omite porque los bindings no están compilados.
-- Ruff: sin errores.
-- El core compila con tests desactivados.
-- CTest no pudo configurarse localmente porque CMake no tuvo red para descargar GoogleTest.
-- Los únicos archivos nuevos son este plan y el DOCX del enunciado; ninguno está committed.
+- `main` coincide con `origin/main` en `a7154b7`; la rama activa es
+  `feat/parser-order-by-group`, creada desde esa revisión.
+- Gate local aprobado: 306 pruebas C++, 378 pruebas Python puras con 3 omisiones esperadas y 103
+  pruebas con bindings reales sin omisiones.
+- Ruff, `git diff --check` y el validador del historial pasan sin errores.
+- La rama está publicada y el PR #80 enlaza `Closes #28`.
+- `Proyecto_Integrador_BD2.docx` continúa ignorado y fuera de Git.
 
 Avance del issue #24 (2026-09-13):
 
@@ -108,13 +109,39 @@ Avance del issue #27 (2026-09-14):
   bindings (2 omitidas como se espera), Ruff 0.16.7, `git diff --check` y validador del historial.
 - Commits funcionales previos a este registro: `82362e7`, `4ea59a9`, `2b2de32`, `b720bf0`,
   `c135e1e`, `143663c` y `08eab9b`. El aviso previo del helper de binding quedo registrado en #27.
+- El PR #79 se integró en `main` mediante el merge commit `a7154b7`; desde esa revisión se creó
+  `feat/parser-order-by-group` para #28.
 - El DOCX continua fuera de Git.
+
+Avance del issue #28 (2026-09-14):
+
+- `ExternalSort` admite ASC/DESC estable en memoria y durante el k-way merge. El límite exacto de
+  capacidad permanece en memoria con 0 runs/E/S temporal; capacidad + 1 provoca spill.
+- `ExternalSort` y `ExternalGroupBy` validan el rango físico de página y que cada registro quepa
+  antes de crear o escribir archivos temporales.
+- El binding adapta cualquier iterable Python como fuente de una sola pasada: lo abre una vez, no
+  lo copia a un vector, propaga excepciones y permite liberar temporales inmediatamente.
+- La semántica, el planner y el ejecutor implementan el pipeline
+  `acceso -> filtro residual -> group -> sort -> proyección` sin una lista de entrada adicional.
+- GROUP BY cubre `COUNT`, `SUM`, `MIN`, `MAX` y `AVG`. AUTO intenta hash, registra sus particiones y
+  reparticiones, y explica el fallback a sort; el orden ascendente de ese fallback se reutiliza
+  cuando coincide con ORDER BY.
+- El plan informa dirección, estrategia solicitada y efectiva, runs, pasadas, fallback, E/S y la
+  causa de haber usado memoria o disco.
+- Los cambios de contrato quedaron avisados antes de integrar en los comentarios
+  `issuecomment-5665918607` e `issuecomment-5666344032` del issue #28.
+- Gate local aprobado: 306/306 pruebas C++, 378 pruebas Python puras con 3 omisiones esperadas y
+  103 pruebas con bindings reales sin omisiones; Ruff, `git diff --check` y el validador del
+  historial están verdes.
+- Rama publicada en `origin/feat/parser-order-by-group`; PR #80 abierto con `Closes #28`. El DOCX
+  continúa fuera de Git.
 
 Siguiente acción:
 
-1. Publicar el PR de `feat/parser-delete-from-where` con `Closes #27` y confirmar sus cuatro checks.
-2. Solicitar una revision e integrar sin squash cuando el CI quede verde.
-3. Continuar con #28 unicamente desde `main` actualizado con el issue #27.
+1. Confirmar los cuatro checks del PR #80.
+2. Solicitar una revisión e integrar sin squash cuando el CI quede verde y exista aprobación.
+3. Tras el merge, actualizar `main`, verificar que #28 quedó cerrado y declarar concluidos los
+   issues #24–#28 de la sección 2.1.3.
 
 ## Resultado esperado
 
@@ -211,8 +238,9 @@ adicional requiere actualizar primero este plan y el ADR.
 
 ## Issues verificados y orden de entrega
 
-Los cinco issues están abiertos, asignados a `Sebastian1byte` y pertenecen al milestone de Parte 1.
-Sus dependencias de core (#3, #7, #9, #15, #20 y #21) están cerradas.
+Los cinco issues están asignados a `Sebastian1byte` y pertenecen al milestone de Parte 1. Los issues
+#24–#27 están cerrados e integrados; #28 permanece abierto hasta que se integre el PR #80. Sus
+dependencias de core (#3, #7, #9, #15, #20 y #21) están cerradas.
 
 | Issue | Resultado exigido | Rama sugerida en GitHub |
 |---|---|---|
@@ -542,7 +570,9 @@ calcula todas las agregaciones con estadísticas visibles.
   ascendente como valor por defecto para que llamadas existentes no cambien.
 - **Dependencias**: acuerdo explícito en #28, porque modifica 2.1.2 y el binding.
 - **Aceptación**:
-  - ASC conserva exactamente el comportamiento y costo anterior.
+  - ASC conserva API, resultados, estabilidad y dirección por defecto. Se corrige el costo en el
+    límite: exactamente la capacidad permanece en memoria con 0 runs/E/S temporal; capacidad + 1
+    provoca spill.
   - DESC funciona con cero, uno y varios runs.
   - Empates conservan estabilidad en ambos sentidos.
 - **Validación**: tests C++ de memoria y disco, bindings y regresión completa de external sort.
@@ -561,7 +591,10 @@ calcula todas las agregaciones con estadísticas visibles.
 
 ### Tarea 5.3: Optimizar y ejecutar ORDER BY
 
-- **Ubicación**: optimizer y operadores del ejecutor, pruebas de order.
+- **Ubicación**: `engine/parser/bound_ast.py`, `engine/parser/semantic.py`,
+  `engine/planner/optimizer.py`, `engine/executor/external.py`, `engine/executor/processor.py`,
+  `engine/parser/test_semantic_select.py`, `engine/planner/test_optimizer.py` y
+  `engine/executor/test_order_group.py`.
 - **Descripción**: filtrar, ordenar con `ExternalSort` y proyectar en el orden correcto; construir el
   paso `sort` con runs, pasadas, dirección y motivo.
 - **Dependencias**: Tareas 5.1 y 5.2.
@@ -573,7 +606,10 @@ calcula todas las agregaciones con estadísticas visibles.
 
 ### Tarea 5.4: Optimizar y ejecutar GROUP BY
 
-- **Ubicación**: optimizer y operadores del ejecutor, pruebas de group.
+- **Ubicación**: `engine/parser/bound_ast.py`, `engine/parser/semantic.py`,
+  `engine/planner/optimizer.py`, `engine/executor/external.py`, `engine/executor/processor.py`,
+  `engine/parser/test_semantic_select.py`, `engine/planner/test_optimizer.py`,
+  `engine/executor/test_order_group.py` y `engine/executor/test_processor.py`.
 - **Descripción**: traducir agregados a `AggregateSpec`, ejecutar `ExternalGroupBy` y usar su esquema
   de salida.
 - **Dependencias**: Tarea 5.2.
@@ -596,7 +632,7 @@ calcula todas las agregaciones con estadísticas visibles.
 
 ### Tarea 6.1: Crear suite de extremo a extremo
 
-- **Ubicación**: `engine/integration/test_query_processor.py`.
+- **Ubicación**: `engine/test_query_processor.py` y `engine/executor/test_order_group.py`.
 - **Descripción**: ejecutar el recorrido CREATE → INSERT → SELECT → DELETE y consultas ORDER/GROUP
   sobre bases temporales.
 - **Dependencias**: #24–#28.
@@ -661,12 +697,14 @@ Mensajes previstos, ajustables según el diff real:
 ### Issue #28
 
 - `feat(external): ordenar flujos en ambos sentidos`
+- `fix(external): validar paginas antes de agrupar`
 - `feat(api): adaptar iterables python como fuentes`
-- `feat(planner): planificar order by y group by`
+- `feat(parser): resolver order by y group by`
+- `feat(planner): planificar operadores externos`
 - `feat(parser): ejecutar ordenamiento y agrupacion`
-- `test(parser): cubrir external sort y group by`
-- `chore(ci): ejecutar la integracion con bindings`
-- `docs: documentar consultas y planes soportados`
+- `test(parser): cubrir order by y group by`
+- `chore(ci): ejecutar pruebas de order y group`
+- `docs: documentar order by y group by`
 
 Antes de cada push:
 
@@ -682,7 +720,8 @@ cmake -S . -B build-py -DCMAKE_BUILD_TYPE=Release \
   -DQUIPUDB_BUILD_PYTHON=ON
 cmake --build build-py --parallel
 PYTHONPATH="$PWD/build-py/bindings" \
-  python -m pytest engine/test_bindings.py engine/integration -q -rs
+  python -m pytest engine/test_bindings.py engine/test_query_processor.py \
+  engine/executor/test_order_group.py -q -rs -p no:cacheprovider
 
 git diff --check
 bash .github/scripts/check-commits.sh origin/main HEAD
@@ -703,7 +742,7 @@ El hook está configurado con `core.hooksPath=.githooks`, pero el archivo `commi
 | DESC no existe en ExternalSort | #28 incumplido o materialización completa | Extender comparator/merge con dirección y default compatible |
 | WHERE antes de sort/group materializa | Se pierde la propiedad externa | Adaptador de iterable a `RecordSource` |
 | Stats acumulativas | Planes y benchmarks incorrectos | Reset/deltas por operación y tests consecutivos |
-| Flujo lazy pierde su owner | Use-after-free o stats incompletas | `keep_alive`, consumo único y resultado materializado al final |
+| Flujo lazy pierde su owner | Use-after-free o stats incompletas | El adaptador posee el iterador; el ejecutor retiene y libera explícitamente source/output |
 | Cambio del JSON del plan | Frontend incompatible | Acordarlo antes con #4 y mantener round-trip/tests |
 | CREATE no define PK | Schema nativo inválido | Exigir exactamente un `PRIMARY KEY` |
 | DATE no serializable | Respuesta futura falla | Conversión ISO definida en `QueryResult` |
@@ -719,7 +758,8 @@ La sección 2.1.3 se considerará terminada solo cuando:
 - El optimizador elija índice o scan de acuerdo con el contrato.
 - ASC y DESC usen external sorting y GROUP BY use el algoritmo externo configurado.
 - INSERT y DELETE mantengan todos los índices secundarios.
-- Cada consulta devuelva un plan válido, medido y consumible por frontend.
+- Cada SELECT devuelva un plan válido, medido y consumible por frontend; CREATE, INSERT y DELETE
+  respeten su contrato vigente con `plan=None`.
 - Ruff, pytest puro, pytest con bindings, CTest y validación de commits pasen.
 - Cada issue tenga su rama publicada y un PR listo para revisión, sin el DOCX.
 - README y arquitectura describan exactamente lo implementado y sus límites.

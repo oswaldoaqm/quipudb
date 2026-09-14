@@ -130,6 +130,13 @@ print(result.columns)          # ('nombre', 'nota')
 print(result.rows)             # (('Bases de Datos 2', 18.0),)
 print(result.plan.to_dict())   # scan/filter/project y sus estadísticas
 
+ordered = processor.execute("SELECT nombre, nota FROM cursos ORDER BY nota DESC")
+grouped = processor.execute(
+    "SELECT nombre, COUNT(*), AVG(nota) FROM cursos GROUP BY nombre ORDER BY nombre"
+)
+print(ordered.rows)            # filas ordenadas mediante ExternalSort
+print(grouped.columns)         # ('nombre', 'COUNT_all', 'AVG_nota')
+
 deleted = processor.execute("DELETE FROM cursos WHERE nota < 11")
 print(deleted.affected_rows)   # 0
 print(deleted.plan)            # None: el plan DML aún requiere acuerdo en ADR 0002
@@ -138,8 +145,23 @@ print(deleted.plan)            # None: el plan DML aún requiere acuerdo en ADR 
 `WHERE` admite `=`, `<`, `<=`, `>`, `>=` y `BETWEEN` inclusivo. El planner usa
 la clave primaria o un índice secundario aplicable; si no existe uno, registra
 el `scan` y el filtro en memoria. `DELETE` materializa todos sus candidatos antes
-de escribir y mantiene cada índice secundario. `ORDER BY` y `GROUP BY` se
-incorporan en el siguiente issue del procesador.
+de escribir y mantiene cada índice secundario. `ORDER BY` admite `ASC` y `DESC`
+y usa external sorting; `GROUP BY` admite `COUNT(*)`, `SUM`, `MIN`, `MAX` y
+`AVG`, y usa external hashing con fallback seguro a sort. El plan explica la
+dirección, los runs, las pasadas, la estrategia y las particiones realmente
+utilizadas.
+
+Para pruebas reproducibles puede limitarse la memoria de estos algoritmos sin
+cambiar los valores por defecto:
+
+```python
+processor = QueryProcessor(
+    db,
+    external_buffers=3,
+    external_page_size=512,
+    temp_dir="temporales",
+)
+```
 
 Detalles que conviene saber:
 
