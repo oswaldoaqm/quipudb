@@ -4,7 +4,7 @@
 **Última actualización**: 2026-09-13
 **Complejidad**: Alta
 **Issues asignados**: #24, #25, #26, #27 y #28
-**Estado**: Issue #24 implementado, validado y publicado; PR pendiente
+**Estado**: Issue #24 integrado; issue #25 implementado y publicado en el PR #76
 
 ## Registro de continuidad
 
@@ -32,7 +32,7 @@ Estado local al redactar este plan:
 - CTest no pudo configurarse localmente porque CMake no tuvo red para descargar GoogleTest.
 - Los únicos archivos nuevos son este plan y el DOCX del enunciado; ninguno está committed.
 
-Avance del 2026-09-13:
+Avance del issue #24 (2026-09-13):
 
 - Rama creada: `feat/parser-tokenizer-gramatica-base`.
 - ADR 0003 y contrato sintactico de arquitectura documentados.
@@ -47,11 +47,30 @@ Avance del 2026-09-13:
 - Rama publicada en `origin/feat/parser-tokenizer-gramatica-base`; HEAD local y remoto verificados
   en `c503a58` antes de registrar esta actualizacion.
 
+Avance del issue #25 (2026-09-13):
+
+- El PR #75 se integro en `main` mediante el merge commit `d1e4ae3`; desde esa revision se creo
+  `feat/parser-create-table-insert`.
+- Se implementaron el IR semantico, la validacion de esquemas y literales, `QueryResult`,
+  `QueryProcessor` y el adaptador diferido a `quipudb_native`.
+- `CREATE TABLE` crea heap o secuencial y rechaza archivos fisicos preexistentes sin adoptarlos ni
+  borrarlos. Si falla la creacion, el catalogo vuelve al estado anterior.
+- `INSERT INTO` valida los cinco tipos, mantiene todos los indices secundarios registrados y aplica
+  rollback de mejor esfuerzo ante un fallo intermedio.
+- Los bindings exponen snapshots de solo lectura de `TableInfo` e `IndexInfo`; las copias sobreviven
+  a reaperturas y no permiten modificar indirectamente el catalogo.
+- Gate local aprobado: 299 pruebas C++, 287 pruebas Python con bindings reales, Ruff normal e
+  import sorting, `git diff --check` y validador del historial.
+- Commits funcionales previos a este registro: `0815e15`, `e2b2fc2`, `ac95f51`, `3f0ce53`,
+  `aa8d19c`, `0c39088` y `4b913a0`.
+- Rama publicada en `origin/feat/parser-create-table-insert`; PR #76 abierto contra `main` con
+  `Closes #25`. El DOCX continua fuera de Git.
+
 Siguiente acción:
 
-1. Abrir un PR contra `main` con `Closes #24`.
-2. Confirmar CI y solicitar una revisión, conforme a `CONTRIBUTING.md`.
-3. Continuar con #25 únicamente desde la versión aprobada de #24.
+1. Confirmar los checks del PR #76 y solicitar una revision, conforme a `CONTRIBUTING.md`.
+2. Integrar #76 sin squash cuando tenga CI verde y aprobacion.
+3. Continuar con #26 unicamente desde `main` actualizado con el issue #25.
 
 ## Resultado esperado
 

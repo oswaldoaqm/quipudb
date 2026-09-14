@@ -1,5 +1,7 @@
 #include "quipudb/catalog/database.hpp"
 
+#include <exception>
+
 #include "quipudb/error.hpp"
 #include "quipudb/index/bplus_clustered_table.hpp"
 #include "quipudb/index/bplus_unclustered_index.hpp"
@@ -34,7 +36,44 @@ std::unique_ptr<TableFile> Database::abrir(const TableInfo& info) const {
 TableFile& Database::create_table(const Schema& schema, std::string_view storage,
                                   std::size_t page_size) {
   const TableInfo& info = catalog_.create_table(schema, storage, page_size);
-  auto handle = abrir(info);
+  const auto ruta = catalog_.resolve(info.file);
+  const auto revertir_catalogo = [&]() noexcept {
+    try {
+      catalog_.drop_table(schema.table_name);
+    } catch (...) {
+      // La entrada ya se quito de la copia en memoria. Si tambien falla
+      // persistir el rollback, la excepcion original sigue siendo la causa
+      // util para el llamador.
+    }
+  };
+
+  std::error_code ec;
+  const auto estado = std::filesystem::symlink_status(ruta, ec);
+  if (estado.type() == std::filesystem::file_type::not_found) {
+    // POSIX informa ENOENT en `ec` junto al estado not_found. Ese es justo el
+    // caso valido para CREATE, no un fallo al inspeccionar la ruta.
+    ec.clear();
+  } else if (ec) {
+    revertir_catalogo();
+    throw IoError("no se pudo comprobar si existe '" + ruta.string() + "': " + ec.message());
+  } else {
+    revertir_catalogo();
+    throw IoError("no se puede crear la tabla " + schema.table_name + ": la ruta '" +
+                  ruta.string() + "' ya existe");
+  }
+
+  std::unique_ptr<TableFile> handle;
+  try {
+    handle = abrir(info);
+  } catch (...) {
+    // Catalog::create_table persiste antes de abrir el archivo. Si la apertura
+    // falla, dejar esa entrada haria que el siguiente CREATE dijera que la
+    // tabla ya existe aunque nunca se creo. Solo se revierte el catalogo: una
+    // ruta preexistente que causo el error pertenece al usuario y no se borra.
+    const std::exception_ptr original = std::current_exception();
+    revertir_catalogo();
+    std::rethrow_exception(original);
+  }
   auto [it, _] = abiertas_.emplace(schema.table_name, std::move(handle));
   return *it->second;
 }

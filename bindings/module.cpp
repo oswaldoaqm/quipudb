@@ -278,6 +278,25 @@ PYBIND11_MODULE(quipudb_native, m) {
                " columnas)";
       });
 
+  // --- metadata del catalogo ----------------------------------------------
+  // No tienen constructor en Python: solo Database.table_info() puede
+  // producirlas. Ademas, la tabla completa, su Schema y la lista de indices
+  // cruzan el binding por valor. Asi el optimizador puede inspeccionar el
+  // catalogo sin obtener una referencia capaz de modificarlo indirectamente.
+
+  py::class_<IndexInfo>(m, "IndexInfo")
+      .def_property_readonly("name", [](const IndexInfo& i) { return i.name; })
+      .def_property_readonly("column", [](const IndexInfo& i) { return i.column; })
+      .def_property_readonly("kind", [](const IndexInfo& i) { return i.kind; })
+      .def_property_readonly("file", [](const IndexInfo& i) { return i.file; });
+
+  py::class_<TableInfo>(m, "TableInfo")
+      .def_property_readonly("schema", [](const TableInfo& t) { return t.schema; })
+      .def_property_readonly("storage", [](const TableInfo& t) { return t.storage; })
+      .def_property_readonly("file", [](const TableInfo& t) { return t.file; })
+      .def_property_readonly("page_size", [](const TableInfo& t) { return t.page_size; })
+      .def_property_readonly("indexes", [](const TableInfo& t) { return t.indexes; });
+
   py::class_<OpStats>(m, "OpStats",
                       "Contadores de una operacion. Es lo que alimenta `stats` del plan "
                       "de ejecucion (ADR 0002) y las mediciones del 2.1.6.")
@@ -396,7 +415,14 @@ PYBIND11_MODULE(quipudb_native, m) {
       .def("table_names", [](Database& db) { return db.catalog().table_names(); },
            "Nombres de las tablas registradas en el catalogo")
       .def("has_table", [](Database& db, std::string_view n) { return db.catalog().has_table(n); },
-           py::arg("name"));
+           py::arg("name"))
+      .def(
+          "table_info",
+          [](const Database& db, std::string_view n) -> TableInfo {
+            return db.catalog().table(n);
+          },
+          py::arg("name"),
+          "Copia inmutable de la metadata registrada para una tabla");
 
   // --- medidas por organizacion, para el 2.1.6 ------------------------------
   // Estas NO estan en `TableFile` porque cada organizacion mide cosas

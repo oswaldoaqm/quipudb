@@ -65,6 +65,13 @@ significa que ya pueda ejecutarse: la validacion contra el esquema comienza en
 y agrupacion en #28. La EBNF completa y los limites deliberados viven en el
 [ADR 0003](adr/0003-procesamiento-consultas-sql.md).
 
+Desde #25, `engine.executor.QueryProcessor` ejecuta `CREATE TABLE` e `INSERT
+INTO`. El import del binding es diferido, de modo que importar y probar el
+parser sigue sin exigir una compilacion C++. Antes de insertar se valida el
+registro completo; despues se actualizan todos los indices secundarios del
+catalogo y, si uno falla, se revierten de mejor esfuerzo las escrituras ya
+hechas. `SELECT` y `DELETE` continuan rechazandose en ejecucion hasta sus issues.
+
 ## Por que el plan de ejecucion es un contrato y no un detalle
 
 La seccion 2.1.5 exige un Panel de Plan de Ejecucion que muestre que indices se
