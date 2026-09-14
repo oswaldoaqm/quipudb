@@ -218,10 +218,15 @@ El optimizador de #26 elige busqueda por clave o indice cuando la estructura y
 el operador lo permiten; en caso contrario usa scan y filtro. La clave primaria
 tiene prioridad; para columnas secundarias se prefiere hash en igualdad y B+
 en rango. Como el core ofrece rangos inclusivos, `<` y `>` conservan un filtro
-residual que excluye la frontera. El ejecutor de #28 conectara `ORDER BY` con
-external sorting y `GROUP BY` con external hashing. En todos los casos, `plan`
-respetara el arbol, los nombres de
-operaciones y las estadisticas propias de cada paso definidos por el ADR 0002.
+residual que excluye la frontera. Desde #28, el ejecutor conecta `ORDER BY` con
+external sorting estable en ambas direcciones y `GROUP BY` con external
+hashing en estrategia `AUTO`, con fallback medido a sort. La entrada se adapta
+a un `RecordSource` de una pasada para no construir otra lista completa entre
+`WHERE` y el algoritmo externo. `scan` y `fetch` son incrementales; las rutas
+`TableFile.search/range_search` conservan el vector que ya define el contrato
+del core, sin añadir una segunda copia. En todos los casos, `plan` respeta el
+arbol, los nombres de operaciones y las estadisticas propias de cada paso
+definidos por el ADR 0002.
 La forma de representar `CREATE TABLE` y de atribuir las escrituras de
 `INSERT`/`DELETE` entre tabla e indices requiere un acuerdo previo con quien
 consume ese JSON; se documentara como una enmienda del ADR 0002 antes de
