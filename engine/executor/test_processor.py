@@ -221,6 +221,14 @@ class _FakeTable:
         self.current_stats.records_returned = len(self.records)
         return list(self.records)
 
+    def scan_with_rids(self) -> list[tuple[_RID, list[object]]]:
+        self.current_stats.records_examined = len(self.records)
+        self.current_stats.records_returned = len(self.records)
+        return [
+            (rid, list(record))
+            for rid, record in zip(self.rids, self.records, strict=True)
+        ]
+
     def read(self, rid: _RID) -> list[object] | None:
         self.current_stats.records_examined += 1
         try:
@@ -425,14 +433,30 @@ def test_fallo_al_abrir_indice_ocurre_antes_de_insertar(
     assert database.tables["datos"].insert_calls == []
 
 
-def test_delete_se_rechaza_hasta_su_issue(
+def test_delete_por_pk_devuelve_filas_afectadas(
     database: _FakeDatabase,
     processor: QueryProcessor,
 ) -> None:
-    with pytest.raises(SQLUnsupportedError):
-        processor.execute("DELETE FROM datos WHERE id = 1")
+    processor.execute("CREATE TABLE datos (id INT PRIMARY KEY) USING HEAP")
+    processor.execute("INSERT INTO datos VALUES (1)")
+    processor.execute("INSERT INTO datos VALUES (2)")
 
-    assert database.create_calls == []
+    result = processor.execute("DELETE FROM datos WHERE id = 1")
+
+    assert result.columns == ()
+    assert result.rows == ()
+    assert result.affected_rows == 1
+    assert result.plan is None
+    assert database.tables["datos"].records == [[2]]
+
+
+def test_delete_en_tabla_inexistente_conserva_schema_error(
+    processor: QueryProcessor,
+) -> None:
+    with pytest.raises(SQLSemanticError, match="no existe") as captured:
+        processor.execute("DELETE FROM ausente WHERE id = 1")
+
+    assert isinstance(captured.value.__cause__, _SchemaError)
 
 
 def test_select_pasa_por_semantica_planner_ejecutor(
