@@ -115,6 +115,15 @@ class BoundSelectStatement:
     span: Span
 
 
+@dataclass(frozen=True, slots=True)
+class BoundDeleteStatement:
+    """DELETE con tabla y predicado resueltos contra el esquema."""
+
+    schema: BoundSchema
+    where: BoundCondition
+    span: Span
+
+
 __all__ = [
     "BoundBetweenCondition",
     "BoundColumn",
@@ -122,6 +131,7 @@ __all__ = [
     "BoundComparisonCondition",
     "BoundCondition",
     "BoundCreateTable",
+    "BoundDeleteStatement",
     "BoundInsertStatement",
     "BoundSchema",
     "BoundSelectStatement",
