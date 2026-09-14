@@ -11,6 +11,7 @@ from engine.parser.bound_ast import (
     BoundColumn,
     BoundColumnReference,
     BoundComparisonCondition,
+    BoundDeleteStatement,
     BoundSchema,
     BoundSelectStatement,
 )
@@ -19,8 +20,10 @@ from engine.planner.native_catalog import from_native_table_info
 from engine.planner.optimizer import (
     AccessRoute,
     IndexMetadata,
+    PhysicalDeletePlan,
     PhysicalSelectPlan,
     TableMetadata,
+    optimize_delete,
     optimize_select,
 )
 from engine.planner.plan import Structure
@@ -61,6 +64,10 @@ def _select(where=None) -> BoundSelectStatement:
         where=where,
         span=_SPAN,
     )
+
+
+def _delete(where) -> BoundDeleteStatement:
+    return BoundDeleteStatement(schema=_SCHEMA, where=where, span=_SPAN)
 
 
 def _index(
@@ -207,6 +214,90 @@ def test_igualdad_sin_indice_hace_scan_y_filter() -> None:
 
     assert plan.route is AccessRoute.SCAN
     assert plan.residual_filter is True
+
+
+def test_delete_sin_indices_reutiliza_busqueda_de_tabla_por_pk() -> None:
+    plan = optimize_delete(
+        _delete(_comparison(0, ComparisonOperator.EQUAL)),
+        _table(),
+    )
+
+    assert plan.route is AccessRoute.TABLE_SEARCH
+    assert plan.index is None
+    assert plan.residual_filter is False
+
+
+def test_delete_pk_con_indices_hace_scan_si_no_hay_indice_sobre_pk() -> None:
+    plan = optimize_delete(
+        _delete(_comparison(0, ComparisonOperator.EQUAL)),
+        _table(_index("por_promedio", Structure.EXTENDIBLE_HASH)),
+    )
+
+    assert plan.route is AccessRoute.SCAN
+    assert plan.index is None
+    assert plan.residual_filter is True
+
+
+def test_delete_pk_con_indice_sobre_pk_conserva_el_rid() -> None:
+    hash_pk = _index("por_codigo", Structure.EXTENDIBLE_HASH, column=0)
+
+    plan = optimize_delete(
+        _delete(_comparison(0, ComparisonOperator.EQUAL)),
+        _table(hash_pk),
+    )
+
+    assert plan.route is AccessRoute.INDEX_SEARCH
+    assert plan.index == hash_pk
+    assert plan.residual_filter is False
+
+
+@pytest.mark.parametrize(
+    ("condition", "route", "index_name", "residual"),
+    [
+        (
+            _comparison(1, ComparisonOperator.EQUAL),
+            AccessRoute.INDEX_SEARCH,
+            "por_promedio_hash",
+            False,
+        ),
+        (_between(), AccessRoute.INDEX_RANGE, "por_promedio_bplus", False),
+        (
+            _comparison(1, ComparisonOperator.LESS_THAN),
+            AccessRoute.INDEX_RANGE,
+            "por_promedio_bplus",
+            True,
+        ),
+    ],
+)
+def test_delete_reutiliza_indices_secundarios_de_select(
+    condition,
+    route: AccessRoute,
+    index_name: str,
+    residual: bool,
+) -> None:
+    plan = optimize_delete(
+        _delete(condition),
+        _table(
+            _index("por_promedio_hash", Structure.EXTENDIBLE_HASH),
+            _index("por_promedio_bplus", Structure.BPLUS_UNCLUSTERED),
+        ),
+    )
+
+    assert plan.route is route
+    assert plan.index is not None
+    assert plan.index.name == index_name
+    assert plan.residual_filter is residual
+
+
+def test_plan_delete_rechaza_ruta_de_tabla_que_perderia_el_rid() -> None:
+    index = _index("por_promedio", Structure.EXTENDIBLE_HASH)
+
+    with pytest.raises(ValueError, match="conserve el RID"):
+        PhysicalDeletePlan(
+            _delete(_comparison(0, ComparisonOperator.EQUAL)),
+            _table(index),
+            AccessRoute.TABLE_SEARCH,
+        )
 
 
 @pytest.mark.parametrize("value", ["x" * 41, "a\0b"])
