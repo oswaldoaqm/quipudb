@@ -1,10 +1,10 @@
 # Plan: Procesamiento de consultas SQL 2.1.3
 
 **Generado**: 2026-09-12
-**Última actualización**: 2026-09-13
+**Última actualización**: 2026-09-14
 **Complejidad**: Alta
 **Issues asignados**: #24, #25, #26, #27 y #28
-**Estado**: Issues #24, #25 y #26 integrados
+**Estado**: Issues #24, #25 y #26 integrados; issue #27 implementado y validado
 
 ## Registro de continuidad
 
@@ -87,10 +87,34 @@ Avance del issue #26 (2026-09-13):
   final se traslado a `docs/docs-select-issue-26` porque el PR se integro mientras se publicaba ese
   ultimo commit. El DOCX continua fuera de Git.
 
+Avance del issue #27 (2026-09-14):
+
+- El PR documental #78 de #26 se integro en `main`; desde esa revision se preparo
+  `feat/parser-delete-from-where`.
+- El binding expone `TableFile.scan_with_rids()`: consume el cursor dentro de C++ y devuelve copias
+  materializadas, sin modificar la interfaz del core ni exponer un cursor invalidable a Python.
+- Se agregaron `BoundDeleteStatement`, `bind_delete`, `PhysicalDeletePlan` y `optimize_delete`.
+  Igualdad usa PK o hash/B+; rango usa PK o B+; cuando una tabla indexada perderia el RID se hace
+  scan con RID y filtro.
+- El ejecutor captura todos los candidatos antes de mutar, quita cada par secundario con
+  `remove_one(key, rid)` y despues borra por PK. El rollback de mejor esfuerzo reinserta filas y
+  reconstruye indices con los RID nuevos sin ocultar la excepcion original.
+- `DELETE` devuelve `affected_rows` exacto y `plan=None`, como exige el contrato vigente del ADR
+  0003 mientras siga pendiente la enmienda DML del ADR 0002.
+- Se probaron igualdad, rangos inclusivos y estrictos, cero coincidencias, claves repetidas, dos
+  indices, hash/B+, fallback, RIDs corruptos, fallos inyectados, reutilizacion de huecos,
+  reorganizacion secuencial, merges B+ y reapertura.
+- Gate local aprobado: 299 pruebas C++, 431 pruebas Python con bindings reales, 346 pruebas sin
+  bindings (2 omitidas como se espera), Ruff 0.16.7, `git diff --check` y validador del historial.
+- Commits funcionales previos a este registro: `82362e7`, `4ea59a9`, `2b2de32`, `b720bf0`,
+  `c135e1e`, `143663c` y `08eab9b`. El aviso previo del helper de binding quedo registrado en #27.
+- El DOCX continua fuera de Git.
+
 Siguiente acción:
 
-1. Integrar la documentacion final de #26 desde `docs/docs-select-issue-26`.
-2. Continuar con #27 desde `main` actualizado con el issue #26.
+1. Publicar el PR de `feat/parser-delete-from-where` con `Closes #27` y confirmar sus cuatro checks.
+2. Solicitar una revision e integrar sin squash cuando el CI quede verde.
+3. Continuar con #28 unicamente desde `main` actualizado con el issue #27.
 
 ## Resultado esperado
 

@@ -209,7 +209,7 @@ construir las filas que exponga a otras capas.
 Para `SELECT`, `columns` y `rows` contienen la salida y `affected_rows` es cero.
 Para `INSERT` y `DELETE`, `affected_rows` informa las filas modificadas y no se
 devuelven filas. `CREATE TABLE` no devuelve filas ni cuenta filas modificadas.
-En #25, `CREATE TABLE` e `INSERT` devuelven `plan=None`: el ADR 0002 no define
+`CREATE TABLE`, `INSERT` y `DELETE` devuelven `plan=None`: el ADR 0002 no define
 una operacion `CREATE`, y la atribucion de escrituras entre una tabla y varios
 indices todavia necesita el acuerdo descrito a continuacion. Desde #26, todo
 `SELECT` devuelve el `Plan` medido de la ruta que realmente recorrio.
@@ -226,6 +226,16 @@ La forma de representar `CREATE TABLE` y de atribuir las escrituras de
 `INSERT`/`DELETE` entre tabla e indices requiere un acuerdo previo con quien
 consume ese JSON; se documentara como una enmienda del ADR 0002 antes de
 implementar esos planes, sin inventar aqui nuevos valores de `op`.
+
+Desde #27, `DELETE` reutiliza el mismo enlace y seleccion de acceso, con una
+diferencia: si la tabla tiene indices, toda ruta debe conservar el RID. Un
+indice aplicable ya lo devuelve; el fallback usa `scan_with_rids()`, helper del
+binding que consume el cursor dentro de C++ y materializa copias. Todos los
+candidatos se capturan antes de escribir. El ejecutor retira de cada indice
+solo `(clave, RID)` mediante `remove_one`, luego borra la tabla por PK y aplica
+rollback de mejor esfuerzo si una operacion intermedia falla. Esto mantiene
+claves secundarias repetidas y evita RIDs colgados en el camino exitoso; no
+reemplaza las transacciones de 2.1.4.
 
 ### Limites explicitos
 
