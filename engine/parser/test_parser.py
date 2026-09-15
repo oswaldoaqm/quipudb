@@ -8,6 +8,7 @@ from engine.parser import parse_sql
 from engine.parser.ast import (
     AggregateCall,
     AggregateFunction,
+    BeginTransactionStatement,
     BetweenCondition,
     BooleanLiteral,
     ColumnReference,
@@ -17,6 +18,7 @@ from engine.parser.ast import (
     DateLiteral,
     DeleteStatement,
     DoubleLiteral,
+    EndTransactionStatement,
     InsertStatement,
     IntegerLiteral,
     OrderDirection,
@@ -226,6 +228,21 @@ def test_delete_admite_between() -> None:
     assert statement.where.upper.value == 10
 
 
+def test_begin_transaction_parsea_como_sentencia_propia() -> None:
+    statement = parse_sql("BEGIN TRANSACTION;")
+
+    assert isinstance(statement, BeginTransactionStatement)
+    assert statement.span.start == 0
+    assert statement.span.end == len("BEGIN TRANSACTION")
+
+
+def test_end_transaction_parsea_como_sentencia_propia() -> None:
+    statement = parse_sql("END TRANSACTION")
+
+    assert isinstance(statement, EndTransactionStatement)
+    assert statement.span.end == len("END TRANSACTION")
+
+
 def test_spans_del_ast_apuntan_a_sus_fragmentos_originales() -> None:
     sql = (
         "SELECT activo, AVG(promedio) FROM alumnos "
@@ -280,6 +297,8 @@ def test_spans_del_ast_apuntan_a_sus_fragmentos_originales() -> None:
         ("SELECT * FROM alumnos ORDER BY", "se esperaba una columna"),
         ("DELETE FROM alumnos", "DELETE requiere"),
         ("DELETE alumnos WHERE id = 1", "se esperaba FROM"),
+        ("BEGIN", "se esperaba TRANSACTION despues de BEGIN"),
+        ("END", "se esperaba TRANSACTION despues de END"),
         ("INSERT INTO alumnos VALUES (DATE '20260913')", "formato"),
         ("INSERT INTO alumnos VALUES (DATE '٢٠٢٦-٠٩-١٣')", "formato"),
         ("INSERT INTO alumnos VALUES (DATE '2026-02-30')", "fecha DATE invalida"),
@@ -339,7 +358,8 @@ def test_rechaza_multiples_sentencias_aunque_tengan_punto_y_coma() -> None:
         ("CREATE INDEX por_id", "INDEX"),
         ("CREATE TABLE null (id INT)", "NULL"),
         ("SELECT * FROM alumnos WHERE or = 1", "OR"),
-        ("BEGIN", "BEGIN"),
+        ("COMMIT", "COMMIT"),
+        ("ROLLBACK", "ROLLBACK"),
     ],
 )
 def test_caracteristicas_fuera_de_alcance_son_explicitas(sql: str, feature: str) -> None:
