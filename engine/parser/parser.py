@@ -8,6 +8,7 @@ from datetime import date
 from engine.parser.ast import (
     AggregateCall,
     AggregateFunction,
+    BeginTransactionStatement,
     BetweenCondition,
     BooleanLiteral,
     ColumnDefinition,
@@ -18,6 +19,7 @@ from engine.parser.ast import (
     DateLiteral,
     DeleteStatement,
     DoubleLiteral,
+    EndTransactionStatement,
     GroupBy,
     Identifier,
     InsertStatement,
@@ -60,7 +62,6 @@ _COMPARISONS = {
 _UNSUPPORTED_WORDS = {
     "ALTER",
     "AS",
-    "BEGIN",
     "COMMIT",
     "DISTINCT",
     "DROP",
@@ -122,13 +123,18 @@ class _Parser:
             return self._select(self._previous())
         if self._match(TokenKind.DELETE):
             return self._delete(self._previous())
+        if self._match(TokenKind.BEGIN):
+            return self._begin_transaction(self._previous())
+        if self._match(TokenKind.END):
+            return self._end_transaction(self._previous())
 
         token = self._peek()
         if self._word(token) in _UNSUPPORTED_WORDS:
             self._raise_unsupported(token)
         raise self._error(
             token,
-            "se esperaba CREATE TABLE, INSERT INTO, SELECT o DELETE FROM",
+            "se esperaba CREATE TABLE, INSERT INTO, SELECT, DELETE FROM, "
+            "BEGIN TRANSACTION o END TRANSACTION",
         )
 
     def _create_table(self, start: Token) -> CreateTableStatement:
@@ -344,6 +350,14 @@ class _Parser:
             where=where,
             span=combine_spans(start.span, where.span),
         )
+
+    def _begin_transaction(self, start: Token) -> BeginTransactionStatement:
+        end = self._expect(TokenKind.TRANSACTION, "se esperaba TRANSACTION despues de BEGIN")
+        return BeginTransactionStatement(span=combine_spans(start.span, end.span))
+
+    def _end_transaction(self, start: Token) -> EndTransactionStatement:
+        end = self._expect(TokenKind.TRANSACTION, "se esperaba TRANSACTION despues de END")
+        return EndTransactionStatement(span=combine_spans(start.span, end.span))
 
     def _condition(self) -> ComparisonCondition | BetweenCondition:
         column = self._column_reference("se esperaba una columna en WHERE")
