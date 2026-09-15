@@ -43,6 +43,9 @@ KEYWORDS = (
     ("date", TokenKind.DATE),
     ("true", TokenKind.TRUE),
     ("false", TokenKind.FALSE),
+    ("begin", TokenKind.BEGIN),
+    ("transaction", TokenKind.TRANSACTION),
+    ("end", TokenKind.END),
 )
 
 

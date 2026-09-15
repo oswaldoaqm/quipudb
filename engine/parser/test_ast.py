@@ -8,6 +8,7 @@ import pytest
 from engine.parser.ast import (
     AggregateCall,
     AggregateFunction,
+    BeginTransactionStatement,
     BetweenCondition,
     BooleanLiteral,
     ColumnDefinition,
@@ -18,6 +19,7 @@ from engine.parser.ast import (
     DateLiteral,
     DeleteStatement,
     DoubleLiteral,
+    EndTransactionStatement,
     GroupBy,
     Identifier,
     InsertStatement,
@@ -101,11 +103,15 @@ def test_ast_representa_todas_las_sentencias_del_alcance() -> None:
         span(0, 54),
     )
     delete = DeleteStatement(table, condition, span(0, 33))
+    begin = BeginTransactionStatement(span(0, 18))
+    end = EndTransactionStatement(span(0, 16))
 
     assert create.columns == (definition,)
     assert insert.values == (integer,)
     assert select.projections == (Wildcard(span(7, 8, 8)),)
     assert delete.where == condition
+    assert begin.span == span(0, 18)
+    assert end.span == span(0, 16)
 
 
 def test_ast_representa_literales_agregados_rangos_y_agrupacion() -> None:
