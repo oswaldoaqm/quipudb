@@ -4,7 +4,9 @@ from datetime import date
 
 import pytest
 
-from engine.executor import QueryProcessor
+from engine.executor import QueryProcessor, QueryResult
+from engine.parser import SQLSemanticError
+from engine.transactions import TransactionError
 
 quipudb = pytest.importorskip(
     "quipudb_native",
@@ -520,3 +522,104 @@ def test_delete_e_indices_permanecen_consistentes_despues_de_reabrir(tmp_path):
         for info in reopened.table_info("datos").indexes
         for _key, rid in reopened.index("datos", info.name).scan()
     )
+
+
+def test_begin_end_transaction_agrupa_inserts_y_los_confirma(db):
+    processor = QueryProcessor(db)
+    processor.execute("CREATE TABLE alumnos (id INT PRIMARY KEY, nombre VARCHAR(20)) USING HEAP")
+
+    begin = processor.execute("BEGIN TRANSACTION")
+    processor.execute("INSERT INTO alumnos VALUES (1, 'Ada')")
+    processor.execute("INSERT INTO alumnos VALUES (2, 'Bob')")
+    end = processor.execute("END TRANSACTION")
+
+    assert begin == QueryResult()
+    assert end == QueryResult()
+    assert {row[0] for row in db.table("alumnos").scan()} == {1, 2}
+
+
+def test_rollback_deshace_inserts_de_una_transaccion_sin_cerrar(db):
+    processor = QueryProcessor(db)
+    processor.execute("CREATE TABLE alumnos (id INT PRIMARY KEY, nombre VARCHAR(20)) USING HEAP")
+    processor.execute("BEGIN TRANSACTION")
+    processor.execute("INSERT INTO alumnos VALUES (1, 'Ada')")
+    processor.execute("INSERT INTO alumnos VALUES (2, 'Bob')")
+
+    processor.rollback()
+
+    assert db.table("alumnos").scan() == []
+    # el rollback dejo la transaccion cerrada: se puede abrir una nueva.
+    processor.execute("BEGIN TRANSACTION")
+    processor.execute("END TRANSACTION")
+
+
+def test_error_de_dominio_dentro_de_transaccion_hace_rollback_automatico(db):
+    processor = QueryProcessor(db)
+    processor.execute("CREATE TABLE alumnos (id INT PRIMARY KEY, nombre VARCHAR(20)) USING HEAP")
+    processor.execute("BEGIN TRANSACTION")
+    processor.execute("INSERT INTO alumnos VALUES (1, 'Ada')")
+
+    with pytest.raises(SQLSemanticError):
+        processor.execute("INSERT INTO alumnos VALUES (1, 'Otra Ada')")
+
+    assert db.table("alumnos").scan() == []
+    # el error aborto la transaccion entera: no quedo una a medio cerrar.
+    processor.execute("BEGIN TRANSACTION")
+    processor.execute("END TRANSACTION")
+
+
+def test_begin_transaction_anidada_es_error(db):
+    processor = QueryProcessor(db)
+    processor.execute("BEGIN TRANSACTION")
+
+    with pytest.raises(TransactionError):
+        processor.execute("BEGIN TRANSACTION")
+
+    processor.rollback()
+
+
+def test_end_transaction_sin_begin_es_error(db):
+    processor = QueryProcessor(db)
+
+    with pytest.raises(TransactionError):
+        processor.execute("END TRANSACTION")
+
+
+def test_rollback_sin_transaccion_activa_es_error(db):
+    processor = QueryProcessor(db)
+
+    with pytest.raises(TransactionError):
+        processor.rollback()
+
+
+def test_create_table_dentro_de_transaccion_es_error(db):
+    processor = QueryProcessor(db)
+    processor.execute("BEGIN TRANSACTION")
+
+    with pytest.raises(TransactionError):
+        processor.execute("CREATE TABLE alumnos (id INT PRIMARY KEY) USING HEAP")
+
+    assert not db.has_table("alumnos")
+    # el intento de CREATE TABLE no toco la transaccion activa.
+    processor.execute("END TRANSACTION")
+
+
+def test_delete_dentro_de_transaccion_se_revierte_con_rollback(db):
+    processor = _create_select_table(db, quipudb.kind.HEAP)
+    by_name = db.create_index("datos", "por_nombre", "nombre", quipudb.kind.EXTENDIBLE_HASH)
+
+    processor.execute("BEGIN TRANSACTION")
+    result = processor.execute("DELETE FROM datos WHERE id = 1")
+
+    assert result.affected_rows == 1
+    assert db.table("datos").search(1) == []
+    assert by_name.search("Ada") == []
+
+    processor.rollback()
+
+    restored = db.table("datos").search(1)
+    assert len(restored) == 1
+    assert restored[0][0] == 1
+    assert restored[0][2] == "Ada"
+    (rid,) = by_name.search("Ada")
+    assert db.table("datos").read(rid)[0] == 1
