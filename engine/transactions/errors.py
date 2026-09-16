@@ -12,4 +12,15 @@ class TransactionError(Exception):
     """
 
 
-__all__ = ["TransactionError"]
+class LockTimeoutError(TransactionError):
+    """Un ``acquire`` de lock no se pudo cumplir dentro del plazo dado.
+
+    Es la estrategia de interbloqueo elegida (ver ADR 0005): en vez de
+    detectar ciclos en un grafo de espera, cada intento de tomar un lock
+    tiene un limite de tiempo. Al ser subclase de ``TransactionError``, un
+    timeout dentro de una transaccion activa dispara el mismo camino de
+    aborto automatico que ya usan los errores de dominio.
+    """
+
+
+__all__ = ["LockTimeoutError", "TransactionError"]
