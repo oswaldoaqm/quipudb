@@ -44,6 +44,9 @@ _KEYWORDS = {
         TokenKind.DATE,
         TokenKind.TRUE,
         TokenKind.FALSE,
+        TokenKind.BEGIN,
+        TokenKind.TRANSACTION,
+        TokenKind.END,
     )
 }
 

@@ -50,6 +50,9 @@ class TokenKind(StrEnum):
     DATE = "DATE"
     TRUE = "TRUE"
     FALSE = "FALSE"
+    BEGIN = "BEGIN"
+    TRANSACTION = "TRANSACTION"
+    END = "END"
 
     LPAREN = "LPAREN"
     RPAREN = "RPAREN"

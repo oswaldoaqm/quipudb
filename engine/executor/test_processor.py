@@ -11,6 +11,7 @@ import pytest
 
 from engine.executor.processor import QueryProcessor
 from engine.parser.errors import SQLSemanticError
+from engine.transactions import TransactionError
 
 
 class _NativeError(Exception):
@@ -642,3 +643,125 @@ def test_rollback_es_best_effort_y_no_oculta_el_error_original(
     assert by_name.remove_calls == [("Ada", _RID(1, 0))]
     assert database.tables["alumnos"].remove_calls == [1]
     assert database.tables["alumnos"].records == []
+
+
+def test_begin_end_transaction_agrupa_inserts_y_los_confirma(
+    database: _FakeDatabase,
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("CREATE TABLE alumnos (codigo INT PRIMARY KEY, nombre VARCHAR(20)) USING HEAP")
+
+    begin = processor.execute("BEGIN TRANSACTION")
+    processor.execute("INSERT INTO alumnos VALUES (1, 'Ada')")
+    processor.execute("INSERT INTO alumnos VALUES (2, 'Grace')")
+    end = processor.execute("END TRANSACTION")
+
+    assert begin.affected_rows == 0
+    assert end.affected_rows == 0
+    assert database.tables["alumnos"].records == [[1, "Ada"], [2, "Grace"]]
+
+
+def test_rollback_deshace_inserts_de_una_transaccion_sin_cerrar(
+    database: _FakeDatabase,
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("CREATE TABLE alumnos (codigo INT PRIMARY KEY, nombre VARCHAR(20)) USING HEAP")
+    processor.execute("BEGIN TRANSACTION")
+    processor.execute("INSERT INTO alumnos VALUES (1, 'Ada')")
+    processor.execute("INSERT INTO alumnos VALUES (2, 'Grace')")
+
+    processor.rollback()
+
+    assert database.tables["alumnos"].records == []
+    # el rollback dejo la transaccion cerrada: se puede abrir una nueva.
+    processor.execute("BEGIN TRANSACTION")
+    processor.execute("END TRANSACTION")
+
+
+def test_error_de_dominio_dentro_de_transaccion_hace_rollback_automatico(
+    database: _FakeDatabase,
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("CREATE TABLE alumnos (codigo INT PRIMARY KEY, nombre VARCHAR(20)) USING HEAP")
+    processor.execute("BEGIN TRANSACTION")
+    processor.execute("INSERT INTO alumnos VALUES (1, 'Ada')")
+
+    with pytest.raises(SQLSemanticError):
+        processor.execute("INSERT INTO alumnos VALUES (1, 'Otra Ada')")
+
+    # el error aborto la transaccion entera, incluido el INSERT previo.
+    assert database.tables["alumnos"].records == []
+    processor.execute("BEGIN TRANSACTION")
+    processor.execute("END TRANSACTION")
+
+
+def test_fallo_de_indice_dentro_de_transaccion_deshace_tambien_lo_previo(
+    database: _FakeDatabase,
+    processor: QueryProcessor,
+) -> None:
+    processor.execute(
+        "CREATE TABLE alumnos (codigo INT PRIMARY KEY, nombre VARCHAR(20), activo BOOL) USING HEAP"
+    )
+    by_active = database.add_index("alumnos", "por_activo", 2)
+    processor.execute("BEGIN TRANSACTION")
+    processor.execute("INSERT INTO alumnos VALUES (1, 'Ada', TRUE)")
+    by_active.fail_insert = _InvalidRecord("fallo al mantener por_activo")
+
+    with pytest.raises(SQLSemanticError):
+        processor.execute("INSERT INTO alumnos VALUES (2, 'Grace', TRUE)")
+
+    assert database.tables["alumnos"].records == []
+
+
+def test_begin_transaction_anidada_es_error(processor: QueryProcessor) -> None:
+    processor.execute("BEGIN TRANSACTION")
+
+    with pytest.raises(TransactionError):
+        processor.execute("BEGIN TRANSACTION")
+
+    processor.rollback()
+
+
+def test_end_transaction_sin_begin_es_error(processor: QueryProcessor) -> None:
+    with pytest.raises(TransactionError):
+        processor.execute("END TRANSACTION")
+
+
+def test_rollback_sin_transaccion_activa_es_error(processor: QueryProcessor) -> None:
+    with pytest.raises(TransactionError):
+        processor.rollback()
+
+
+def test_create_table_dentro_de_transaccion_es_error(
+    database: _FakeDatabase,
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("BEGIN TRANSACTION")
+
+    with pytest.raises(TransactionError):
+        processor.execute("CREATE TABLE alumnos (codigo INT PRIMARY KEY) USING HEAP")
+
+    assert not database.has_table("alumnos")
+    # el intento de CREATE TABLE no toco la transaccion activa.
+    processor.execute("END TRANSACTION")
+
+
+def test_delete_dentro_de_transaccion_se_revierte_con_rollback(
+    database: _FakeDatabase,
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("CREATE TABLE alumnos (codigo INT PRIMARY KEY, nombre VARCHAR(20)) USING HEAP")
+    by_name = database.add_index("alumnos", "por_nombre", 1)
+    processor.execute("INSERT INTO alumnos VALUES (1, 'Ada')")
+
+    processor.execute("BEGIN TRANSACTION")
+    result = processor.execute("DELETE FROM alumnos WHERE codigo = 1")
+
+    assert result.affected_rows == 1
+    assert database.tables["alumnos"].records == []
+    assert by_name.entries == []
+
+    processor.rollback()
+
+    assert database.tables["alumnos"].records == [[1, "Ada"]]
+    assert [key for key, _rid in by_name.entries] == ["Ada"]
