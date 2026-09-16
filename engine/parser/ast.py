@@ -183,4 +183,21 @@ class DeleteStatement:
     span: Span
 
 
-Statement: TypeAlias = CreateTableStatement | InsertStatement | SelectStatement | DeleteStatement
+@dataclass(frozen=True, slots=True)
+class BeginTransactionStatement:
+    span: Span
+
+
+@dataclass(frozen=True, slots=True)
+class EndTransactionStatement:
+    span: Span
+
+
+Statement: TypeAlias = (
+    CreateTableStatement
+    | InsertStatement
+    | SelectStatement
+    | DeleteStatement
+    | BeginTransactionStatement
+    | EndTransactionStatement
+)

@@ -254,7 +254,12 @@ Quedan fuera de este subconjunto:
   `ORDER BY`;
 - listas de columnas en `INSERT`, varias sentencias por llamada, comentarios e
   identificadores delimitados;
-- transacciones y concurrencia, y SQL espacial, textual o multimedia.
+- `COMMIT`, `ROLLBACK` como sentencias SQL, y SQL espacial, textual o
+  multimedia.
+
+`BEGIN TRANSACTION` y `END TRANSACTION` (2.1.4) ya no estan fuera de alcance
+desde el ADR 0004: se parsean con el mismo `parse_sql` y se despachan desde el
+mismo `QueryProcessor.execute()` que el resto de sentencias de este ADR.
 
 Encontrar una de estas construcciones siempre termina con un `SQLError`; no se
 intenta interpretarla parcialmente. Las caracteristicas reconocibles usan
