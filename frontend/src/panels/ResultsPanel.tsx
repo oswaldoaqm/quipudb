@@ -3,7 +3,8 @@ import type { CellValue, QueryResult } from "@/api/types";
 
 interface ResultsPanelProps {
   resultado: QueryResult | null;
-  error: string | null;
+  /** El detalle del error vive en el panel de consultas, junto al editor. */
+  hayError: boolean;
   ejecutando: boolean;
 }
 
@@ -16,15 +17,17 @@ function formatear(valor: CellValue): string {
 /** Panel de Resultados (2.1.5). La tabla con orden y paginado es el issue #36. */
 export function ResultsPanel({
   resultado,
-  error,
+  hayError,
   ejecutando,
 }: ResultsPanelProps) {
   const nota = resultado ? `${resultado.rows.length} filas` : undefined;
 
   return (
     <Panel titulo="Resultados" nota={nota}>
-      {error ? (
-        <p className="p-3 font-mono text-xs text-destructive">{error}</p>
+      {hayError ? (
+        <p className="p-3 text-xs text-muted-foreground">
+          La consulta no se ejecuto. El detalle esta junto al editor.
+        </p>
       ) : ejecutando ? (
         <p className="p-3 text-xs text-muted-foreground">Ejecutando...</p>
       ) : !resultado ? (

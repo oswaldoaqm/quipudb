@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { executeQuery, listTables, USA_DATOS_FALSOS } from "@/api/client";
+import { MotorError } from "@/api/errors";
 import { CONSULTA_DE_PRUEBA } from "@/api/mock";
 import type { QueryResult, TableInfo } from "@/api/types";
 import { FilesPanel } from "@/panels/FilesPanel";
@@ -14,7 +15,7 @@ export default function App() {
 
   const [sql, setSql] = useState(CONSULTA_DE_PRUEBA);
   const [resultado, setResultado] = useState<QueryResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<MotorError | null>(null);
   const [ejecutando, setEjecutando] = useState(false);
 
   const ejecutar = useCallback(async (sentencia: string) => {
@@ -23,7 +24,13 @@ export default function App() {
     try {
       setResultado(await executeQuery(sentencia));
     } catch (fallo) {
-      setError(fallo instanceof Error ? fallo.message : String(fallo));
+      setError(
+        fallo instanceof MotorError
+          ? fallo
+          : MotorError.sinUbicacion(
+              fallo instanceof Error ? fallo.message : String(fallo),
+            ),
+      );
       setResultado(null);
     } finally {
       setEjecutando(false);
@@ -62,12 +69,13 @@ export default function App() {
             onSqlChange={setSql}
             onEjecutar={() => void ejecutar(sql)}
             ejecutando={ejecutando}
+            error={error}
           />
 
           <div className="grid min-h-0 flex-1 grid-cols-2 gap-2">
             <ResultsPanel
               resultado={resultado}
-              error={error}
+              hayError={error !== null}
               ejecutando={ejecutando}
             />
             <PlanPanel plan={resultado?.plan ?? null} />
