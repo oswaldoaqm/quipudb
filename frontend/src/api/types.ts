@@ -90,11 +90,28 @@ export interface ColumnInfo {
 
 export interface IndexInfo {
   name: string;
+  /** Nombre de la columna, no su posicion: ver la nota de `TableInfo`. */
   column: string;
   structure: Extract<Structure, "bplus_unclustered" | "extendible_hash">;
   supports_range: boolean;
 }
 
+/**
+ * Lo que `GET /tables` debe devolver por cada tabla del catalogo.
+ *
+ * No es el espejo de una sola estructura del motor, sino lo que el Panel de
+ * Archivos necesita mostrar, y la API lo compone de tres fuentes:
+ *
+ * | campo | de donde sale | traduccion que hace la API |
+ * |---|---|---|
+ * | `storage`, `indexes` | `TableMetadata` del planner | `IndexMetadata.column` es la POSICION de la columna; aqui viaja su nombre |
+ * | `columns` | `Schema` del core | `Column.length` vale 0 fuera de VARCHAR; aqui es `size: null` |
+ * | `is_primary_key` | `Schema.key_column` | alla es una posicion; aqui un booleano por columna |
+ * | `record_count` | `TableFile.size()` | sin cambios |
+ *
+ * Se resuelve en la API y no aqui porque el frontend no deberia cargar con
+ * mapear posiciones a nombres para dibujar una lista.
+ */
 export interface TableInfo {
   name: string;
   storage: TableStructure;
