@@ -6,6 +6,7 @@
  * poner VITE_USE_MOCK=false: ningun componente cambia.
  */
 
+import { MotorError } from "@/api/errors";
 import { mockExecuteQuery, mockListTables } from "@/api/mock";
 import type { QueryError, QueryResult, TableInfo } from "@/api/types";
 
@@ -14,18 +15,7 @@ const URL_API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 /** Sin motor levantado se usan datos falsos; es el modo por defecto. */
 export const USA_DATOS_FALSOS = import.meta.env.VITE_USE_MOCK !== "false";
 
-/** Error del motor. Los del parser traen la ubicacion que reporta `Span`. */
-export class MotorError extends Error {
-  readonly line: number | null;
-  readonly column: number | null;
-
-  constructor(mensaje: string, line: number | null, column: number | null) {
-    super(mensaje);
-    this.name = "MotorError";
-    this.line = line;
-    this.column = column;
-  }
-}
+export { MotorError };
 
 async function pedir<T>(ruta: string, init?: RequestInit): Promise<T> {
   let respuesta: Response;
@@ -35,20 +25,16 @@ async function pedir<T>(ruta: string, init?: RequestInit): Promise<T> {
       ...init,
     });
   } catch {
-    throw new MotorError(
+    throw MotorError.sinUbicacion(
       `No se pudo contactar al motor en ${URL_API}. Levantalo, o usa VITE_USE_MOCK=true`,
-      null,
-      null,
     );
   }
 
   if (!respuesta.ok) {
     const detalle = (await respuesta.json().catch(() => null)) as QueryError | null;
-    throw new MotorError(
-      detalle?.error ?? `El motor respondio ${respuesta.status}`,
-      detalle?.line ?? null,
-      detalle?.column ?? null,
-    );
+    throw detalle?.error
+      ? new MotorError(detalle)
+      : MotorError.sinUbicacion(`El motor respondio ${respuesta.status}`);
   }
 
   return (await respuesta.json()) as T;
