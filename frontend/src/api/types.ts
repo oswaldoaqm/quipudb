@@ -120,9 +120,21 @@ export interface TableInfo {
   record_count: number;
 }
 
-/** Error del parser: trae la ubicacion que reporta `Span`. */
+/** Familia del error, como las separa `engine/parser/errors.py`. */
+export type ErrorKind = "lex" | "parse" | "semantic" | "unsupported";
+
+/**
+ * Error del motor con la ubicacion que reporta `Span`.
+ *
+ * Lineas y columnas se cuentan desde 1 y `end_column` es exclusivo, igual que
+ * en `engine/parser/span.py`. Es la misma convencion que usa Monaco, asi que
+ * el rango viaja al editor sin ajustes.
+ */
 export interface QueryError {
   error: string;
+  kind: ErrorKind | null;
   line: number | null;
   column: number | null;
+  end_line: number | null;
+  end_column: number | null;
 }
