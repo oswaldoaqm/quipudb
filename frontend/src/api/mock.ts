@@ -5,7 +5,8 @@
  * sirven de referencia viva de la forma que el panel debe saber dibujar.
  */
 
-import type { Plan, QueryResult, TableInfo } from "@/api/types";
+import { MotorError } from "@/api/errors";
+import type { Plan, QueryError, QueryResult, TableInfo } from "@/api/types";
 
 export const MOCK_TABLES: TableInfo[] = [
   {
@@ -264,9 +265,110 @@ const RESPUESTA_POR_DEFECTO: QueryResult = {
   plan: PLAN_RANGO,
 };
 
+type Ubicacion = Pick<
+  QueryError,
+  "line" | "column" | "end_line" | "end_column"
+>;
+
+/** Ubicacion 1-based de un tramo, con la convencion de `Span` del parser. */
+function ubicarEn(sql: string, indice: number, largo: number): Ubicacion {
+  const lineas = sql.slice(0, indice).split(/\r\n|\r|\n/);
+  const line = lineas.length;
+  const column = (lineas[lineas.length - 1]?.length ?? 0) + 1;
+  return { line, column, end_line: line, end_column: column + largo };
+}
+
+/**
+ * Palabras que el parser reconoce pero rechaza.
+ *
+ * Es copia literal de `_UNSUPPORTED_WORDS` en `engine/parser/parser.py`. Una
+ * lista corta "de muestra" haria que el panel diera por buenas consultas que
+ * el motor rechaza, que es peor que no simular nada.
+ */
+const FUERA_DEL_SUBCONJUNTO = [
+  "ALTER", "AS", "COMMIT", "DISTINCT", "DROP", "EXCEPT", "HAVING", "IN",
+  "INDEX", "INTERSECT", "IS", "JOIN", "LIKE", "LIMIT", "NOT", "NULL",
+  "OFFSET", "OR", "ROLLBACK", "UNION", "UPDATE", "VIEW",
+];
+
+const RESERVADA = new RegExp(`\\b(${FUERA_DEL_SUBCONJUNTO.join("|")})\\b`, "i");
+const SENTENCIAS = /^\s*(SELECT|INSERT|DELETE|CREATE|BEGIN|END)\b/i;
+const CARACTER_INVALIDO = /[@#$`~|\\]/;
+const TABLA_DEL_FROM = /\bFROM\s+([a-zA-Z_][a-zA-Z0-9_]*)/i;
+
+/**
+ * Reproduce los errores que el parser real produciria, con su ubicacion.
+ *
+ * No busca ser un parser: cubre una familia de `engine/parser/errors.py` por
+ * caso, que son las que el panel tiene que saber mostrar.
+ *
+ * Los textos son literales del motor, no parafrasis: salen de
+ * `Parser._raise_unsupported`, `Lexer`, el mensaje de sentencia inicial y
+ * `QueryProcessor`. Si el panel mostrara otra redaccion, al conectar la API
+ * real cambiaria el mensaje bajo los pies de quien ya se acostumbro a uno.
+ *
+ * Lo que si es aproximado es DONDE se detecta: el parser solo mira las
+ * reservadas al empezar una sentencia y donde espera un identificador, no en
+ * cualquier posicion del texto como hace el regex de aqui.
+ */
+function detectarError(sql: string): QueryError | null {
+  if (sql.trim() === "") return null;
+
+  // Lo que va entre comillas es dato, no sintaxis: se blanquea conservando las
+  // posiciones para que un apostrofe o una arroba dentro de un literal no se
+  // reporten como error, pero los offsets sigan apuntando al texto original.
+  const fuera = sql.replace(/'[^']*'/g, (cita) => " ".repeat(cita.length));
+
+  const invalido = CARACTER_INVALIDO.exec(fuera);
+  if (invalido) {
+    return {
+      error: `caracter inesperado '${invalido[0]}'`,
+      kind: "lex",
+      ...ubicarEn(sql, invalido.index, 1),
+    };
+  }
+
+  if (!SENTENCIAS.test(fuera)) {
+    const primera = sql.trimStart().split(/\s+/)[0] ?? "";
+    return {
+      error:
+        "se esperaba CREATE TABLE, INSERT INTO, SELECT, DELETE FROM, " +
+        "BEGIN TRANSACTION o END TRANSACTION",
+      kind: "parse",
+      ...ubicarEn(sql, sql.length - sql.trimStart().length, primera.length),
+    };
+  }
+
+  const reservada = RESERVADA.exec(fuera);
+  if (reservada) {
+    return {
+      error: `${reservada[0].toUpperCase()} no esta soportado por el subconjunto SQL de QuipuDB`,
+      kind: "unsupported",
+      ...ubicarEn(sql, reservada.index, reservada[0].length),
+    };
+  }
+
+  const desde = TABLA_DEL_FROM.exec(fuera);
+  const tabla = desde?.[1];
+  if (desde && tabla && !MOCK_TABLES.some((t) => t.name === tabla.toLowerCase())) {
+    return {
+      error: `la tabla '${tabla}' no existe`,
+      kind: "semantic",
+      ...ubicarEn(sql, desde.index + desde[0].indexOf(tabla), tabla.length),
+    };
+  }
+
+  return null;
+}
+
 /** Responde como lo haria la API, con una latencia que deja ver el estado de carga. */
 export async function mockExecuteQuery(sql: string): Promise<QueryResult> {
   await new Promise((listo) => setTimeout(listo, 150));
+
+  const fallo = detectarError(sql);
+  if (fallo) {
+    throw new MotorError(fallo);
+  }
 
   const encontrada = RESPUESTAS.find(({ patron }) => patron.test(sql));
   const resultado = encontrada?.resultado ?? RESPUESTA_POR_DEFECTO;
