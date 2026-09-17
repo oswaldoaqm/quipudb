@@ -70,9 +70,21 @@ export interface Plan {
 
 export type CellValue = string | number | boolean | null;
 
-/** Espejo de `QueryResult` de engine/executor/result.py. */
+/**
+ * Espejo de `QueryResult` de engine/executor/result.py, con un campo de mas.
+ *
+ * `column_types` no existe alla: el resultado de Python lleva solo los nombres.
+ * El Panel de Resultados tiene que mostrar el tipo de cada columna, y la API
+ * lo saca del esquema de salida que el ejecutor ya arma -- el mismo que
+ * `ExternalGroupBy::output_schema()` produce para un GROUP BY.
+ *
+ * Deducirlo de las filas no sirve: una columna entera en NULL no dice de que
+ * tipo es, y un resultado vacio no tiene de donde deducir nada.
+ */
 export interface QueryResult {
   columns: string[];
+  /** Un tipo por columna, en el mismo orden que `columns`. */
+  column_types: DataType[];
   rows: CellValue[][];
   affected_rows: number;
   plan: Plan | null;
