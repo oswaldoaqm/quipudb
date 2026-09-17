@@ -14,7 +14,14 @@
  * motor real los reporta desde `OpStats`.
  */
 
-import type { CellValue, Plan, Stats, Step, Structure } from "@/api/types";
+import type {
+  CellValue,
+  DataType,
+  Plan,
+  Stats,
+  Step,
+  Structure,
+} from "@/api/types";
 import { type TablaFalsa } from "@/api/mock/datos";
 
 const REGISTROS_POR_PAGINA = 128;
@@ -26,14 +33,29 @@ export type Condicion =
   | { tipo: "comparacion"; columna: string; operador: Operador; valor: CellValue }
   | { tipo: "between"; columna: string; desde: CellValue; hasta: CellValue };
 
+export type Funcion = "COUNT" | "SUM" | "MIN" | "MAX" | "AVG";
+
+export interface Agregado {
+  funcion: Funcion;
+  /** `*` solo vale con COUNT, como en el motor. */
+  columna: string;
+  /** Nombre de salida, con el formato que usa el ejecutor: `AVG_nota`. */
+  alias: string;
+}
+
 export interface ConsultaLeida {
+  /** Columnas simples pedidas; null si es `*` o si solo hay agregados. */
   columnas: string[] | null;
+  agregados: Agregado[];
+  agrupa: string | null;
   tabla: string;
   where: Condicion | null;
   orden: { columna: string; descendente: boolean } | null;
 }
 
 const SELECT_FROM = /\bSELECT\s+(.+?)\s+FROM\s+([a-zA-Z_][a-zA-Z0-9_]*)/is;
+const AGREGADO = /^(COUNT|SUM|MIN|MAX|AVG)\s*\(\s*(\*|[a-zA-Z_][a-zA-Z0-9_]*)\s*\)$/i;
+const AGRUPA = /\bGROUP\s+BY\s+([a-zA-Z_][a-zA-Z0-9_]*)/i;
 const COMPARACION =
   /\bWHERE\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*(<=|>=|=|<|>)\s*('[^']*'|-?[\d.]+|true|false)/i;
 const ENTRE =
@@ -56,15 +78,34 @@ export function leerConsulta(sql: string): ConsultaLeida | null {
   const entre = ENTRE.exec(sql);
   const comparacion = entre ? null : COMPARACION.exec(sql);
   const orden = ORDEN.exec(sql);
+  const agrupa = AGRUPA.exec(sql);
+
+  const items = lista === "*"
+    ? []
+    : lista.split(",").map((n) => n.trim()).filter(Boolean);
+
+  const agregados: Agregado[] = [];
+  const simples: string[] = [];
+  for (const item of items) {
+    const llamada = AGREGADO.exec(item);
+    if (llamada) {
+      const funcion = llamada[1].toUpperCase() as Funcion;
+      const columna = llamada[2].toLowerCase();
+      // `COUNT(*)` sale como `COUNT_all`, igual que en el ejecutor.
+      agregados.push({
+        funcion,
+        columna,
+        alias: `${funcion}_${columna === "*" ? "all" : columna}`,
+      });
+    } else {
+      simples.push(item.toLowerCase());
+    }
+  }
 
   return {
-    columnas:
-      lista === "*"
-        ? null
-        : lista
-            .split(",")
-            .map((n) => n.trim().toLowerCase())
-            .filter(Boolean),
+    columnas: lista === "*" ? null : simples.length > 0 ? simples : null,
+    agregados,
+    agrupa: agrupa ? agrupa[1].toLowerCase() : null,
     tabla: cabeza[2].toLowerCase(),
     where: entre
       ? {
@@ -264,9 +305,121 @@ function rutaDeAcceso(
 
 export interface Ejecucion {
   columns: string[];
-  column_types: import("@/api/types").DataType[];
+  column_types: DataType[];
   rows: CellValue[][];
   plan: Plan;
+}
+
+function armarPlan(sql: string, raiz: Step): Plan {
+  const suma = totales(raiz);
+  return {
+    query: sql,
+    // El planner mide de parsear a devolver, asi que el total supera la suma
+    // de los pasos: incluye el parseo y la planificacion.
+    time_ms: Number((suma.pages_read * MS_POR_PAGINA + 0.4).toFixed(2)),
+    totals: suma,
+    root: raiz,
+  };
+}
+
+/**
+ * Suma compensada de Neumaier, la misma que usa `ExternalGroupBy` del core.
+ *
+ * Sumar miles de doubles de magnitudes distintas acumula error de redondeo, y
+ * el 2.1.6 compara estos resultados contra PostgreSQL, que suma compensado.
+ */
+function sumaCompensada(valores: number[]): number {
+  let suma = 0;
+  let compensacion = 0;
+  for (const valor of valores) {
+    const parcial = suma + valor;
+    compensacion +=
+      Math.abs(suma) >= Math.abs(valor)
+        ? suma - parcial + valor
+        : valor - parcial + suma;
+    suma = parcial;
+  }
+  return suma + compensacion;
+}
+
+function calcular(
+  agregado: Agregado,
+  grupo: CellValue[][],
+  nombres: string[],
+): CellValue {
+  if (agregado.funcion === "COUNT" && agregado.columna === "*") {
+    return grupo.length;
+  }
+
+  const posicion = nombres.indexOf(agregado.columna);
+  const valores = grupo
+    .map((fila) => fila[posicion])
+    .filter((valor) => valor !== null);
+  if (valores.length === 0) return null;
+
+  switch (agregado.funcion) {
+    case "COUNT":
+      return valores.length;
+    case "MIN":
+      return valores.reduce((a, b) => (comparar(a, b) <= 0 ? a : b));
+    case "MAX":
+      return valores.reduce((a, b) => (comparar(a, b) >= 0 ? a : b));
+    case "SUM":
+      return Number(sumaCompensada(valores.map(Number)).toFixed(6));
+    case "AVG":
+      return Number(
+        (sumaCompensada(valores.map(Number)) / valores.length).toFixed(6),
+      );
+  }
+}
+
+/** Un SUM de INT sube a DOUBLE porque un int32 puede desbordar (arquitectura). */
+function tipoDeAgregado(agregado: Agregado, tabla: TablaFalsa): DataType {
+  if (agregado.funcion === "COUNT") return "INT";
+  if (agregado.funcion === "SUM" || agregado.funcion === "AVG") return "DOUBLE";
+  const posicion = tabla.info.columns.findIndex(
+    (c) => c.name === agregado.columna,
+  );
+  return posicion >= 0 ? tabla.tipos[posicion] : "DOUBLE";
+}
+
+interface Agrupacion {
+  columns: string[];
+  tipos: DataType[];
+  filas: CellValue[][];
+}
+
+/** Agrupa por una columna y resuelve los agregados de cada grupo. */
+function agrupar(
+  filas: CellValue[][],
+  nombres: string[],
+  tabla: TablaFalsa,
+  consulta: ConsultaLeida,
+): Agrupacion {
+  const clave = nombres.indexOf(consulta.agrupa ?? "");
+  const grupos = new Map<string, CellValue[][]>();
+
+  for (const fila of filas) {
+    const etiqueta = String(fila[clave]);
+    const existente = grupos.get(etiqueta);
+    if (existente) existente.push(fila);
+    else grupos.set(etiqueta, [fila]);
+  }
+
+  return {
+    columns: [
+      consulta.agrupa ?? "",
+      ...consulta.agregados.map((a) => a.alias),
+    ],
+    tipos: [
+      tabla.tipos[clave],
+      ...consulta.agregados.map((a) => tipoDeAgregado(a, tabla)),
+    ],
+    filas: [...grupos.values()].map((grupo) => [
+      grupo[0][clave],
+      ...consulta.agregados.map((a) => calcular(a, grupo, nombres)),
+    ]),
+  };
 }
 
 /** Ejecuta la consulta sobre las filas de la tabla y arma su plan. */
@@ -284,6 +437,60 @@ export function ejecutar(
   }
 
   let raiz = rutaDeAcceso(tabla, consulta.where, filas.length);
+
+  // GROUP BY se resuelve antes del orden: lo que se ordena son los grupos ya
+  // formados, no las filas de origen.
+  if (consulta.agrupa) {
+    const agrupacion = agrupar(filas, nombres, tabla, consulta);
+    const antes = filas.length;
+    filas = agrupacion.filas;
+
+    raiz = paso(
+      "group",
+      "external_hash",
+      tabla.info.name,
+      consulta.agrupa,
+      `${filas.length} grupos por ${consulta.agrupa}`,
+      {
+        pages_read: paginas(antes),
+        pages_written: paginas(antes),
+        records_examined: antes,
+        records_returned: filas.length,
+      },
+      [raiz],
+    );
+
+    const posicionOrden = consulta.orden
+      ? agrupacion.columns.indexOf(consulta.orden.columna)
+      : -1;
+    if (consulta.orden && posicionOrden >= 0) {
+      const signo = consulta.orden.descendente ? -1 : 1;
+      filas = [...filas].sort(
+        (a, b) => signo * comparar(a[posicionOrden], b[posicionOrden]),
+      );
+      raiz = paso(
+        "sort",
+        "external_sort",
+        tabla.info.name,
+        consulta.orden.columna,
+        `k-way merge, 1 runs, ${consulta.orden.descendente ? "DESC" : "ASC"}`,
+        {
+          pages_read: paginas(filas.length),
+          pages_written: paginas(filas.length),
+          records_examined: filas.length,
+          records_returned: filas.length,
+        },
+        [raiz],
+      );
+    }
+
+    return {
+      columns: agrupacion.columns,
+      column_types: agrupacion.tipos,
+      rows: filas,
+      plan: armarPlan(sql, raiz),
+    };
+  }
 
   if (consulta.orden) {
     const indice = nombres.indexOf(consulta.orden.columna);
@@ -328,20 +535,10 @@ export function ejecutar(
     );
   }
 
-  const suma = totales(raiz);
   return {
     columns,
     column_types: tipos,
     rows: filas,
-    plan: {
-      query: sql,
-      // El planner mide de parsear a devolver, asi que el total supera la suma
-      // de los pasos: incluye el parseo y la planificacion.
-      time_ms: Number(
-        (suma.pages_read * MS_POR_PAGINA + 0.4).toFixed(2),
-      ),
-      totals: suma,
-      root: raiz,
-    },
+    plan: armarPlan(sql, raiz),
   };
 }
