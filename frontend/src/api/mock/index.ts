@@ -132,9 +132,43 @@ export function detectarError(sql: string): QueryError | null {
     };
   }
 
+  // Un elemento de la proyeccion con dos palabras o con parentesis que no
+  // forman un agregado valido: el parser corta ahi porque espera una coma o
+  // FROM. Es el caso de `SELECT MAX(promedio) nombre` sin la coma.
+  const malformado = (consulta.columnas ?? []).find((c) => /[\s()]/.test(c));
+  if (malformado) {
+    return {
+      error: "se esperaba FROM despues de la proyeccion",
+      kind: "parse",
+      ...ubicarEn(
+        sql,
+        fuera.toLowerCase().indexOf(malformado),
+        malformado.length,
+      ),
+    };
+  }
+
+  // Los agregados existen en el motor, pero `semantic.py` los exige dentro de
+  // un GROUP BY. Sin esto el mock los tomaria por nombres de columna y diria
+  // que no existen, que es una pista falsa.
+  if (consulta.agregados.length > 0 && !consulta.agrupa) {
+    const primero = consulta.agregados[0];
+    return {
+      error: "las funciones de agregado requieren una clausula GROUP BY",
+      kind: "semantic",
+      ...ubicarEn(
+        sql,
+        fuera.toUpperCase().indexOf(primero.funcion),
+        primero.funcion.length,
+      ),
+    };
+  }
+
   const existentes = tabla.info.columns.map((c) => c.name);
   const mencionadas = [
     ...(consulta.columnas ?? []),
+    ...consulta.agregados.map((a) => a.columna).filter((c) => c !== "*"),
+    ...(consulta.agrupa ? [consulta.agrupa] : []),
     ...(consulta.where ? [consulta.where.columna] : []),
     ...(consulta.orden ? [consulta.orden.columna] : []),
   ];
