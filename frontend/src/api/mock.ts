@@ -56,6 +56,35 @@ export const MOCK_TABLES: TableInfo[] = [
       },
     ],
   },
+  {
+    // Unica tabla con mas de un indice, y la unica con DATE: entre las cuatro
+    // quedan cubiertas las tres organizaciones, los dos tipos de indice, los
+    // cinco tipos de dato y el caso sin indices.
+    name: "profesores",
+    storage: "heap",
+    record_count: 85,
+    columns: [
+      { name: "codigo", type: "INT", size: null, is_primary_key: true },
+      { name: "nombre", type: "VARCHAR", size: 48, is_primary_key: false },
+      { name: "departamento", type: "VARCHAR", size: 24, is_primary_key: false },
+      { name: "ingreso", type: "DATE", size: null, is_primary_key: false },
+      { name: "activo", type: "BOOL", size: null, is_primary_key: false },
+    ],
+    indexes: [
+      {
+        name: "por_departamento",
+        column: "departamento",
+        structure: "extendible_hash",
+        supports_range: false,
+      },
+      {
+        name: "por_ingreso",
+        column: "ingreso",
+        structure: "bplus_unclustered",
+        supports_range: true,
+      },
+    ],
+  },
 ];
 
 /** La consulta que el panel ejecuta al abrir, para probar el camino completo. */
