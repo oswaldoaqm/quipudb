@@ -179,6 +179,32 @@ Detalles que conviene saber:
   materializadas para `DELETE`; `source_of()` lo envuelve sin entregarlo a los
   algoritmos externos.
 
+## Interfaz
+
+Los cuatro paneles de la seccion 2.1.5 -- archivos, consultas, resultados y
+plan de ejecucion -- en una sola pantalla. Requiere Node 20+.
+
+```bash
+cd frontend
+npm install
+npm run dev            # http://localhost:5173
+```
+
+Arranca con **datos falsos**: no necesita el core compilado ni la API
+levantada, y lanza sola una consulta de prueba al abrir. Los planes que dibuja
+son los tres ejemplos del [ADR 0002](docs/adr/0002-plan-de-ejecucion.md), asi
+que el panel ya sabe representar las formas que el planner produce.
+
+Para hablar con el motor real, copia `frontend/.env.example` a `frontend/.env`
+y pon `VITE_USE_MOCK=false`. Todo el trafico pasa por `frontend/src/api/client.ts`;
+ningun componente cambia al hacerlo.
+
+| Script | Que hace |
+|---|---|
+| `npm run dev` | Servidor de desarrollo con recarga en caliente |
+| `npm run build` | Verifica tipos y compila a `frontend/dist/` |
+| `npm run typecheck` | Solo la verificacion de tipos |
+
 ## Equipo
 
 | Integrante | Responsabilidad en la Parte 1 |
