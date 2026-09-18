@@ -14,6 +14,7 @@ from engine.executor.native import (
     to_native_schema,
 )
 from engine.executor.predicates import equality_key, matches, range_values
+from engine.parser.ast import SqlTypeName
 from engine.parser.bound_ast import (
     BoundCondition,
     BoundJoinRef,
@@ -37,6 +38,7 @@ class SelectExecution:
     """Salida materializada de SELECT antes de envolverla en ``Plan``."""
 
     columns: tuple[str, ...]
+    column_types: tuple[SqlTypeName, ...]
     rows: tuple[tuple[BoundValue, ...], ...]
     root: Step
 
@@ -67,6 +69,7 @@ def execute_select(
     rows = tuple(from_native_record(row, statement.schema) for row in native_rows)
 
     columns = tuple(projection.column.name for projection in statement.projections)
+    tipos = tuple(projection.column.data_type for projection in statement.projections)
     if not statement.wildcard:
         projected = measure_memory(
             lambda: tuple(
@@ -86,7 +89,7 @@ def execute_select(
             children=[root],
         )
 
-    return SelectExecution(columns, rows, root)
+    return SelectExecution(columns, tipos, rows, root)
 
 
 def execute_source(
