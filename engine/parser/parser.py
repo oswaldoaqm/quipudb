@@ -20,10 +20,12 @@ from engine.parser.ast import (
     DeleteStatement,
     DoubleLiteral,
     EndTransactionStatement,
+    FromSource,
     GroupBy,
     Identifier,
     InsertStatement,
     IntegerLiteral,
+    JoinRef,
     Literal,
     OrderBy,
     OrderDirection,
@@ -34,6 +36,7 @@ from engine.parser.ast import (
     Statement,
     StorageKind,
     StringLiteral,
+    TableRef,
     Wildcard,
 )
 from engine.parser.errors import SQLParseError, SQLUnsupportedError
@@ -71,7 +74,6 @@ _UNSUPPORTED_WORDS = {
     "INDEX",
     "INTERSECT",
     "IS",
-    "JOIN",
     "LIKE",
     "LIMIT",
     "NOT",
@@ -243,12 +245,12 @@ class _Parser:
     def _select(self, start: Token) -> SelectStatement:
         projections = self._projection_list()
         self._expect(TokenKind.FROM, "se esperaba FROM despues de la proyeccion")
-        table = self._identifier("se esperaba el nombre de la tabla")
+        from_source = self._from_source()
 
         where = None
         group_by = None
         order_by = None
-        end_span = table.span
+        end_span = from_source.span
 
         if self._match(TokenKind.WHERE):
             where = self._condition()
@@ -262,11 +264,47 @@ class _Parser:
 
         return SelectStatement(
             projections=tuple(projections),
-            table=table,
+            source=from_source,
             where=where,
             group_by=group_by,
             order_by=order_by,
             span=combine_spans(start.span, end_span),
+        )
+
+    def _from_source(self) -> FromSource:
+        """Arbol de ``FROM``. Esta entrega admite como mucho un ``JOIN``."""
+
+        source: FromSource = self._table_ref()
+        if self._match(TokenKind.JOIN):
+            source = self._join(source)
+        if self._check(TokenKind.JOIN):
+            raise self._error(
+                self._peek(),
+                "esta version admite un solo JOIN por consulta",
+            )
+        return source
+
+    def _table_ref(self) -> TableRef:
+        table = self._identifier("se esperaba el nombre de la tabla")
+        return TableRef(table, table.span)
+
+    def _join(self, left: FromSource) -> JoinRef:
+        right = self._table_ref()
+        self._expect(TokenKind.ON, "se esperaba ON despues de la tabla del JOIN")
+        left_column = self._column_reference("se esperaba una columna despues de ON")
+        self._expect(
+            TokenKind.EQUAL,
+            "el ON de un JOIN solo admite una igualdad entre dos columnas",
+        )
+        right_column = self._column_reference(
+            "se esperaba una columna despues de '=' en la condicion ON"
+        )
+        return JoinRef(
+            left=left,
+            right=right,
+            left_column=left_column,
+            right_column=right_column,
+            span=combine_spans(left.span, right_column.span),
         )
 
     def _projection_list(self) -> list[Projection]:
@@ -439,6 +477,13 @@ class _Parser:
 
     def _column_reference(self, message: str) -> ColumnReference:
         identifier = self._identifier(message)
+        if self._match(TokenKind.DOT):
+            name = self._identifier("se esperaba el nombre de la columna despues de '.'")
+            return ColumnReference(
+                name,
+                combine_spans(identifier.span, name.span),
+                qualifier=identifier,
+            )
         return ColumnReference(identifier, identifier.span)
 
     def _raise_trailing_input(self) -> None:
