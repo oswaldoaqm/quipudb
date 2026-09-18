@@ -29,6 +29,8 @@ class TokenKind(StrEnum):
     VALUES = "VALUES"
     SELECT = "SELECT"
     FROM = "FROM"
+    JOIN = "JOIN"
+    ON = "ON"
     WHERE = "WHERE"
     DELETE = "DELETE"
     ORDER = "ORDER"
@@ -59,6 +61,7 @@ class TokenKind(StrEnum):
     COMMA = "COMMA"
     SEMICOLON = "SEMICOLON"
     STAR = "STAR"
+    DOT = "DOT"
 
     EQUAL = "EQUAL"
     LESS_THAN = "LESS_THAN"

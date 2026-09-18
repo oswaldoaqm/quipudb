@@ -190,7 +190,7 @@ def test_token_es_inmutable() -> None:
 @pytest.mark.parametrize(
     ("source", "offset", "column", "message"),
     [
-        (".5", 0, 1, "caracter inesperado '.'"),
+        ("@col", 0, 1, "caracter inesperado '@'"),
         ("-", 0, 1, "caracter inesperado '-'"),
         ("- 2", 0, 1, "caracter inesperado '-'"),
         ("1.", 0, 1, "literal numerico incompleto"),
@@ -259,3 +259,27 @@ def test_entrada_vacia_solo_produce_eof() -> None:
     whitespace_eof = tokenize("   ")[0]
     assert whitespace_eof.kind is TokenKind.EOF
     assert whitespace_eof.span == Span(3, 3, 1, 4, 1, 4)
+
+
+def test_punto_es_un_token_propio_para_calificar_columnas() -> None:
+    kinds = [token.kind for token in tokenize("a.b")]
+
+    assert kinds == [
+        TokenKind.IDENTIFIER,
+        TokenKind.DOT,
+        TokenKind.IDENTIFIER,
+        TokenKind.EOF,
+    ]
+
+
+def test_join_y_on_son_palabras_reservadas() -> None:
+    kinds = [token.kind for token in tokenize("JOIN ON")]
+
+    assert kinds == [TokenKind.JOIN, TokenKind.ON, TokenKind.EOF]
+
+
+def test_el_punto_de_un_double_sigue_perteneciendo_al_literal() -> None:
+    tokens = tokenize("1.5")
+
+    assert [token.kind for token in tokens] == [TokenKind.DOUBLE_LITERAL, TokenKind.EOF]
+    assert tokens[0].value == 1.5

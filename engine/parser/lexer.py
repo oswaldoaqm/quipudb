@@ -23,6 +23,8 @@ _KEYWORDS = {
         TokenKind.VALUES,
         TokenKind.SELECT,
         TokenKind.FROM,
+        TokenKind.JOIN,
+        TokenKind.ON,
         TokenKind.WHERE,
         TokenKind.DELETE,
         TokenKind.ORDER,
@@ -56,6 +58,7 @@ _SINGLE_CHARACTER_TOKENS = {
     ",": TokenKind.COMMA,
     ";": TokenKind.SEMICOLON,
     "*": TokenKind.STAR,
+    ".": TokenKind.DOT,
     "=": TokenKind.EQUAL,
 }
 
