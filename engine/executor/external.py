@@ -10,7 +10,7 @@ from typing import Any
 
 from engine.executor.instrumentation import copy_stats, measure_memory, measure_native
 from engine.executor.native import from_native_record, from_native_schema, to_native_schema
-from engine.executor.operators import SelectExecution
+from engine.executor.operators import SelectExecution, execute_source
 from engine.executor.predicates import equality_key, matches, range_values
 from engine.parser.ast import AggregateFunction, OrderDirection
 from engine.parser.bound_ast import (
@@ -18,7 +18,12 @@ from engine.parser.bound_ast import (
     BoundCondition,
     BoundSchema,
 )
-from engine.planner.optimizer import AccessRoute, GroupStrategy, PhysicalSelectPlan
+from engine.planner.optimizer import (
+    AccessRoute,
+    GroupStrategy,
+    PhysicalJoin,
+    PhysicalSelectPlan,
+)
 from engine.planner.plan import Op, Stats, Step, Structure
 
 
@@ -96,7 +101,7 @@ def execute_external_select(
     """Ejecuta SELECT externo sin agregar una lista a las rutas incrementales."""
 
     statement = plan.statement
-    pipeline = _candidate_pipeline(database, native, plan, source)
+    pipeline = _candidate_pipeline(database, native, plan, source, options)
     try:
         if statement.group_by is not None:
             return _execute_grouped(native, statement.schema, plan, pipeline, options)
@@ -360,8 +365,26 @@ def _candidate_pipeline(
     native: Any,
     plan: PhysicalSelectPlan,
     source: str,
+    options: ExternalExecutionOptions,
 ) -> _CandidatePipeline:
     statement = plan.statement
+
+    if isinstance(plan.source, PhysicalJoin):
+        # El join ya produce un flujo con su propio Step medido; ordenar o
+        # agrupar por encima solo tiene que consumirlo. Las rutas de una sola
+        # tabla siguen siendo incrementales y no pasan por aqui.
+        rows, step = execute_source(
+            database,
+            native,
+            plan.source,
+            statement.source,
+            statement.where,
+            source,
+            offset=0,
+            temp_dir=options.temp_dir,
+        )
+        return _CandidatePipeline(source=native.source_of(rows), root=step)
+
     table_name = statement.schema.table_name
     table = database.table(table_name)
     condition = statement.where

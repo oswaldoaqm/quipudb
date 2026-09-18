@@ -84,8 +84,16 @@ class Wildcard:
 
 @dataclass(frozen=True, slots=True)
 class ColumnReference:
+    """Columna referida en la consulta.
+
+    ``qualifier`` es la tabla que la califica en ``tabla.columna``. Es ``None``
+    en las referencias sin calificar, que son las unicas que existian antes de
+    que el ``FROM`` admitiera mas de una fuente.
+    """
+
     name: Identifier
     span: Span
+    qualifier: Identifier | None = None
 
 
 class AggregateFunction(StrEnum):
@@ -167,9 +175,37 @@ class InsertStatement:
 
 
 @dataclass(frozen=True, slots=True)
+class TableRef:
+    """Hoja del arbol de ``FROM``: una tabla nombrada."""
+
+    table: Identifier
+    span: Span
+
+
+@dataclass(frozen=True, slots=True)
+class JoinRef:
+    """Equijoin interno de dos fuentes por una columna de cada lado.
+
+    Es recursivo a proposito: la gramatica de esta entrega acepta un solo
+    ``JOIN``, pero admitir ``a JOIN b JOIN c`` mas adelante es ampliar el
+    parser sin volver a mover el contrato que consumen la semantica y el
+    planner.
+    """
+
+    left: FromSource
+    right: FromSource
+    left_column: ColumnReference
+    right_column: ColumnReference
+    span: Span
+
+
+FromSource: TypeAlias = TableRef | JoinRef
+
+
+@dataclass(frozen=True, slots=True)
 class SelectStatement:
     projections: tuple[Projection, ...]
-    table: Identifier
+    source: FromSource
     where: Condition | None
     group_by: GroupBy | None
     order_by: OrderBy | None

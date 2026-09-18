@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Mapping
+from dataclasses import dataclass
 
 from engine.parser.ast import (
     AggregateCall,
@@ -16,6 +18,7 @@ from engine.parser.ast import (
     DateLiteral,
     DeleteStatement,
     DoubleLiteral,
+    FromSource,
     InsertStatement,
     IntegerLiteral,
     Literal,
@@ -23,6 +26,7 @@ from engine.parser.ast import (
     SqlTypeName,
     StorageKind,
     StringLiteral,
+    TableRef,
     Wildcard,
 )
 from engine.parser.bound_ast import (
@@ -36,11 +40,15 @@ from engine.parser.bound_ast import (
     BoundDeleteStatement,
     BoundGroupBy,
     BoundInsertStatement,
+    BoundJoinRef,
     BoundOrderBy,
     BoundProjection,
     BoundSchema,
     BoundSelectStatement,
+    BoundSource,
+    BoundTableRef,
     BoundValue,
+    join_output_schema,
 )
 from engine.parser.errors import SQLSemanticError
 from engine.parser.span import Span
@@ -148,19 +156,114 @@ def bind_insert(
     return BoundInsertStatement(statement.table.name, values, statement.span)
 
 
-def bind_select(
-    statement: SelectStatement,
-    schema: BoundSchema,
-    source: str | None = None,
-) -> BoundSelectStatement:
-    """Resuelve una consulta SELECT sin acceder al catalogo ni al core nativo."""
+@dataclass(frozen=True, slots=True)
+class _Scope:
+    """Que nombres ve la consulta y en que posicion de su esquema de salida.
 
-    if statement.table.name != schema.table_name:
+    ``visible`` guarda la tabla y el nombre ORIGINAL de cada columna, antes de
+    que ``join_output_schema`` prefije las que colisionan. Es lo que permite
+    resolver ``alumnos.codigo`` sin depender de como quedo escrita la cabecera.
+    """
+
+    schema: BoundSchema
+    visible: tuple[tuple[str, str, int], ...]
+
+    @classmethod
+    def of(cls, source: BoundSource) -> _Scope:
+        return cls(source.schema, tuple(_visible_columns(source)))
+
+
+def _visible_columns(source: BoundSource, offset: int = 0) -> list[tuple[str, str, int]]:
+    if isinstance(source, BoundTableRef):
+        return [
+            (source.schema.table_name, column.name, offset + index)
+            for index, column in enumerate(source.schema.columns)
+        ]
+    return _visible_columns(source.left, offset) + _visible_columns(
+        source.right, offset + len(source.left.schema.columns)
+    )
+
+
+def _bind_source(
+    node: FromSource,
+    catalogo: Mapping[str, BoundSchema],
+    source: str | None,
+) -> BoundSource:
+    if isinstance(node, TableRef):
+        schema = catalogo.get(node.table.name)
+        if schema is None:
+            conocidas = ", ".join(sorted(catalogo)) or "ninguna"
+            _fail(
+                f"la consulta apunta a {node.table.name}, pero los esquemas "
+                f"disponibles son: {conocidas}",
+                node.table.span,
+                source,
+            )
+            raise AssertionError  # pragma: no cover - _fail siempre lanza
+        return BoundTableRef(schema, node.span)
+
+    left = _bind_source(node.left, catalogo, source)
+    right = _bind_source(node.right, catalogo, source)
+    izquierdo = _Scope.of(left)
+    derecho = _Scope.of(right)
+
+    # El orden de los operandos del ON no importa: `ON b.x = a.y` es tan valido
+    # como `ON a.y = b.x`. Se prueba el emparejamiento directo y, si no cuadra,
+    # el cruzado; si tampoco, se deja que _resolve_column explique por que.
+    directo = (
+        _lookup(node.left_column, izquierdo),
+        _lookup(node.right_column, derecho),
+    )
+    cruzado = (
+        _lookup(node.right_column, izquierdo),
+        _lookup(node.left_column, derecho),
+    )
+    if None not in directo:
+        left_column, right_column = directo
+    elif None not in cruzado:
+        left_column, right_column = cruzado
+    else:
+        left_column = _resolve_column(node.left_column, izquierdo, source)
+        right_column = _resolve_column(node.right_column, derecho, source)
+    assert left_column is not None and right_column is not None
+
+    if left_column.column.data_type is not right_column.column.data_type:
         _fail(
-            f"el SELECT apunta a {statement.table.name}, pero el esquema es de {schema.table_name}",
-            statement.table.span,
+            f"no se puede juntar {left_column.column.name} "
+            f"({left_column.column.data_type.value}) con {right_column.column.name} "
+            f"({right_column.column.data_type.value})",
+            node.span,
             source,
         )
+
+    return BoundJoinRef(
+        left=left,
+        right=right,
+        left_column=left_column,
+        right_column=right_column,
+        schema=join_output_schema(left.schema, right.schema),
+        span=node.span,
+    )
+
+
+def bind_select(
+    statement: SelectStatement,
+    schemas: BoundSchema | Mapping[str, BoundSchema],
+    source: str | None = None,
+) -> BoundSelectStatement:
+    """Resuelve una consulta SELECT sin acceder al catalogo ni al core nativo.
+
+    ``schemas`` admite un solo ``BoundSchema`` -- la forma de siempre, para una
+    consulta de una tabla -- o un mapa de nombre a esquema, que es lo que un
+    ``JOIN`` necesita.
+    """
+
+    catalogo: Mapping[str, BoundSchema] = (
+        {schemas.table_name: schemas} if isinstance(schemas, BoundSchema) else schemas
+    )
+    bound_source = _bind_source(statement.source, catalogo, source)
+    scope = _Scope.of(bound_source)
+    schema = scope.schema
 
     if not statement.projections:
         _fail("SELECT requiere al menos una proyeccion", statement.span, source)
@@ -183,7 +286,7 @@ def bind_select(
     group_by = None
     if statement.group_by is not None:
         group_by = BoundGroupBy(
-            _resolve_column(statement.group_by.column, schema, source),
+            _resolve_column(statement.group_by.column, scope, source),
             statement.group_by.span,
         )
 
@@ -213,7 +316,7 @@ def bind_select(
         )
     else:
         projections = tuple(
-            _bind_projection(projection, schema, source) for projection in statement.projections
+            _bind_projection(projection, scope, source) for projection in statement.projections
         )
 
     if group_by is not None:
@@ -236,7 +339,7 @@ def bind_select(
 
     order_by = None
     if statement.order_by is not None:
-        order_column = _resolve_column(statement.order_by.column, schema, source)
+        order_column = _resolve_column(statement.order_by.column, scope, source)
         if group_by is not None and order_column.index != group_by.column.index:
             _fail(
                 "ORDER BY solo puede usar la columna de GROUP BY en una consulta agrupada",
@@ -249,9 +352,9 @@ def bind_select(
             statement.order_by.span,
         )
 
-    where = _bind_condition(statement.where, schema, source)
+    where = _bind_condition(statement.where, scope, source)
     return BoundSelectStatement(
-        schema=schema,
+        source=bound_source,
         projections=projections,
         wildcard=wildcard,
         where=where,
@@ -275,7 +378,7 @@ def bind_delete(
             source,
         )
 
-    where = _bind_condition(statement.where, schema, source)
+    where = _bind_condition(statement.where, _Scope.of(BoundTableRef(schema, statement.span)), source)
     if where is None:
         # El parser no construye este caso; protege AST creados a mano.
         _fail("DELETE requiere una clausula WHERE", statement.span, source)
@@ -284,11 +387,11 @@ def bind_delete(
 
 def _bind_projection(
     projection: ColumnReference | AggregateCall,
-    schema: BoundSchema,
+    scope: _Scope,
     source: str | None,
 ) -> BoundProjection:
     if isinstance(projection, ColumnReference):
-        return _resolve_column(projection, schema, source)
+        return _resolve_column(projection, scope, source)
 
     if projection.function is AggregateFunction.COUNT:
         if not isinstance(projection.argument, Wildcard):
@@ -297,7 +400,7 @@ def _bind_projection(
 
     if isinstance(projection.argument, Wildcard):
         _fail("solo COUNT admite '*' como argumento", projection.argument.span, source)
-    argument = _resolve_column(projection.argument, schema, source)
+    argument = _resolve_column(projection.argument, scope, source)
     if projection.function in {
         AggregateFunction.SUM,
         AggregateFunction.AVG,
@@ -313,13 +416,13 @@ def _bind_projection(
 
 def _bind_condition(
     condition: ComparisonCondition | BetweenCondition | None,
-    schema: BoundSchema,
+    scope: _Scope,
     source: str | None,
 ) -> BoundCondition | None:
     if condition is None:
         return None
 
-    column = _resolve_column(condition.column, schema, source)
+    column = _resolve_column(condition.column, scope, source)
     if isinstance(condition, ComparisonCondition):
         value = _bind_predicate_value(condition.value, column.column, source)
         return BoundComparisonCondition(column, condition.operator, value, condition.span)
@@ -329,16 +432,75 @@ def _bind_condition(
     return BoundBetweenCondition(column, lower, upper, condition.span)
 
 
+def _lookup(reference: ColumnReference, scope: _Scope) -> BoundColumnReference | None:
+    """Busca una columna sin explicar el fallo. ``None`` si no hay exactamente una."""
+
+    nombre = reference.name.name
+    if reference.qualifier is not None:
+        posiciones = [
+            index
+            for tabla, columna, index in scope.visible
+            if tabla == reference.qualifier.name and columna == nombre
+        ]
+    else:
+        posiciones = [index for _, columna, index in scope.visible if columna == nombre]
+
+    if len(posiciones) != 1:
+        return None
+    index = posiciones[0]
+    return BoundColumnReference(index, scope.schema.columns[index], reference.span)
+
+
 def _resolve_column(
     reference: ColumnReference,
-    schema: BoundSchema,
+    scope: _Scope,
     source: str | None,
 ) -> BoundColumnReference:
-    for index, column in enumerate(schema.columns):
-        if reference.name.name == column.name:
-            return BoundColumnReference(index, column, reference.span)
+    """Resuelve una columna a su posicion en el esquema de salida del ``FROM``.
+
+    Una referencia calificada solo mira la tabla que la califica; una sin
+    calificar mira todo el alcance y es un error si aparece en mas de un lado.
+    """
+
+    nombre = reference.name.name
+    if reference.qualifier is not None:
+        calificador = reference.qualifier.name
+        tablas = {tabla for tabla, _, _ in scope.visible}
+        if calificador not in tablas:
+            disponibles = ", ".join(sorted(tablas))
+            _fail(
+                f"el calificador {calificador!r} no corresponde a ninguna tabla de la "
+                f"consulta; hay: {disponibles}",
+                reference.qualifier.span,
+                source,
+            )
+        posiciones = [
+            index for tabla, columna, index in scope.visible
+            if tabla == calificador and columna == nombre
+        ]
+    else:
+        posiciones = [index for _, columna, index in scope.visible if columna == nombre]
+
+    if len(posiciones) > 1:
+        duenas = ", ".join(
+            sorted(tabla for tabla, columna, _ in scope.visible if columna == nombre)
+        )
+        _fail(
+            f"la columna {nombre!r} es ambigua: esta en {duenas}; califica cual quieres",
+            reference.name.span,
+            source,
+        )
+    if posiciones:
+        index = posiciones[0]
+        return BoundColumnReference(index, scope.schema.columns[index], reference.span)
+
+    donde = (
+        f"la tabla {reference.qualifier.name!r}"
+        if reference.qualifier is not None
+        else f"la consulta sobre {scope.schema.table_name!r}"
+    )
     _fail(
-        f"la columna {reference.name.name!r} no existe en la tabla {schema.table_name!r}",
+        f"la columna {nombre!r} no existe en {donde}",
         reference.name.span,
         source,
     )

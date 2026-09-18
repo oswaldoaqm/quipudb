@@ -16,6 +16,7 @@ from engine.planner.optimizer import (
     AccessRoute,
     IndexMetadata,
     PhysicalSelectPlan,
+    PhysicalTableAccess,
     TableMetadata,
     optimize_select,
 )
@@ -208,10 +209,12 @@ def _physical(
     statement = _statement(source, schema)
     return PhysicalSelectPlan(
         statement=statement,
-        table=TableMetadata("datos", Structure.HEAP, (() if index is None else (index,))),
-        route=route,
-        index=index,
-        residual_filter=residual,
+        source=PhysicalTableAccess(
+            table=TableMetadata("datos", Structure.HEAP, (() if index is None else (index,))),
+            route=route,
+            index=index,
+            residual_filter=residual,
+        ),
     )
 
 

@@ -15,6 +15,7 @@ from engine.parser.bound_ast import (
     BoundDeleteStatement,
     BoundSchema,
     BoundSelectStatement,
+    BoundTableRef,
 )
 from engine.parser.semantic import bind_select
 from engine.parser.span import Span
@@ -25,6 +26,7 @@ from engine.planner.optimizer import (
     IndexMetadata,
     PhysicalDeletePlan,
     PhysicalSelectPlan,
+    PhysicalTableAccess,
     TableMetadata,
     optimize_delete,
     optimize_select,
@@ -61,7 +63,7 @@ def _between(index: int = 1) -> BoundBetweenCondition:
 
 def _select(where=None) -> BoundSelectStatement:
     return BoundSelectStatement(
-        schema=_SCHEMA,
+        source=BoundTableRef(_SCHEMA, _SPAN),
         projections=tuple(_column(index) for index in range(len(_SCHEMA.columns))),
         wildcard=True,
         where=where,
@@ -90,6 +92,10 @@ def _index(
         structure=structure,
         supports_range=structure is Structure.BPLUS_UNCLUSTERED,
     )
+
+
+def _scan(*indexes: IndexMetadata) -> PhysicalTableAccess:
+    return PhysicalTableAccess(_table(*indexes), AccessRoute.SCAN)
 
 
 def _table(*indexes: IndexMetadata) -> TableMetadata:
@@ -138,21 +144,19 @@ def test_ir_select_rechaza_operadores_externos_que_no_coinciden_con_la_sentencia
     grouped = _select_sql("SELECT nombre, COUNT(*) FROM alumnos GROUP BY nombre")
 
     with pytest.raises(ValueError, match="ORDER BY"):
-        PhysicalSelectPlan(ordered, _table(), AccessRoute.SCAN)
+        PhysicalSelectPlan(ordered, _scan())
     with pytest.raises(ValueError, match="GROUP BY"):
-        PhysicalSelectPlan(grouped, _table(), AccessRoute.SCAN)
+        PhysicalSelectPlan(grouped, _scan())
     with pytest.raises(ValueError, match="ORDER BY"):
         PhysicalSelectPlan(
             _select(),
-            _table(),
-            AccessRoute.SCAN,
+            _scan(),
             external_sort=True,
         )
     with pytest.raises(ValueError, match="GROUP BY"):
         PhysicalSelectPlan(
             _select(),
-            _table(),
-            AccessRoute.SCAN,
+            _scan(),
             group_strategy=GroupStrategy.HASH,
         )
 
@@ -381,7 +385,9 @@ def test_ir_fisico_y_metadata_son_inmutables() -> None:
     plan = optimize_select(_select(), _table())
 
     with pytest.raises(FrozenInstanceError):
-        plan.route = AccessRoute.TABLE_SEARCH  # type: ignore[misc]
+        plan.source = _scan()  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        plan.access.route = AccessRoute.TABLE_SEARCH  # type: ignore[misc]
     with pytest.raises(FrozenInstanceError):
         plan.table.name = "otra"  # type: ignore[misc]
 
@@ -393,9 +399,11 @@ def test_ir_rechaza_indice_en_una_ruta_de_tabla() -> None:
     with pytest.raises(ValueError, match="rutas de indice"):
         PhysicalSelectPlan(
             statement,
-            table,
-            AccessRoute.SCAN,
-            index=_index("sobrante", Structure.EXTENDIBLE_HASH),
+            PhysicalTableAccess(
+                table,
+                AccessRoute.SCAN,
+                index=_index("sobrante", Structure.EXTENDIBLE_HASH),
+            ),
         )
 
 
@@ -405,7 +413,10 @@ def test_ir_rechaza_hash_en_una_ruta_de_rango() -> None:
     table = _table(index)
 
     with pytest.raises(ValueError, match="soporte rangos"):
-        PhysicalSelectPlan(statement, table, AccessRoute.INDEX_RANGE, index=index)
+        PhysicalSelectPlan(
+            statement,
+            PhysicalTableAccess(table, AccessRoute.INDEX_RANGE, index=index),
+        )
 
 
 def test_ir_rechaza_indice_ajeno_o_de_otra_columna() -> None:
@@ -415,18 +426,22 @@ def test_ir_rechaza_indice_ajeno_o_de_otra_columna() -> None:
     with pytest.raises(ValueError, match="no pertenece"):
         PhysicalSelectPlan(
             statement,
-            _table(listed),
-            AccessRoute.INDEX_SEARCH,
-            index=_index("ajeno", Structure.EXTENDIBLE_HASH),
+            PhysicalTableAccess(
+                _table(listed),
+                AccessRoute.INDEX_SEARCH,
+                index=_index("ajeno", Structure.EXTENDIBLE_HASH),
+            ),
         )
 
     wrong_column = _index("por_nombre", Structure.EXTENDIBLE_HASH, column=2)
     with pytest.raises(ValueError, match="columna del predicado"):
         PhysicalSelectPlan(
             statement,
-            _table(wrong_column),
-            AccessRoute.INDEX_SEARCH,
-            index=wrong_column,
+            PhysicalTableAccess(
+                _table(wrong_column),
+                AccessRoute.INDEX_SEARCH,
+                index=wrong_column,
+            ),
         )
 
 
