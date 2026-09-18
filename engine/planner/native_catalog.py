@@ -18,8 +18,13 @@ _INDEX_STRUCTURES = {
 }
 
 
-def from_native_table_info(table_info: Any) -> TableMetadata:
-    """Copia un ``TableInfo`` de pybind11 sin conservar referencias nativas."""
+def from_native_table_info(table_info: Any, rows: int | None = None) -> TableMetadata:
+    """Copia un ``TableInfo`` de pybind11 sin conservar referencias nativas.
+
+    ``TableInfo`` no lleva el conteo de filas: sale de ``TableFile::size()``, que
+    exige abrir la tabla. Quien lo tenga lo pasa; quien no, deja ``None`` y el
+    join cae a hash join, que es la respuesta segura.
+    """
 
     table_structure = _structure(table_info.storage, _TABLE_STRUCTURES, "tabla")
     table_name = str(table_info.schema.table_name)
@@ -46,13 +51,22 @@ def from_native_table_info(table_info: Any) -> TableMetadata:
         name=table_name,
         structure=table_structure,
         indexes=tuple(indexes),
+        rows=rows,
     )
 
 
 def load_table_metadata(database: Any, table_name: str) -> TableMetadata:
-    """Obtiene y desacopla la metadata de una tabla registrada."""
+    """Obtiene y desacopla la metadata de una tabla registrada, con su tamano.
 
-    return from_native_table_info(database.table_info(table_name))
+    Abre la tabla para preguntarle ``size()``. ``Database`` devuelve siempre el
+    mismo handle, asi que no es una apertura de mas: es la que el ejecutor iba
+    a hacer igual.
+    """
+
+    return from_native_table_info(
+        database.table_info(table_name),
+        rows=int(database.table(table_name).size()),
+    )
 
 
 def _structure(value: Any, allowed: set[Structure], role: str) -> Structure:
