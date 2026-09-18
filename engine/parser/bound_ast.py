@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from typing import TypeAlias
 
@@ -140,16 +140,88 @@ BoundCondition: TypeAlias = BoundComparisonCondition | BoundBetweenCondition
 
 
 @dataclass(frozen=True, slots=True)
+class BoundTableRef:
+    """Hoja resuelta del ``FROM``: el esquema de una tabla del catalogo."""
+
+    schema: BoundSchema
+    span: Span
+
+
+@dataclass(frozen=True, slots=True)
+class BoundJoinRef:
+    """Join resuelto. ``schema`` es la concatenacion de los dos lados.
+
+    Las dos columnas de la condicion estan indexadas contra el esquema de SU
+    lado, no contra la concatenacion: son lo que ``ExternalJoin`` recibe como
+    ``left_column`` y ``right_column``.
+    """
+
+    left: BoundSource
+    right: BoundSource
+    left_column: BoundColumnReference
+    right_column: BoundColumnReference
+    schema: BoundSchema
+    span: Span
+
+
+BoundSource: TypeAlias = BoundTableRef | BoundJoinRef
+
+
+def join_output_schema(left: BoundSchema, right: BoundSchema) -> BoundSchema:
+    """Concatena dos esquemas con la regla de ``ExternalJoin::output_schema()``.
+
+    Es deliberadamente la misma que el core: columnas de la izquierda seguidas
+    de las de la derecha, y solo las que se llaman igual en los dos lados se
+    prefijan con el nombre de su tabla. Prefijarlas todas ensuciaria el caso
+    comun, que es lo que el Panel de Resultados muestra como cabecera. La
+    columna de join sale dos veces, una por lado.
+
+    ``key_column`` queda en 0 porque un join no tiene clave primaria y
+    ``BoundSchema`` no sabe expresar que no la hay; nadie debe usarla.
+    """
+
+    colisionan = {column.name for column in left.columns} & {
+        column.name for column in right.columns
+    }
+
+    def _prefijar(schema: BoundSchema) -> list[BoundColumn]:
+        return [
+            replace(column, name=f"{schema.table_name}.{column.name}")
+            if column.name in colisionan
+            else column
+            for column in schema.columns
+        ]
+
+    return BoundSchema(
+        f"{left.table_name}_{right.table_name}",
+        tuple(_prefijar(left) + _prefijar(right)),
+        0,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class BoundSelectStatement:
     """SELECT con nombres resueltos y predicado listo para planificar."""
 
-    schema: BoundSchema
+    source: BoundSource
     projections: tuple[BoundProjection, ...]
     wildcard: bool
     where: BoundCondition | None
     span: Span
     group_by: BoundGroupBy | None = None
     order_by: BoundOrderBy | None = None
+
+    @property
+    def schema(self) -> BoundSchema:
+        """Esquema de salida de la fuente.
+
+        Para una tabla sola es el esquema de la tabla, que es lo que este
+        campo significaba antes de que el ``FROM`` admitiera un join. Por eso
+        los indices de proyecciones, predicado, GROUP BY y ORDER BY siguen
+        siendo posiciones contra ``statement.schema`` sin cambiar nada.
+        """
+
+        return self.source.schema
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,9 +244,13 @@ __all__ = [
     "BoundDeleteStatement",
     "BoundGroupBy",
     "BoundInsertStatement",
+    "BoundJoinRef",
     "BoundOrderBy",
     "BoundProjection",
     "BoundSchema",
     "BoundSelectStatement",
+    "BoundSource",
+    "BoundTableRef",
     "BoundValue",
+    "join_output_schema",
 ]
