@@ -138,9 +138,10 @@ def _execute_ordered(
     )
     rows = tuple(from_native_record(row, schema) for row in native_rows)
     columns = tuple(projection.column.name for projection in statement.projections)
+    tipos = tuple(projection.column.data_type for projection in statement.projections)
 
     if statement.wildcard:
-        return SelectExecution(columns, rows, sort_step)
+        return SelectExecution(columns, tipos, rows, sort_step)
 
     projected = measure_memory(
         lambda: tuple(
@@ -158,7 +159,7 @@ def _execute_ordered(
         time_ms=projected.time_ms,
         children=[sort_step],
     )
-    return SelectExecution(columns, projected.value, project_step)
+    return SelectExecution(columns, tipos, projected.value, project_step)
 
 
 def _execute_grouped(
@@ -284,6 +285,7 @@ def _execute_grouped(
 
     converted = tuple(from_native_record(row, grouped_schema) for row in native_rows)
     columns = tuple(grouped_schema.columns[index].name for index in output_indexes)
+    tipos = tuple(grouped_schema.columns[index].data_type for index in output_indexes)
     projected = measure_memory(
         lambda: tuple(tuple(row[index] for index in output_indexes) for row in converted),
         records_examined=len(converted),
@@ -298,7 +300,7 @@ def _execute_grouped(
         time_ms=projected.time_ms,
         children=[root],
     )
-    execution = SelectExecution(columns, projected.value, project_step)
+    execution = SelectExecution(columns, tipos, projected.value, project_step)
     del measured_group_output, grouped_source, native_source, group
     return execution
 

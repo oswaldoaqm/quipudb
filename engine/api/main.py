@@ -1,0 +1,132 @@
+"""API HTTP del motor: lo unico que el frontend (2.1.5) consume.
+
+Dos rutas, `POST /query` y `GET /tables`, con la forma que fija
+`frontend/src/api/types.ts`. Levantar con:
+
+    uvicorn engine.api.main:app --reload --port 8000
+
+El catalogo sale de la variable de entorno ``QUIPUDB_CATALOG``; por defecto,
+``datos/catalogo.txt`` relativo a donde se levante el servidor.
+"""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from threading import Lock
+from typing import Any
+
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from engine.api.schemas import (
+    QueryErrorResponse,
+    QueryRequest,
+    QueryResponse,
+    TableInfo,
+)
+from engine.api.service import describe_catalog, to_error, to_response
+from engine.executor import QueryProcessor
+from engine.executor.native import load_native
+from engine.parser.errors import SQLError
+
+ORIGENES = ("http://localhost:5173", "http://127.0.0.1:5173")
+"""El servidor de desarrollo del frontend. Sin CORS la peticion muere en el
+navegador antes de llegar a FastAPI."""
+
+
+class Motor:
+    """Un unico ``QueryProcessor`` por proceso, con el acceso serializado.
+
+    FastAPI corre los endpoints sincronos en un pool de hilos, asi que dos
+    peticiones concurrentes tocarian el mismo procesador a la vez. Se serializa
+    con un lock porque el procesador guarda la transaccion activa y sus locks:
+    manteniendo uno solo, ``BEGIN TRANSACTION`` sobrevive entre peticiones y
+    2.1.4 se puede demostrar desde la interfaz. La concurrencia real del motor
+    se ensena con la simulacion de hilos del #32, no por HTTP.
+    """
+
+    def __init__(
+        self,
+        catalog: Path | None = None,
+        processor: QueryProcessor | None = None,
+        database: Any = None,
+        native: Any = None,
+    ) -> None:
+        self._catalog = catalog
+        self._processor = processor
+        self._database = database
+        self._native = native
+        self._lock = Lock()
+
+    @contextmanager
+    def en_uso(self) -> Iterator[tuple[QueryProcessor, Any, Any]]:
+        with self._lock:
+            if self._processor is None:
+                self._native = load_native()
+                ruta = self._catalog or Path(
+                    os.environ.get("QUIPUDB_CATALOG", "datos/catalogo.txt")
+                )
+                ruta.parent.mkdir(parents=True, exist_ok=True)
+                self._database = self._native.Database(ruta)
+                self._processor = QueryProcessor(self._database)
+            yield self._processor, self._database, self._native
+
+
+def create_app(
+    catalog: Path | None = None,
+    processor: QueryProcessor | None = None,
+    database: Any = None,
+    native: Any = None,
+) -> FastAPI:
+    """Construye la aplicacion.
+
+    Los argumentos existen para las pruebas: inyectando procesador, base y
+    modulo nativo no hace falta variable de entorno ni catalogo en disco.
+    """
+
+    app = FastAPI(
+        title="QuipuDB",
+        description="Motor de base de datos multimodal escrito desde cero (UTEC, BD2 2026-2)",
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(ORIGENES),
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type"],
+    )
+    motor = Motor(catalog=catalog, processor=processor, database=database, native=native)
+    app.state.motor = motor
+
+    @app.exception_handler(SQLError)
+    async def _sql_error(_: Request, error: SQLError) -> JSONResponse:
+        # El mensaje viaja sin reformular: el frontend ya muestra estos textos
+        # con datos falsos y no deben cambiar al conectarse al motor real.
+        return JSONResponse(status_code=400, content=to_error(error).model_dump())
+
+    @app.get("/tables", response_model=list[TableInfo])
+    def listar_tablas() -> list[TableInfo]:
+        with motor.en_uso() as (_, catalogo, modulo):
+            return describe_catalog(catalogo, modulo)
+
+    @app.post("/query", response_model=QueryResponse)
+    def ejecutar(peticion: QueryRequest) -> QueryResponse:
+        with motor.en_uso() as (processor_, _, _native):
+            return to_response(processor_.execute(peticion.sql))
+
+    @app.exception_handler(Exception)
+    async def _otro_error(_: Request, error: Exception) -> JSONResponse:
+        # Un fallo sin ubicacion -- de E/S, por ejemplo -- manda los cuatro
+        # campos de posicion en null y el frontend lo muestra sin subrayar.
+        cuerpo = QueryErrorResponse(error=str(error) or type(error).__name__)
+        return JSONResponse(status_code=400, content=cuerpo.model_dump())
+
+    return app
+
+
+app = create_app()
+
+__all__ = ["app", "create_app"]
