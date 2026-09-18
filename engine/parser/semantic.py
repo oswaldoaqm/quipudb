@@ -18,6 +18,7 @@ from engine.parser.ast import (
     DoubleLiteral,
     InsertStatement,
     IntegerLiteral,
+    JoinRef,
     Literal,
     SelectStatement,
     SqlTypeName,
@@ -155,10 +156,18 @@ def bind_select(
 ) -> BoundSelectStatement:
     """Resuelve una consulta SELECT sin acceder al catalogo ni al core nativo."""
 
-    if statement.table.name != schema.table_name:
+    if isinstance(statement.source, JoinRef):
         _fail(
-            f"el SELECT apunta a {statement.table.name}, pero el esquema es de {schema.table_name}",
-            statement.table.span,
+            "la semantica todavia no resuelve JOIN",
+            statement.source.span,
+            source,
+        )
+
+    table = statement.source.table
+    if table.name != schema.table_name:
+        _fail(
+            f"el SELECT apunta a {table.name}, pero el esquema es de {schema.table_name}",
+            table.span,
             source,
         )
 
@@ -334,6 +343,13 @@ def _resolve_column(
     schema: BoundSchema,
     source: str | None,
 ) -> BoundColumnReference:
+    if reference.qualifier is not None and reference.qualifier.name != schema.table_name:
+        _fail(
+            f"el calificador {reference.qualifier.name!r} no corresponde a ninguna tabla "
+            f"de la consulta",
+            reference.qualifier.span,
+            source,
+        )
     for index, column in enumerate(schema.columns):
         if reference.name.name == column.name:
             return BoundColumnReference(index, column, reference.span)
