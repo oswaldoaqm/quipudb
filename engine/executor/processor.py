@@ -305,6 +305,7 @@ class QueryProcessor:
             plan = Plan(query=source, root=execution.root, time_ms=elapsed_ms)
             return QueryResult(
                 columns=execution.columns,
+                column_types=execution.column_types,
                 rows=execution.rows,
                 plan=plan,
             )

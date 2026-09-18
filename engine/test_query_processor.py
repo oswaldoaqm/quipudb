@@ -623,3 +623,53 @@ def test_delete_dentro_de_transaccion_se_revierte_con_rollback(db):
     assert restored[0][2] == "Ada"
     (rid,) = by_name.search("Ada")
     assert db.table("datos").read(rid)[0] == 1
+
+
+def test_column_types_viene_del_esquema_y_no_de_las_filas(db):
+    """El Panel de Resultados necesita el tipo aunque no haya filas."""
+
+    processor = QueryProcessor(db)
+    processor.execute(
+        "CREATE TABLE alumnos (codigo INT PRIMARY KEY, nombre VARCHAR(32), "
+        "promedio DOUBLE, activo BOOL, ingreso DATE) USING HEAP"
+    )
+    processor.execute("INSERT INTO alumnos VALUES (1, 'ana', 15.6, TRUE, DATE '2026-01-05')")
+
+    completo = processor.execute("SELECT * FROM alumnos")
+    assert [tipo.value for tipo in completo.column_types] == [
+        "INT",
+        "VARCHAR",
+        "DOUBLE",
+        "BOOL",
+        "DATE",
+    ]
+
+    vacio = processor.execute("SELECT nombre, promedio FROM alumnos WHERE codigo = 999")
+    assert vacio.rows == ()
+    assert [tipo.value for tipo in vacio.column_types] == ["VARCHAR", "DOUBLE"]
+
+
+def test_column_types_de_un_group_by_tipa_cada_agregado(db):
+    processor = QueryProcessor(db)
+    processor.execute(
+        "CREATE TABLE notas (id INT PRIMARY KEY, curso VARCHAR(16), nota DOUBLE) USING HEAP"
+    )
+    processor.execute("INSERT INTO notas VALUES (1, 'bd2', 18.0)")
+
+    result = processor.execute(
+        "SELECT curso, COUNT(*), AVG(nota) FROM notas GROUP BY curso"
+    )
+
+    assert result.columns == ("curso", "COUNT_all", "AVG_nota")
+    assert [tipo.value for tipo in result.column_types] == ["VARCHAR", "INT", "DOUBLE"]
+
+
+def test_una_sentencia_sin_filas_no_declara_tipos(db):
+    processor = QueryProcessor(db)
+    processor.execute("CREATE TABLE t (id INT PRIMARY KEY) USING HEAP")
+
+    result = processor.execute("INSERT INTO t VALUES (1)")
+
+    assert result.columns == ()
+    assert result.column_types == ()
+    assert result.affected_rows == 1
