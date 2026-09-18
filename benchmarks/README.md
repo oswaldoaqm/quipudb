@@ -294,7 +294,8 @@ PYTHONPATH=build-py/bindings python -B benchmarks/scripts/ejecutar_benchmarks.py
 PYTHONPATH=build-py/bindings python -B -m pytest benchmarks/test_casos_archivos.py -q -rs -p no:cacheprovider
 ```
 
-Solo despues de aprobar tests, lint y entorno, la corrida oficial propuesta es:
+La corrida oficial de #39 ya fue completada y documentada. Comando de referencia
+del protocolo (no es necesario ejecutarlo para generar graficas):
 
 ```bash
 PYTHONPATH=build-py/bindings python -B benchmarks/scripts/ejecutar_benchmarks.py \
@@ -341,9 +342,9 @@ sesgar resultados. No se promete cache fria, fsync ni resultados identicos entre
 maquinas/versiones. Registrar version de Python y hashes permite identificar las
 entradas: no se supone estabilidad universal de `random.sample` entre versiones.
 
-El informe [comparacion_heap_secuencial.md](comparacion_heap_secuencial.md) deja
-separados el protocolo, las hipotesis tecnicas y los resultados oficiales pendientes.
-No se generan graficas ni se extiende la comparacion a indices (#40/#41).
+El informe [comparacion_heap_secuencial.md](comparacion_heap_secuencial.md) conserva
+el protocolo y los resultados oficiales: 90 mediciones y 18 resumenes. Las graficas
+se generan por separado en #41, sin ejecutar esta suite nuevamente.
 
 ## Comparacion de indices (issue #40)
 
@@ -463,10 +464,71 @@ consultas debe estar entre 1 y el menor N. consultas-rango entre 1 y el menor
 `N - N//100 + 1`. Los tests nativos usan solamente 1k y se saltan con motivo claro
 si no existe el binding compatible; los unitarios usan dobles solo en temporales.
 
-La futura corrida oficial requiere autorizacion aparte, entorno verificado y
-`--tamanos 1000 10000 100000 --calentamientos 1 --repeticiones 5`. Producira 315
-mediciones y 63 resumenes si se ejecutan los 21 casos. No se lanza automaticamente.
-Conservar sus tres CSV ignorados por Git separados de los de validacion.
+La corrida oficial ya fue completada con `--tamanos 1000 10000 100000
+--calentamientos 1 --repeticiones 5`: 315 mediciones y 63 resumenes. No se debe
+repetir para generar graficas. Conservar sus tres CSV ignorados por Git separados
+de los de validacion.
 
 El informe [comparacion_indices.md](comparacion_indices.md) describe capacidades,
-sesgos y resultados pendientes; no declara ganadores con la validacion pequena.
+sesgos, resultados oficiales y conclusiones basadas en esas mediciones.
+
+## Graficas e informe (issue #41)
+
+`scripts/generar_graficas.py` convierte exclusivamente las dos corridas oficiales
+en 12 figuras de tiempo y tres de espacio, cada una en PNG 300 dpi y SVG, mas las
+tablas numericas del [informe integrado](../docs/informe/comparacion_experimental.md).
+No importa bindings, ejecuta benchmarks ni lee/regenera datasets. Mantiene #39 y
+#40 separados y conserva las cinco muestras, incluidos los valores altos.
+
+Fuentes necesarias: mediciones, resumen y entorno de cada uno de estos IDs:
+
+- #39: `20260918T025045Z_530093b2675c4ff8a483020858915b56`.
+- #40: `20260918T035512Z_4e75ba53c6a6497798a0d95a278f9dfe`.
+
+Los seis CSV siguen ignorados por Git: otro integrante debe obtenerlos del archivo
+de resultados oficiales y copiarlos a `benchmarks/results/` o indicar --entrada.
+No se selecciona la corrida mas reciente ni se extraen numeros del Markdown.
+El [manifiesto](../docs/informe/fuentes_resultados.json) fija nombres y SHA-256.
+Si falta una fuente o cambia su hash, el generador falla antes de exportar.
+
+Desde la raiz, con Matplotlib (ya declarado en requirements.txt):
+
+```bash
+MPLCONFIGDIR=/tmp/quipudb-matplotlib python -B benchmarks/scripts/generar_graficas.py
+# Opcional: otras carpetas, manteniendo exactamente los seis archivos oficiales.
+MPLCONFIGDIR=/tmp/quipudb-matplotlib python -B benchmarks/scripts/generar_graficas.py \
+  --entrada /ruta/a/csv-oficiales --salida /ruta/a/informe
+```
+
+Salida predeterminada: `docs/informe/graficas/` (30 archivos) y el bloque de tablas
+de `docs/informe/comparacion_experimental.md`. El texto fuera de los marcadores
+BEGIN/END RESULTADOS actua como plantilla y se conserva. Una carpeta --salida
+alternativa recibe figuras y una copia del informe; los enlaces relativos a otros
+documentos suponen el destino canonico docs/informe. El manifiesto canonico se
+consulta en el repositorio y no se copia a la carpeta alternativa.
+
+La exportacion reemplaza solo sus figuras e informe derivados; nunca las fuentes.
+No cambiar los hashes para aceptar otra corrida. PNG/SVG e informe se versionan,
+pero los CSV siguen fuera de Git. svg.hashsalt fijo y ausencia de fecha SVG facilitan
+la reproduccion con la misma version de Matplotlib/fuentes; no se promete identidad
+binaria entre versiones. La version del renderizador queda en el informe.
+
+Medianas y minimo-maximo de cinco repeticiones, con todas las muestras visibles
+(pueden superponerse); no son intervalos de confianza. Ejes temporales logaritmicos.
+No hay filas cero para capacidades ausentes. Espacio total considera datos e indice;
+en agrupado el arbol esta integrado en datos. Consultar pies de figura y limites.
+
+Pruebas del generador, sin medir estructuras:
+
+```bash
+MPLCONFIGDIR=/tmp/quipudb-matplotlib python -B -m pytest benchmarks/test_generar_graficas.py \
+  -q -rs -p no:cacheprovider
+ruff check engine benchmarks
+ruff format --check benchmarks/scripts/generar_graficas.py benchmarks/test_generar_graficas.py
+git diff --check
+```
+
+Las pruebas usan fuentes sinteticas explicitamente de prueba, solo en temporales.
+No necesitan los CSV ignorados ni bindings. La prueba de renderizado se salta con
+razon explicita si falta Matplotlib (el CI actual instala pytest y Ruff); antes de
+entregar las figuras, ejecutarla con Matplotlib y revisar visualmente las 15.
