@@ -1042,3 +1042,42 @@ def test_order_by_group_by_y_join_sobre_tablas_reales(db, tmp_path):
         "notas.codigo",
         "nota",
     ]
+
+
+def test_la_concatenacion_de_python_coincide_con_output_schema_del_core(tmp_path):
+    """El contrato que sostiene las cabeceras del Panel de Resultados.
+
+    `join_output_schema` reimplementa en Python la regla de
+    `ExternalJoin::output_schema()`, porque la semantica necesita resolver
+    nombres sin construir un join. Si las dos versiones se separan,
+    `QueryResult.columns` miente: la consulta devuelve una cabecera que no
+    corresponde a sus filas. Esta prueba las ata.
+
+    Se usa `esquema_alumnos` para que entren los cinco tipos y un VARCHAR con
+    longitud, que es donde una divergencia pasaria desapercibida.
+    """
+
+    from engine.executor.native import from_native_schema
+    from engine.parser.bound_ast import join_output_schema
+
+    izquierda = esquema_alumnos()
+    derecha = esquema_notas()
+
+    del_core = quipudb.ExternalJoin(izquierda, 0, derecha, 1, dir=tmp_path).output_schema()
+    de_python = join_output_schema(
+        from_native_schema(izquierda, quipudb),
+        from_native_schema(derecha, quipudb),
+    )
+
+    assert de_python.table_name == del_core.table_name
+    assert de_python.key_column == del_core.key_column
+    assert [column.name for column in de_python.columns] == [
+        column.name for column in del_core.columns
+    ]
+    # `length` no se compara directamente: en el core vale 0 en los tipos fijos
+    # y en el modelo semantico vale None. Lo que tiene que coincidir es el
+    # tamano real, que es lo que decide el layout del registro.
+    assert [column.byte_size for column in de_python.columns] == [
+        column.byte_size() for column in del_core.columns
+    ]
+    assert de_python.record_size == del_core.record_size()
