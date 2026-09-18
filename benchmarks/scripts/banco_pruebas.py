@@ -13,7 +13,7 @@ from collections import defaultdict
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from statistics import median
 from tempfile import TemporaryDirectory, gettempdir
@@ -137,7 +137,7 @@ def registrar_entorno() -> dict[str, object]:
     """Registra datos observables; no adivina el hardware ni la compilacion del core."""
     reloj = time.get_clock_info("perf_counter")
     entorno = {
-        "fecha_utc": datetime.now(timezone.utc).isoformat(),
+        "fecha_utc": datetime.now(UTC).isoformat(),
         "sistema": platform.platform(),
         "arquitectura": platform.machine(),
         "cpu": platform.processor() or "no_detectado",
@@ -204,7 +204,7 @@ def ejecutar_banco(
     if not base_temporal.is_dir():
         raise ValueError(f"la carpeta base de temporales no existe: {base_temporal}")
 
-    identificador = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_" + uuid4().hex
+    identificador = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "_" + uuid4().hex
     entorno = registrar_entorno()
     entorno.update(
         {
@@ -224,43 +224,45 @@ def ejecutar_banco(
         for caso in casos:
             configuracion = None
             for repeticion in range(-calentamientos + 1, repeticiones + 1):
-                with TemporaryDirectory(prefix="quipudb_bench_", dir=base_temporal) as temporal:
-                    with caso.preparar(Path(temporal), dataset) as operacion:
-                        if operacion.n_operaciones < 1:
-                            raise ValueError("n_operaciones debe ser >= 1")
-                        actual = (dict(operacion.configuracion), operacion.n_operaciones)
-                        if configuracion is not None and configuracion != actual:
-                            raise ValueError("la configuracion cambio entre repeticiones")
-                        configuracion = actual
-                        espacio_antes = sum(operacion.medir_espacio())
-                        operacion.reiniciar_contadores()
-                        inicio = time.perf_counter_ns()
-                        operacion.ejecutar()
-                        tiempo_ns = time.perf_counter_ns() - inicio
-                        # Ninguna validacion ni consulta de archivos entre el reloj y esta copia.
-                        paginas_leidas, paginas_escritas = operacion.capturar_contadores()
-                        datos_bytes, indices_bytes = operacion.medir_espacio()
-                        operacion.validar()
-                        if repeticion > 0:
-                            mediciones.append(
-                                {
-                                    "ejecucion": identificador,
-                                    "caso": caso.nombre,
-                                    "tecnica": caso.tecnica,
-                                    "operacion": caso.operacion,
-                                    "n_registros": tamano,
-                                    "n_operaciones": operacion.n_operaciones,
-                                    "repeticion": repeticion,
-                                    "tiempo_ns": tiempo_ns,
-                                    "paginas_leidas": paginas_leidas,
-                                    "paginas_escritas": paginas_escritas,
-                                    "datos_bytes": datos_bytes,
-                                    "indices_bytes": indices_bytes,
-                                    "espacio_antes_bytes": espacio_antes,
-                                    "espacio_despues_bytes": datos_bytes + indices_bytes,
-                                    "estado": "ok",
-                                }
-                            )
+                with (
+                    TemporaryDirectory(prefix="quipudb_bench_", dir=base_temporal) as temporal,
+                    caso.preparar(Path(temporal), dataset) as operacion,
+                ):
+                    if operacion.n_operaciones < 1:
+                        raise ValueError("n_operaciones debe ser >= 1")
+                    actual = (dict(operacion.configuracion), operacion.n_operaciones)
+                    if configuracion is not None and configuracion != actual:
+                        raise ValueError("la configuracion cambio entre repeticiones")
+                    configuracion = actual
+                    espacio_antes = sum(operacion.medir_espacio())
+                    operacion.reiniciar_contadores()
+                    inicio = time.perf_counter_ns()
+                    operacion.ejecutar()
+                    tiempo_ns = time.perf_counter_ns() - inicio
+                    # Ninguna validacion ni consulta de archivos entre el reloj y esta copia.
+                    paginas_leidas, paginas_escritas = operacion.capturar_contadores()
+                    datos_bytes, indices_bytes = operacion.medir_espacio()
+                    operacion.validar()
+                    if repeticion > 0:
+                        mediciones.append(
+                            {
+                                "ejecucion": identificador,
+                                "caso": caso.nombre,
+                                "tecnica": caso.tecnica,
+                                "operacion": caso.operacion,
+                                "n_registros": tamano,
+                                "n_operaciones": operacion.n_operaciones,
+                                "repeticion": repeticion,
+                                "tiempo_ns": tiempo_ns,
+                                "paginas_leidas": paginas_leidas,
+                                "paginas_escritas": paginas_escritas,
+                                "datos_bytes": datos_bytes,
+                                "indices_bytes": indices_bytes,
+                                "espacio_antes_bytes": espacio_antes,
+                                "espacio_despues_bytes": datos_bytes + indices_bytes,
+                                "estado": "ok",
+                            }
+                        )
             for clave, valor in configuracion[0].items():
                 entorno[f"caso.{caso.nombre}.{tamano}.{clave}"] = valor
 
