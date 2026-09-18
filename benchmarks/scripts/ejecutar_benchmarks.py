@@ -1,17 +1,18 @@
-"""Ejecuta el banco reproducible con un unico caso: insertar sobre un Heap vacio."""
+"""Ejecuta el banco reproducible: Heap minimo (#38) o comparacion de archivos (#39)."""
 
 from __future__ import annotations
 
 import argparse
 import importlib
-from contextlib import contextmanager
 from pathlib import Path
 
 if __package__:
-    from .banco_pruebas import RESULTADOS, Caso, Dataset, Operacion, cargar_dataset, ejecutar_banco
+    from .banco_pruebas import RESULTADOS, Caso, cargar_dataset, ejecutar_banco
+    from .casos_archivos import caso_insercion, casos_archivos
     from .generar_datasets import SALIDA_PREDETERMINADA, TAMANOS
 else:
-    from banco_pruebas import RESULTADOS, Caso, Dataset, Operacion, cargar_dataset, ejecutar_banco
+    from banco_pruebas import RESULTADOS, Caso, cargar_dataset, ejecutar_banco
+    from casos_archivos import caso_insercion, casos_archivos
     from generar_datasets import SALIDA_PREDETERMINADA, TAMANOS
 
 
@@ -28,65 +29,11 @@ def cargar_bindings():
 
 
 def caso_insercion_heap(nativo, page_size: int | None = None) -> Caso:
-    """Adaptador minimo al core: no implementa ni simula ninguna estructura."""
+    """Conserva la entrada publica del caso minimo del issue #38."""
     if page_size is not None and page_size <= 0:
         raise ValueError("page_size debe ser positivo")
 
-    @contextmanager
-    def preparar(directorio: Path, dataset: Dataset):
-        db = nativo.Database(directorio / "catalogo.txt")
-        try:
-            esquema = nativo.Schema(
-                "alumnos",
-                [
-                    nativo.Column("codigo", nativo.DataType.INT),
-                    nativo.Column("nombre", nativo.DataType.VARCHAR, 16),
-                    nativo.Column("promedio", nativo.DataType.DOUBLE),
-                ],
-                key_column=0,
-            )
-            opciones = {} if page_size is None else {"page_size": page_size}
-            tabla = db.create_table(esquema, nativo.kind.HEAP, **opciones)
-            info = db.table_info("alumnos")
-            archivo_datos = directorio / info.file
-            db.flush()
-
-            def insertar():
-                for registro in dataset.registros:
-                    tabla.insert(registro)
-                db.flush()
-
-            def contadores():
-                stats = tabla.stats()
-                return int(stats.pages_read), int(stats.pages_written)
-
-            def validar():
-                # El scan ocurre despues de copiar los contadores de la medicion.
-                filas = tuple(tuple(fila) for fila in tabla.scan())
-                if tabla.size() != len(dataset.registros) or sorted(filas) != sorted(
-                    dataset.registros
-                ):
-                    raise RuntimeError("el Heap no contiene exactamente los registros insertados")
-
-            yield Operacion(
-                n_operaciones=len(dataset.registros),
-                ejecutar=insertar,
-                reiniciar_contadores=tabla.reset_stats,
-                capturar_contadores=contadores,
-                medir_espacio=lambda: (archivo_datos.stat().st_size, 0),
-                validar=validar,
-                configuracion={
-                    "page_size": info.page_size,
-                    "page_size_origen": "binding" if page_size is None else "explicito",
-                    "flush": "incluido_al_final_de_la_insercion",
-                    "columna_clave": "codigo",
-                    "modulo_nativo": nativo.__file__,
-                },
-            )
-        finally:
-            db.close("alumnos")
-
-    return Caso("heap_insercion", "heap", "insercion", preparar)
+    return caso_insercion(nativo, "heap", page_size)
 
 
 def nota_entorno(texto: str) -> tuple[str, str]:
@@ -98,6 +45,10 @@ def nota_entorno(texto: str) -> tuple[str, str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--suite", choices=("heap", "archivos"), default="heap")
+    parser.add_argument(
+        "--consultas", type=int, default=1000, help="busquedas PK por lote en archivos"
+    )
     parser.add_argument("--datasets", type=Path, default=SALIDA_PREDETERMINADA)
     parser.add_argument("--salida", type=Path, default=RESULTADOS)
     parser.add_argument(
@@ -119,11 +70,18 @@ def main() -> None:
         parser.error("no repitas tamanos")
     if len(dict(args.entorno)) != len(args.entorno):
         parser.error("no repitas claves de entorno")
+    if args.consultas < 1 or (args.suite == "archivos" and args.consultas > min(args.tamanos)):
+        parser.error("consultas debe estar entre 1 y el menor N seleccionado")
     try:
         datasets = [cargar_dataset(args.datasets / f"alumnos_{n}.csv", n) for n in args.tamanos]
-        caso = caso_insercion_heap(cargar_bindings(), args.page_size)
+        nativo = cargar_bindings()
+        casos = (
+            casos_archivos(nativo, args.consultas, args.page_size)
+            if args.suite == "archivos"
+            else [caso_insercion_heap(nativo, args.page_size)]
+        )
         rutas = ejecutar_banco(
-            [caso],
+            casos,
             datasets,
             salida=args.salida,
             temporales=args.temporales,
