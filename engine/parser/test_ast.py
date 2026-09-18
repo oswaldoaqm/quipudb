@@ -31,6 +31,7 @@ from engine.parser.ast import (
     SqlTypeName,
     StorageKind,
     StringLiteral,
+    TableRef,
     Wildcard,
 )
 from engine.parser.span import Span, combine_spans
@@ -96,7 +97,7 @@ def test_ast_representa_todas_las_sentencias_del_alcance() -> None:
     insert = InsertStatement(table, (integer,), span(0, 34))
     select = SelectStatement(
         (Wildcard(span(7, 8, 8)),),
-        table,
+        TableRef(table, table.span),
         condition,
         None,
         OrderBy(column, OrderDirection.DESC, span(34, 54, 35)),
