@@ -22,6 +22,7 @@ from engine.parser import (
     DeleteStatement,
     EndTransactionStatement,
     InsertStatement,
+    JoinRef,
     SelectStatement,
     SQLSemanticError,
     parse_sql,
@@ -241,13 +242,21 @@ class QueryProcessor:
         source: str,
         started_ns: int,
     ) -> QueryResult:
+        if isinstance(statement.source, JoinRef):
+            raise SQLSemanticError(
+                "JOIN todavia no se ejecuta",
+                statement.source.span,
+                source,
+            )
+        table_ref = statement.source.table
+
         try:
-            table_info = self._database.table_info(statement.table.name)
+            table_info = self._database.table_info(table_ref.name)
         except self._domain_errors as error:
             self._raise_semantic(
                 error,
-                f"la tabla {statement.table.name!r} no existe",
-                statement.table.span,
+                f"la tabla {table_ref.name!r} no existe",
+                table_ref.span,
                 source,
             )
 
@@ -255,7 +264,7 @@ class QueryProcessor:
         bound = bind_select(statement, schema, source)
         physical_plan = optimize_select(bound, from_native_table_info(table_info))
 
-        self._lock_or_abort(statement.table.name, LockMode.SHARED)
+        self._lock_or_abort(table_ref.name, LockMode.SHARED)
         try:
             try:
                 if bound.group_by is not None or bound.order_by is not None:
@@ -273,8 +282,8 @@ class QueryProcessor:
             except self._domain_errors as error:
                 self._raise_semantic(
                     error,
-                    f"no se pudo consultar la tabla {statement.table.name!r}",
-                    statement.table.span,
+                    f"no se pudo consultar la tabla {table_ref.name!r}",
+                    table_ref.span,
                     source,
                 )
 
@@ -286,7 +295,7 @@ class QueryProcessor:
                 plan=plan,
             )
         finally:
-            self._release_autocommit(statement.table.name)
+            self._release_autocommit(table_ref.name)
 
     def _delete(self, statement: DeleteStatement, source: str) -> QueryResult:
         try:
