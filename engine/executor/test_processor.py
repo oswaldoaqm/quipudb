@@ -174,6 +174,11 @@ class _FakeTable:
         self.rids: list[_RID] = []
         self.current_stats = _Stats()
 
+    def size(self) -> int:
+        """Filas de la tabla, como `TableFile::size()`. La usa el planner."""
+
+        return len(self.records)
+
     def insert(self, record: list[object]) -> _RID:
         self.insert_calls.append(record)
         if self.fail_insert is not None:

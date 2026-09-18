@@ -108,7 +108,7 @@ def test_bind_select_rechaza_tabla_distinta_y_conserva_source() -> None:
     with pytest.raises(SQLSemanticError) as caught:
         bind_select(statement, _schema(), source)
 
-    assert caught.value.span == statement.table.span
+    assert caught.value.span == statement.source.table.span
     assert caught.value.source == source
     assert "Datos" in caught.value.message
     assert "datos" in caught.value.message

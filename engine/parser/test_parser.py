@@ -21,11 +21,13 @@ from engine.parser.ast import (
     EndTransactionStatement,
     InsertStatement,
     IntegerLiteral,
+    JoinRef,
     OrderDirection,
     SelectStatement,
     SqlTypeName,
     StorageKind,
     StringLiteral,
+    TableRef,
     Wildcard,
 )
 from engine.parser.errors import SQLParseError, SQLUnsupportedError
@@ -111,7 +113,8 @@ def test_select_wildcard_sin_clausulas() -> None:
     statement = parse_sql("SELECT * FROM alumnos")
 
     assert isinstance(statement, SelectStatement)
-    assert statement.table.name == "alumnos"
+    assert isinstance(statement.source, TableRef)
+    assert statement.source.table.name == "alumnos"
     assert isinstance(statement.projections[0], Wildcard)
     assert statement.where is None
     assert statement.group_by is None
@@ -349,12 +352,10 @@ def test_rechaza_multiples_sentencias_aunque_tengan_punto_y_coma() -> None:
     ("sql", "feature"),
     [
         ("UPDATE alumnos SET nombre = 'Ana'", "UPDATE"),
-        ("SELECT * FROM alumnos JOIN cursos", "JOIN"),
         ("SELECT * FROM alumnos WHERE id = 1 AND activo = TRUE", "AND"),
         ("INSERT INTO alumnos VALUES (NULL)", "NULL"),
         ("SELECT * FROM alumnos LIMIT 1", "LIMIT"),
         ("SELECT update FROM alumnos", "UPDATE"),
-        ("SELECT * FROM join", "JOIN"),
         ("CREATE INDEX por_id", "INDEX"),
         ("CREATE TABLE null (id INT)", "NULL"),
         ("SELECT * FROM alumnos WHERE or = 1", "OR"),
@@ -374,7 +375,8 @@ def test_identificadores_preservan_casing_original() -> None:
     projection = statement.projections[0]
     assert isinstance(projection, ColumnReference)
     assert projection.name.name == "Codigo"
-    assert statement.table.name == "Alumnos"
+    assert isinstance(statement.source, TableRef)
+    assert statement.source.table.name == "Alumnos"
 
 
 @pytest.mark.parametrize("identifier", ["ıN", "ıS", "ſelect"])
@@ -385,3 +387,80 @@ def test_identificadores_unicode_no_se_reinterpretan_como_keywords(identifier: s
     projection = statement.projections[0]
     assert isinstance(projection, ColumnReference)
     assert projection.name.name == identifier
+
+
+def test_join_construye_un_arbol_de_fuentes_con_columnas_calificadas() -> None:
+    statement = parse_sql(
+        "SELECT * FROM alumnos JOIN cursos ON alumnos.codigo = cursos.alumno"
+    )
+
+    assert isinstance(statement, SelectStatement)
+    assert isinstance(statement.source, JoinRef)
+
+    left = statement.source.left
+    right = statement.source.right
+    assert isinstance(left, TableRef)
+    assert isinstance(right, TableRef)
+    assert left.table.name == "alumnos"
+    assert right.table.name == "cursos"
+
+    izquierda = statement.source.left_column
+    derecha = statement.source.right_column
+    assert izquierda.qualifier is not None
+    assert izquierda.qualifier.name == "alumnos"
+    assert izquierda.name.name == "codigo"
+    assert derecha.qualifier is not None
+    assert derecha.qualifier.name == "cursos"
+    assert derecha.name.name == "alumno"
+
+
+def test_join_convive_con_where_group_by_y_order_by() -> None:
+    statement = parse_sql(
+        "SELECT cursos.nombre, COUNT(*) FROM alumnos JOIN cursos "
+        "ON alumnos.codigo = cursos.alumno WHERE alumnos.promedio >= 14 "
+        "GROUP BY cursos.nombre ORDER BY cursos.nombre DESC"
+    )
+
+    assert isinstance(statement, SelectStatement)
+    assert isinstance(statement.source, JoinRef)
+    assert statement.where is not None
+    assert statement.group_by is not None
+    assert statement.order_by is not None
+    assert statement.order_by.direction is OrderDirection.DESC
+
+
+def test_una_columna_sin_calificar_conserva_qualifier_en_none() -> None:
+    statement = parse_sql("SELECT codigo FROM alumnos")
+
+    assert isinstance(statement, SelectStatement)
+    projection = statement.projections[0]
+    assert isinstance(projection, ColumnReference)
+    assert projection.qualifier is None
+
+
+def test_el_span_de_una_columna_calificada_cubre_tabla_y_columna() -> None:
+    sql = "SELECT alumnos.codigo FROM alumnos"
+    statement = parse_sql(sql)
+
+    assert isinstance(statement, SelectStatement)
+    projection = statement.projections[0]
+    assert isinstance(projection, ColumnReference)
+    assert sql[projection.span.start : projection.span.end] == "alumnos.codigo"
+
+
+@pytest.mark.parametrize(
+    ("sql", "message"),
+    [
+        ("SELECT * FROM alumnos JOIN cursos", "se esperaba ON"),
+        ("SELECT * FROM alumnos JOIN cursos ON alumnos.codigo", "igualdad entre dos columnas"),
+        ("SELECT * FROM alumnos JOIN cursos ON alumnos.codigo > cursos.alumno",
+         "igualdad entre dos columnas"),
+        ("SELECT * FROM alumnos JOIN cursos ON alumnos.codigo = 7", "se esperaba una columna"),
+        ("SELECT * FROM join", "se esperaba el nombre de la tabla"),
+        ("SELECT alumnos. FROM alumnos", "despues de '.'"),
+        ("SELECT * FROM a JOIN b ON a.x = b.y JOIN c ON b.y = c.z", "un solo JOIN"),
+    ],
+)
+def test_join_mal_formado_da_un_error_de_parseo_concreto(sql: str, message: str) -> None:
+    with pytest.raises(SQLParseError, match=message):
+        parse_sql(sql)
