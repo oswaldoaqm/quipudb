@@ -222,3 +222,29 @@ def test_falta_de_metadata_de_una_tabla_se_dice_con_su_nombre() -> None:
 
     with pytest.raises(ValueError, match="cursos"):
         optimize_select(bound, {"alumnos": _heap("alumnos")})
+
+
+def test_un_predicado_empujado_al_lado_derecho_anula_la_sonda() -> None:
+    # El INL sondea la tabla, no el flujo filtrado: con un WHERE en este lado
+    # devolveria filas ya descartadas. Sin sonda, el join va por hash.
+    plan = _plan(
+        f"SELECT * {_JOIN} WHERE cursos.curso = 'BD2'",
+        _heap("alumnos"),
+        _heap("cursos", _hash_index(0)),
+    )
+
+    assert plan.source.right.residual_filter is True
+    assert plan.source.probe is None
+    assert plan.source.strategy is JoinStrategy.HASH
+
+
+def test_un_predicado_en_el_lado_izquierdo_no_estorba_a_la_sonda() -> None:
+    indice = _hash_index(0)
+    plan = _plan(
+        f"SELECT * {_JOIN} WHERE alumnos.promedio = 15",
+        _heap("alumnos"),
+        _heap("cursos", indice),
+    )
+
+    assert plan.source.probe == indice
+    assert plan.source.strategy is JoinStrategy.AUTO

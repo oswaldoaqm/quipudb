@@ -380,9 +380,16 @@ def _choose_probe(
     Solo una hoja se puede sondear: la salida de otro join no se busca por
     clave, se recorre. La clave primaria gana al indice secundario porque
     ``TableFile::search`` resuelve sin el ``fetch`` adicional.
+
+    Y solo si esa hoja se recorre ENTERA. El index nested loop sondea la tabla
+    de verdad, no el flujo que produjo la hoja: con un predicado empujado a
+    este lado, sondear devolveria filas que el WHERE ya habia descartado. En
+    ese caso no hay sonda y el join va por hash, que si consume el flujo.
     """
 
     if not isinstance(right, PhysicalTableAccess):
+        return None, False
+    if right.route is not AccessRoute.SCAN or right.residual_filter:
         return None, False
     columna = node.right_column.index
     if columna == node.right.schema.key_column and right.table.structure in {
