@@ -5,6 +5,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from engine.executor.result import QueryResult
+from engine.parser.ast import SqlTypeName
 from engine.planner.plan import Op, Plan, Step, Structure
 
 
@@ -89,3 +90,23 @@ def test_rejects_rows_whose_width_differs_from_columns(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         QueryResult(columns=columns, rows=rows)
+
+
+def test_column_types_se_copia_a_tupla_como_las_columnas() -> None:
+    tipos = [SqlTypeName.INT, SqlTypeName.VARCHAR]
+
+    result = QueryResult(columns=["id", "nombre"], column_types=tipos, rows=[[1, "ana"]])
+    tipos.append(SqlTypeName.BOOL)
+
+    assert result.column_types == (SqlTypeName.INT, SqlTypeName.VARCHAR)
+
+
+def test_rechaza_un_numero_de_tipos_distinto_al_de_columnas() -> None:
+    with pytest.raises(ValueError, match="1 tipos para 2 columnas"):
+        QueryResult(columns=("id", "nombre"), column_types=(SqlTypeName.INT,))
+
+
+def test_sin_tipos_sigue_siendo_valido_para_sentencias_sin_filas() -> None:
+    result = QueryResult(affected_rows=3)
+
+    assert result.column_types == ()
