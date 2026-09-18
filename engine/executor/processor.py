@@ -21,15 +21,18 @@ from engine.parser import (
     CreateTableStatement,
     DeleteStatement,
     EndTransactionStatement,
+    FromSource,
     InsertStatement,
     JoinRef,
     SelectStatement,
     SQLSemanticError,
+    TableRef,
     parse_sql,
 )
+from engine.parser.bound_ast import BoundSchema
 from engine.parser.semantic import bind_create_table, bind_delete, bind_insert, bind_select
 from engine.planner.native_catalog import from_native_table_info
-from engine.planner.optimizer import optimize_delete, optimize_select
+from engine.planner.optimizer import TableMetadata, optimize_delete, optimize_select
 from engine.planner.plan import Plan
 from engine.transactions import (
     DEFAULT_LOCK_TIMEOUT,
@@ -242,30 +245,37 @@ class QueryProcessor:
         source: str,
         started_ns: int,
     ) -> QueryResult:
-        if isinstance(statement.source, JoinRef):
-            raise SQLSemanticError(
-                "JOIN todavia no se ejecuta",
-                statement.source.span,
-                source,
-            )
-        table_ref = statement.source.table
+        referencias = _table_refs(statement.source)
+        esquemas: dict[str, BoundSchema] = {}
+        metadata: dict[str, TableMetadata] = {}
+        for referencia in referencias:
+            try:
+                table_info = self._database.table_info(referencia.table.name)
+                filas = int(self._database.table(referencia.table.name).size())
+            except self._domain_errors as error:
+                self._raise_semantic(
+                    error,
+                    f"la tabla {referencia.table.name!r} no existe",
+                    referencia.table.span,
+                    source,
+                )
+            esquemas[referencia.table.name] = from_native_schema(table_info.schema, self._native)
+            metadata[referencia.table.name] = from_native_table_info(table_info, rows=filas)
 
+        bound = bind_select(statement, esquemas, source)
+        physical_plan = optimize_select(bound, metadata)
+
+        primera = referencias[0].table
+        # Orden alfabetico, no el del FROM: dos consultas concurrentes sobre el
+        # mismo par de tablas se interbloquearian si cada una los tomara en su
+        # propio orden. Ver el contrato acordado en el issue #96.
+        bloqueadas = sorted(esquemas)
+        tomadas: list[str] = []
         try:
-            table_info = self._database.table_info(table_ref.name)
-        except self._domain_errors as error:
-            self._raise_semantic(
-                error,
-                f"la tabla {table_ref.name!r} no existe",
-                table_ref.span,
-                source,
-            )
+            for nombre in bloqueadas:
+                self._lock_or_abort(nombre, LockMode.SHARED)
+                tomadas.append(nombre)
 
-        schema = from_native_schema(table_info.schema, self._native)
-        bound = bind_select(statement, schema, source)
-        physical_plan = optimize_select(bound, from_native_table_info(table_info))
-
-        self._lock_or_abort(table_ref.name, LockMode.SHARED)
-        try:
             try:
                 if bound.group_by is not None or bound.order_by is not None:
                     execution = execute_external_select(
@@ -277,13 +287,17 @@ class QueryProcessor:
                     )
                 else:
                     execution = execute_select(
-                        self._database, self._native, physical_plan, source
+                        self._database,
+                        self._native,
+                        physical_plan,
+                        source,
+                        self._external_options.temp_dir,
                     )
             except self._domain_errors as error:
                 self._raise_semantic(
                     error,
-                    f"no se pudo consultar la tabla {table_ref.name!r}",
-                    table_ref.span,
+                    f"no se pudo consultar la tabla {primera.name!r}",
+                    primera.span,
                     source,
                 )
 
@@ -295,7 +309,8 @@ class QueryProcessor:
                 plan=plan,
             )
         finally:
-            self._release_autocommit(table_ref.name)
+            for nombre in reversed(tomadas):
+                self._release_autocommit(nombre)
 
     def _delete(self, statement: DeleteStatement, source: str) -> QueryResult:
         try:
@@ -359,3 +374,13 @@ class QueryProcessor:
         if detail:
             message = f"{message}: {detail}"
         raise SQLSemanticError(message, span, source) from error
+
+
+def _table_refs(source: FromSource) -> list[TableRef]:
+    """Las hojas del ``FROM``, de izquierda a derecha."""
+
+    if isinstance(source, TableRef):
+        return [source]
+    if not isinstance(source, JoinRef):
+        raise TypeError(f"fuente desconocida en el FROM: {type(source).__name__}")
+    return _table_refs(source.left) + _table_refs(source.right)
