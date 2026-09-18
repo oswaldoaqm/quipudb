@@ -1,4 +1,4 @@
-"""Ejecuta el banco reproducible: Heap minimo (#38) o comparacion de archivos (#39)."""
+"""Ejecuta el banco reproducible: Heap minimo (#38), archivos (#39) o indices (#40)."""
 
 from __future__ import annotations
 
@@ -9,10 +9,12 @@ from pathlib import Path
 if __package__:
     from .banco_pruebas import RESULTADOS, Caso, cargar_dataset, ejecutar_banco
     from .casos_archivos import caso_insercion, casos_archivos
+    from .casos_indices import casos_indices
     from .generar_datasets import SALIDA_PREDETERMINADA, TAMANOS
 else:
     from banco_pruebas import RESULTADOS, Caso, cargar_dataset, ejecutar_banco
     from casos_archivos import caso_insercion, casos_archivos
+    from casos_indices import casos_indices
     from generar_datasets import SALIDA_PREDETERMINADA, TAMANOS
 
 
@@ -45,9 +47,12 @@ def nota_entorno(texto: str) -> tuple[str, str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--suite", choices=("heap", "archivos"), default="heap")
+    parser.add_argument("--suite", choices=("heap", "archivos", "indices"), default="heap")
     parser.add_argument(
-        "--consultas", type=int, default=1000, help="busquedas PK por lote en archivos"
+        "--consultas", type=int, default=1000, help="busquedas de igualdad por lote"
+    )
+    parser.add_argument(
+        "--consultas-rango", type=int, default=100, help="rangos por lote en indices"
     )
     parser.add_argument("--datasets", type=Path, default=SALIDA_PREDETERMINADA)
     parser.add_argument("--salida", type=Path, default=RESULTADOS)
@@ -70,16 +75,21 @@ def main() -> None:
         parser.error("no repitas tamanos")
     if len(dict(args.entorno)) != len(args.entorno):
         parser.error("no repitas claves de entorno")
-    if args.consultas < 1 or (args.suite == "archivos" and args.consultas > min(args.tamanos)):
+    if args.consultas < 1 or (args.suite != "heap" and args.consultas > min(args.tamanos)):
         parser.error("consultas debe estar entre 1 y el menor N seleccionado")
+    if args.suite == "indices" and not 1 <= args.consultas_rango <= min(
+        n - n // 100 + 1 for n in args.tamanos
+    ):
+        parser.error("consultas-rango debe estar entre 1 y N - N//100 + 1 para todos los tamanos")
     try:
         datasets = [cargar_dataset(args.datasets / f"alumnos_{n}.csv", n) for n in args.tamanos]
         nativo = cargar_bindings()
-        casos = (
-            casos_archivos(nativo, args.consultas, args.page_size)
-            if args.suite == "archivos"
-            else [caso_insercion_heap(nativo, args.page_size)]
-        )
+        if args.suite == "indices":
+            casos = casos_indices(nativo, args.consultas, args.consultas_rango, args.page_size)
+        elif args.suite == "archivos":
+            casos = casos_archivos(nativo, args.consultas, args.page_size)
+        else:
+            casos = [caso_insercion_heap(nativo, args.page_size)]
         rutas = ejecutar_banco(
             casos,
             datasets,
