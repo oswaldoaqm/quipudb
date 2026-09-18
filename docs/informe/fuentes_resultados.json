@@ -1,0 +1,21 @@
+{
+  "descripcion": "Fuentes oficiales inmutables de #39 y #40. Rutas relativas a benchmarks/results; CSV ignorados por Git.",
+  "corridas": {
+    "39": {
+      "ejecucion": "20260918T025045Z_530093b2675c4ff8a483020858915b56",
+      "archivos": {
+        "mediciones": {"nombre": "20260918T025045Z_530093b2675c4ff8a483020858915b56_mediciones.csv", "sha256": "b21ac72c8562ba2a1e4249af1bbf3ea32504d068e97e9876224a08609158dfb0"},
+        "resumen": {"nombre": "20260918T025045Z_530093b2675c4ff8a483020858915b56_resumen.csv", "sha256": "71d88181d9fcca068ab8990e208943092b5c1140300a94a988fe9ecad683a6c9"},
+        "entorno": {"nombre": "20260918T025045Z_530093b2675c4ff8a483020858915b56_entorno.csv", "sha256": "bf5ef18a8741eb5cf3d3bffe7d87a125c53f5bff735d9dd470f9384c6cfa2ee2"}
+      }
+    },
+    "40": {
+      "ejecucion": "20260918T035512Z_4e75ba53c6a6497798a0d95a278f9dfe",
+      "archivos": {
+        "mediciones": {"nombre": "20260918T035512Z_4e75ba53c6a6497798a0d95a278f9dfe_mediciones.csv", "sha256": "5d1536b56726ecde2d8105fc21f1a2d3068fb6b6e058356d17dcdfa3e5ea2683"},
+        "resumen": {"nombre": "20260918T035512Z_4e75ba53c6a6497798a0d95a278f9dfe_resumen.csv", "sha256": "eb679fbe2afadac905f645b1ce2c6d93b04ecdb5639fa33dec2d0e2975cdb79e"},
+        "entorno": {"nombre": "20260918T035512Z_4e75ba53c6a6497798a0d95a278f9dfe_entorno.csv", "sha256": "ce4c473655e5feec99b2a9b72ebaaf9df2d13f247d3d2a32e8cf0db3ad7f8cce"}
+      }
+    }
+  }
+}
