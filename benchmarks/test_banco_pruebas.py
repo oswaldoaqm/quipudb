@@ -241,19 +241,43 @@ def test_formato_csv_agrupacion_y_entorno(control, datasets, tmp_path):
         notas={"compilacion_core": "declaracion_de_prueba"},
     )
     cabecera, filas = leer_csv(rutas["mediciones"])
-    assert cabecera == (
-        "ejecucion,caso,tecnica,operacion,n_registros,n_operaciones,repeticion,tiempo_ns,"
-        "paginas_leidas,paginas_escritas,datos_bytes,indices_bytes,espacio_antes_bytes,"
-        "espacio_despues_bytes,estado"
-    ).split(",")
+    assert cabecera == [
+        "ejecucion",
+        "caso",
+        "tecnica",
+        "operacion",
+        "n_registros",
+        "n_operaciones",
+        "repeticion",
+        "tiempo_ns",
+        "paginas_leidas",
+        "paginas_escritas",
+        "datos_bytes",
+        "indices_bytes",
+        "espacio_antes_bytes",
+        "espacio_despues_bytes",
+        "estado",
+    ]
     assert len(filas) == 12
     cabecera, resumen = leer_csv(rutas["resumen"])
-    assert cabecera == (
-        "ejecucion,caso,tecnica,operacion,n_registros,n_operaciones,repeticiones,"
-        "mediana_tiempo_ns,mediana_paginas_leidas,mediana_paginas_escritas,mediana_datos_bytes,"
-        "mediana_indices_bytes,mediana_espacio_antes_bytes,mediana_espacio_despues_bytes,"
-        "min_tiempo_ns,max_tiempo_ns"
-    ).split(",")
+    assert cabecera == [
+        "ejecucion",
+        "caso",
+        "tecnica",
+        "operacion",
+        "n_registros",
+        "n_operaciones",
+        "repeticiones",
+        "mediana_tiempo_ns",
+        "mediana_paginas_leidas",
+        "mediana_paginas_escritas",
+        "mediana_datos_bytes",
+        "mediana_indices_bytes",
+        "mediana_espacio_antes_bytes",
+        "mediana_espacio_despues_bytes",
+        "min_tiempo_ns",
+        "max_tiempo_ns",
+    ]
     assert len(resumen) == 6
     assert {(fila["caso"], int(fila["n_registros"])) for fila in resumen} == {
         (nombre, tamano) for nombre in ("prueba", "otra_prueba") for tamano in TAMANOS
@@ -380,6 +404,7 @@ def test_cli_ayuda_y_dataset_ausente_fuera_del_repo(tmp_path):
         cwd=tmp_path,
         capture_output=True,
         text=True,
+        check=False,
     )
     assert resultado.returncode == 1
     assert "dataset inexistente" in resultado.stderr
