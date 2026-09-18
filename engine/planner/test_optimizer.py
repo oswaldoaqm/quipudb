@@ -15,6 +15,7 @@ from engine.parser.bound_ast import (
     BoundDeleteStatement,
     BoundSchema,
     BoundSelectStatement,
+    BoundTableRef,
 )
 from engine.parser.semantic import bind_select
 from engine.parser.span import Span
@@ -61,7 +62,7 @@ def _between(index: int = 1) -> BoundBetweenCondition:
 
 def _select(where=None) -> BoundSelectStatement:
     return BoundSelectStatement(
-        schema=_SCHEMA,
+        source=BoundTableRef(_SCHEMA, _SPAN),
         projections=tuple(_column(index) for index in range(len(_SCHEMA.columns))),
         wildcard=True,
         where=where,
