@@ -344,3 +344,129 @@ entradas: no se supone estabilidad universal de `random.sample` entre versiones.
 El informe [comparacion_heap_secuencial.md](comparacion_heap_secuencial.md) deja
 separados el protocolo, las hipotesis tecnicas y los resultados oficiales pendientes.
 No se generan graficas ni se extiende la comparacion a indices (#40/#41).
+
+## Comparacion de indices (issue #40)
+
+`--suite indices` ejecuta 21 casos por tamano usando los mismos CSV de #5 y el
+banco de #38 sin modificaciones. Las suites `heap` (predeterminada) y `archivos`
+conservan su comportamiento. No se modifican core, bindings ni datasets.
+
+`tecnica` usa `bplus_clustered`, `bplus_unclustered` o `extendible_hash`;
+`caso` es `<tecnica>_<operacion>`:
+
+| Operacion | Tecnicas | n_operaciones |
+|---|---|---|
+| `carga_indexada` | Las tres | N inserciones logicas |
+| `construccion_indice` | Los dos secundarios | 1 create_index |
+| `busqueda_igualdad` | Las tres | consultas (1000 por defecto) |
+| `busqueda_rango` | Los dos B+ | consultas-rango (100 por defecto) |
+| `recorrido_ordenado` | Los dos B+ | 1 recorrido completo de N filas |
+| `insercion_incremental` | Las tres | D=N//10 altas |
+| `eliminacion_incremental` | Las tres | D=N//10 bajas |
+| `mantenimiento_mixto` | Las tres | 2*D*3 operaciones logicas |
+
+### Preparacion y operaciones medidas
+
+Todas las repeticiones y calentamientos usan catalogos/archivos independientes.
+Esquema, lectura del CSV, conversion, seleccion de consultas, oraculos esperados,
+preparacion, reset de contadores y validacion quedan fuera del cronometro.
+Los bindings se importan solo al ejecutar; no son necesarios para los tests unitarios.
+
+- **Carga indexada:** crear tabla vacia y, para secundarios, indice vacio fuera
+  del cronometro. Agrupado inserta en la tabla-arbol; secundarios insertan en Heap
+  y luego en el indice con el RID recibido. Medir todas las altas en orden CSV y
+  un flush final. Una insercion logica puede requerir dos llamadas nativas.
+- **Construccion:** cargar Heap sin indice durante preparacion. Medir un unico
+  `db.create_index()` completo y flush: incluye catalogo, archivo y recorrido de
+  los datos. Reset del Heap antes; el indice es nuevo y sus contadores no se
+  reinician al terminar build. No existe un caso equivalente de indice secundario
+  sobre B+ agrupado, ni se resta el tiempo de otra corrida para aislar su costo.
+- **Igualdad:** cargar fuera del intervalo con la politica de carga indexada.
+  Reutilizar `seleccionar_claves()` de #39, semilla 20260906, sin reemplazo sobre
+  1..N y generador independiente por tamano. Mismas claves para las tres tecnicas.
+  Agrupado hace search; secundarios hacen index.search y heap.read por cada RID.
+  Materializar todas las respuestas dentro, validar fuera. No flush de consultas.
+- **Rangos:** 100 intervalos inclusivos por defecto, de ancho N//100 (1% para los
+  tres tamanos). Inicios distintos muestreados localmente con la misma semilla;
+  los intervalos pueden solaparse. Mismos rangos para ambos B+. Resolver los RIDs
+  del no agrupado dentro del intervalo. Guardar y validar respuestas completas.
+- **Orden:** un recorrido completo ascendente por codigo. Agrupado usa scan;
+  no agrupado usa scan del indice y lee los RIDs en ese orden. La validacion NO
+  ordena el resultado para ocultar un recorrido incorrecto. La carga no se mide.
+- **Altas incrementales:** sobre N iniciales, insertar D=N//10 registros derivados
+  en memoria antes de medir. Se muestrean D codigos c y se forman registros
+  `(N+c, "alumno" + str(N+c), promedio_original_de_c)`. Son claves nuevas,
+  mezcladas pero mayores que las iniciales; no se alteran los CSV comunes. Medir
+  insercion completa y flush final; validar N+D registros y sus entradas.
+- **Bajas incrementales:** sobre N iniciales, retirar D claves de la misma muestra.
+  En secundarios se elimina del indice y del Heap. Medir lote y flush; validar
+  N-D sobrevivientes, retornos de remove y ausencia de entradas/RIDs incorrectos.
+- **Mixto:** sobre N iniciales, repetir tres veces: borrar D claves y reinsertar
+  sus registros en el orden muestreado. Misma muestra en los tres ciclos y entre
+  tecnicas. Siempre usar el RID NUEVO al reinsertar en el indice. Un solo flush
+  al final del lote medido. Validar N filas originales; el tiempo no se atribuye
+  exclusivamente a insertar o borrar.
+
+Los deletes/insert del adaptador coordinan operaciones, no implementan estructuras
+ni transacciones: si falla una llamada, el banco aborta y limpia el estado temporal,
+sin exportar resultados incompletos. No intenta recuperarse y continuar midiendo.
+
+Hash no soporta rango ni orden nativos: se registran `rango_nativo=False` y
+`orden_nativo=False` en el entorno. No hay casos emulados, filas ficticias ni
+tiempos cero; tampoco se introduce un sort/scan alternativo bajo el nombre Hash.
+
+### Metricas y configuracion
+
+No cambian las cabeceras de los tres CSV. El adaptador copia las paginas del
+agrupado, o suma paginas de Heap e indice en los secundarios. El banco captura
+esas copias inmediatamente despues del reloj, antes de metadata/espacio/validacion.
+
+Los bytes se obtienen con stat de las rutas de table_info.file y de su metadata
+indexes, despues de flush. Para agrupado, datos_bytes incluye el archivo integrado
+y indices_bytes es cero archivos secundarios; no significa costo de indexacion
+cero. Para secundarios, datos_bytes es Heap e indices_bytes es el indice real.
+Antes de construir el indice su espacio es cero; despues se mide el archivo creado.
+Catalogo, CSV, RAM y pico temporal no se contabilizan como espacio de tabla/indice.
+
+La configuracion por caso en entorno conserva pagina real y origen, modulo nativo,
+politica de carga, semilla, hashes de consultas/altas/bajas, selectividad, D, ciclos,
+vivos iniciales/finales esperados y politica de flush. N en n_registros es el tamano
+del dataset inicial; no el numero de filas despues de un lote de modificaciones.
+Los vivos finales esperados se validan, no se presentan como nuevos contadores.
+
+El costo incluye Python/bindings y resolucion de RIDs; las funciones C++ lookup,
+lookup_range y estadisticas internas no estan expuestas. No se supone orden del
+arbol, altura, capacidad de bucket ni numero de splits/merges. Solo se configura
+page-size si se solicita, y se registra el valor real de table_info.page_size.
+Las paginas instrumentadas pueden omitir E/S de metadata; no representan lecturas
+fisicas de SSD. Se mantienen las limitaciones de cache, fsync y entorno de #38/#39.
+
+### Validacion y ejecucion
+
+Con el Python compatible con los bindings Release:
+
+```bash
+# Solo validacion pequena, no corrida oficial:
+PYTHONPATH=build-py/bindings python -B benchmarks/scripts/ejecutar_benchmarks.py \
+  --suite indices --tamanos 1000 --consultas 1000 --consultas-rango 100 \
+  --calentamientos 1 --repeticiones 2 --entorno proposito=validacion_indices_1k_no_oficial
+
+PYTHONPATH=build-py/bindings python -B -m pytest benchmarks/test_generar_datasets.py \
+  benchmarks/test_banco_pruebas.py benchmarks/test_casos_archivos.py \
+  benchmarks/test_casos_indices.py -q -rs -p no:cacheprovider
+ruff check engine benchmarks
+ruff format --check benchmarks/scripts/casos_indices.py benchmarks/scripts/ejecutar_benchmarks.py benchmarks/test_casos_indices.py
+git diff --check
+```
+
+consultas debe estar entre 1 y el menor N. consultas-rango entre 1 y el menor
+`N - N//100 + 1`. Los tests nativos usan solamente 1k y se saltan con motivo claro
+si no existe el binding compatible; los unitarios usan dobles solo en temporales.
+
+La futura corrida oficial requiere autorizacion aparte, entorno verificado y
+`--tamanos 1000 10000 100000 --calentamientos 1 --repeticiones 5`. Producira 315
+mediciones y 63 resumenes si se ejecutan los 21 casos. No se lanza automaticamente.
+Conservar sus tres CSV ignorados por Git separados de los de validacion.
+
+El informe [comparacion_indices.md](comparacion_indices.md) describe capacidades,
+sesgos y resultados pendientes; no declara ganadores con la validacion pequena.
