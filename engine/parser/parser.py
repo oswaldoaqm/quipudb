@@ -15,16 +15,19 @@ from engine.parser.ast import (
     ColumnReference,
     ComparisonCondition,
     ComparisonOperator,
+    CreateIndexStatement,
     CreateTableStatement,
     DateLiteral,
     DeleteStatement,
     DoubleLiteral,
     DropTableStatement,
     EndTransactionStatement,
+    ExplainStatement,
     FromSource,
     GroupBy,
     Identifier,
     InsertStatement,
+    IndexKind,
     IntegerLiteral,
     JoinRef,
     Literal,
@@ -71,7 +74,6 @@ _UNSUPPORTED_WORDS = {
     "EXCEPT",
     "HAVING",
     "IN",
-    "INDEX",
     "INTERSECT",
     "IS",
     "LIKE",
@@ -149,11 +151,13 @@ class _Parser:
 
     def _statement(self) -> Statement:
         if self._match(TokenKind.CREATE):
-            return self._create_table(self._previous())
+            return self._create(self._previous())
         if self._match(TokenKind.INSERT):
             return self._insert(self._previous())
         if self._match(TokenKind.SELECT):
             return self._select(self._previous())
+        if self._match(TokenKind.EXPLAIN):
+            return self._explain(self._previous())
         if self._match(TokenKind.DELETE):
             return self._delete(self._previous())
         if self._match(TokenKind.DROP):
@@ -168,12 +172,21 @@ class _Parser:
             self._raise_unsupported(token)
         raise self._error(
             token,
-            "se esperaba CREATE TABLE, DROP TABLE, INSERT INTO, SELECT, DELETE FROM, "
-            "BEGIN TRANSACTION o END TRANSACTION",
+            "se esperaba CREATE TABLE, CREATE INDEX, DROP TABLE, INSERT INTO, SELECT, "
+            "EXPLAIN, DELETE FROM, BEGIN TRANSACTION o END TRANSACTION",
+        )
+
+    def _create(self, start: Token) -> CreateTableStatement | CreateIndexStatement:
+        if self._match(TokenKind.TABLE):
+            return self._create_table(start)
+        if self._match(TokenKind.INDEX):
+            return self._create_index(start)
+        raise self._error(
+            self._peek(),
+            "se esperaba TABLE o INDEX despues de CREATE",
         )
 
     def _create_table(self, start: Token) -> CreateTableStatement:
-        self._expect(TokenKind.TABLE, "se esperaba TABLE despues de CREATE")
         table = self._identifier("se esperaba el nombre de la tabla")
         self._expect(TokenKind.LPAREN, "se esperaba '(' despues del nombre de la tabla")
 
@@ -200,6 +213,32 @@ class _Parser:
             columns=tuple(columns),
             storage=storage,
             span=combine_spans(start.span, end.span),
+        )
+
+    def _create_index(self, start: Token) -> CreateIndexStatement:
+        index = self._identifier("se esperaba el nombre del indice")
+        self._expect(TokenKind.ON, "se esperaba ON despues del nombre del indice")
+        table = self._identifier("se esperaba el nombre de la tabla")
+        self._expect(TokenKind.LPAREN, "se esperaba '(' despues del nombre de la tabla")
+        column = self._identifier("se esperaba el nombre de la columna indexada")
+        self._expect(TokenKind.RPAREN, "se esperaba ')' despues de la columna indexada")
+        self._expect(TokenKind.USING, "se esperaba USING despues de la columna indexada")
+
+        if self._match(TokenKind.BPLUS, TokenKind.BPLUS_UNCLUSTERED):
+            kind = IndexKind.BPLUS_UNCLUSTERED
+        elif self._match(TokenKind.HASH, TokenKind.EXTENDIBLE_HASH):
+            kind = IndexKind.EXTENDIBLE_HASH
+        else:
+            raise self._error(
+                self._peek(),
+                "se esperaba BPLUS, BPLUS_UNCLUSTERED, HASH o EXTENDIBLE_HASH despues de USING",
+            )
+        return CreateIndexStatement(
+            index=index,
+            table=table,
+            column=column,
+            kind=kind,
+            span=combine_spans(start.span, self._previous().span),
         )
 
     def _column_definition(self) -> ColumnDefinition:
@@ -302,6 +341,19 @@ class _Parser:
             group_by=group_by,
             order_by=order_by,
             span=combine_spans(start.span, end_span),
+        )
+
+    def _explain(self, start: Token) -> ExplainStatement:
+        analyze = self._match(TokenKind.ANALYZE)
+        select = self._expect(
+            TokenKind.SELECT,
+            "EXPLAIN solo admite una sentencia SELECT",
+        )
+        statement = self._select(select)
+        return ExplainStatement(
+            statement=statement,
+            analyze=analyze,
+            span=combine_spans(start.span, statement.span),
         )
 
     def _from_source(self) -> FromSource:

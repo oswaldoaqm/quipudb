@@ -15,14 +15,17 @@ from engine.parser.ast import (
     ColumnReference,
     ComparisonCondition,
     ComparisonOperator,
+    CreateIndexStatement,
     CreateTableStatement,
     DateLiteral,
     DeleteStatement,
     DoubleLiteral,
     DropTableStatement,
     EndTransactionStatement,
+    ExplainStatement,
     GroupBy,
     Identifier,
+    IndexKind,
     InsertStatement,
     IntegerLiteral,
     OrderBy,
@@ -95,6 +98,13 @@ def test_ast_representa_todas_las_sentencias_del_alcance() -> None:
     )
 
     create = CreateTableStatement(table, (definition,), StorageKind.HEAP, span(0, 34))
+    create_index = CreateIndexStatement(
+        Identifier("por_codigo", span(13, 23, 14)),
+        table,
+        column_name,
+        IndexKind.BPLUS_UNCLUSTERED,
+        span(0, 54),
+    )
     insert = InsertStatement(table, (integer,), span(0, 34))
     select = SelectStatement(
         (Wildcard(span(7, 8, 8)),),
@@ -108,14 +118,19 @@ def test_ast_representa_todas_las_sentencias_del_alcance() -> None:
     drop = DropTableStatement(table, span(0, 20))
     begin = BeginTransactionStatement(span(0, 18))
     end = EndTransactionStatement(span(0, 16))
+    explain = ExplainStatement(select, True, span(0, 62))
 
     assert create.columns == (definition,)
+    assert create_index.column == column_name
+    assert create_index.kind is IndexKind.BPLUS_UNCLUSTERED
     assert insert.values == (integer,)
     assert select.projections == (Wildcard(span(7, 8, 8)),)
     assert delete.where == condition
     assert drop.table == table
     assert begin.span == span(0, 18)
     assert end.span == span(0, 16)
+    assert explain.statement == select
+    assert explain.analyze is True
 
 
 def test_ast_representa_literales_agregados_rangos_y_agrupacion() -> None:
