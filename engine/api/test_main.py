@@ -124,6 +124,16 @@ def test_una_sentencia_sin_filas_informa_en_affected_rows_y_manda_plan_null(clie
     assert cuerpo["plan"] is None
 
 
+def test_drop_table_actualiza_el_catalogo_expuesto_por_la_api(cliente) -> None:
+    _poblar(cliente)
+
+    respuesta = cliente.post("/query", json={"sql": "DROP TABLE alumnos"})
+
+    assert respuesta.status_code == 200
+    assert respuesta.json()["affected_rows"] == 0
+    assert cliente.get("/tables").json() == []
+
+
 def test_un_join_llega_por_http_con_su_paso_en_el_plan(cliente) -> None:
     _poblar(cliente)
     cliente.post("/query", json={"sql": (

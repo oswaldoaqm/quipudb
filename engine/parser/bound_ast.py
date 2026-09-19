@@ -233,6 +233,14 @@ class BoundDeleteStatement:
     span: Span
 
 
+@dataclass(frozen=True, slots=True)
+class BoundDropTableStatement:
+    """DROP TABLE con un identificador validado."""
+
+    table_name: str
+    span: Span
+
+
 __all__ = [
     "BoundAggregateCall",
     "BoundBetweenCondition",
@@ -242,6 +250,7 @@ __all__ = [
     "BoundCondition",
     "BoundCreateTable",
     "BoundDeleteStatement",
+    "BoundDropTableStatement",
     "BoundGroupBy",
     "BoundInsertStatement",
     "BoundJoinRef",

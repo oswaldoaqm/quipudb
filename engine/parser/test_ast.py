@@ -19,6 +19,7 @@ from engine.parser.ast import (
     DateLiteral,
     DeleteStatement,
     DoubleLiteral,
+    DropTableStatement,
     EndTransactionStatement,
     GroupBy,
     Identifier,
@@ -104,6 +105,7 @@ def test_ast_representa_todas_las_sentencias_del_alcance() -> None:
         span(0, 54),
     )
     delete = DeleteStatement(table, condition, span(0, 33))
+    drop = DropTableStatement(table, span(0, 20))
     begin = BeginTransactionStatement(span(0, 18))
     end = EndTransactionStatement(span(0, 16))
 
@@ -111,6 +113,7 @@ def test_ast_representa_todas_las_sentencias_del_alcance() -> None:
     assert insert.values == (integer,)
     assert select.projections == (Wildcard(span(7, 8, 8)),)
     assert delete.where == condition
+    assert drop.table == table
     assert begin.span == span(0, 18)
     assert end.span == span(0, 16)
 
