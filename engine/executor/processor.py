@@ -20,6 +20,7 @@ from engine.parser import (
     BeginTransactionStatement,
     CreateTableStatement,
     DeleteStatement,
+    DropTableStatement,
     EndTransactionStatement,
     FromSource,
     InsertStatement,
@@ -30,7 +31,13 @@ from engine.parser import (
     parse_sql,
 )
 from engine.parser.bound_ast import BoundSchema
-from engine.parser.semantic import bind_create_table, bind_delete, bind_insert, bind_select
+from engine.parser.semantic import (
+    bind_create_table,
+    bind_delete,
+    bind_drop_table,
+    bind_insert,
+    bind_select,
+)
 from engine.planner.native_catalog import from_native_table_info
 from engine.planner.optimizer import TableMetadata, optimize_delete, optimize_select
 from engine.planner.plan import Plan
@@ -95,6 +102,8 @@ class QueryProcessor:
             return self._select(statement, source, started_ns)
         if isinstance(statement, DeleteStatement):
             return self._delete(statement, source)
+        if isinstance(statement, DropTableStatement):
+            return self._drop_table(statement, source)
         if isinstance(statement, BeginTransactionStatement):
             return self._begin_transaction()
         if isinstance(statement, EndTransactionStatement):
@@ -236,6 +245,26 @@ class QueryProcessor:
                     bound.table_name, values, rid, schema.key_column, index_metadata
                 )
             return QueryResult(affected_rows=1)
+        finally:
+            self._release_autocommit(bound.table_name)
+
+    def _drop_table(self, statement: DropTableStatement, source: str) -> QueryResult:
+        if self._transaction is not None:
+            raise TransactionError("DROP TABLE no se puede ejecutar dentro de una transaccion")
+        bound = bind_drop_table(statement, source)
+
+        self._lock_or_abort(bound.table_name, LockMode.EXCLUSIVE)
+        try:
+            try:
+                self._database.drop_table(bound.table_name)
+            except self._domain_errors as error:
+                self._raise_semantic(
+                    error,
+                    f"no se pudo eliminar la tabla {bound.table_name!r}",
+                    statement.table.span,
+                    source,
+                )
+            return QueryResult()
         finally:
             self._release_autocommit(bound.table_name)
 
