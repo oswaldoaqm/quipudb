@@ -39,13 +39,18 @@ no equivale a haber iniciado una modificación protegida por undo.
 | `ORDER BY` | Una columna, ASC o DESC |
 | `GROUP BY` | Una columna; agregados `COUNT(*)`, `SUM`, `MIN`, `MAX`, `AVG`, sujetos a validación semántica |
 | `DELETE FROM ... WHERE ...` | Requiere filtro; mantiene índices secundarios |
+| `DROP TABLE` | Elimina la tabla y sus índices asociados; fuera de transacciones explícitas |
 | `BEGIN TRANSACTION`, `END TRANSACTION` | Inicio y confirmación de transacción explícita |
 
-No se soportan SQL `UPDATE`, `JOIN`, `CREATE INDEX`, `DROP`, `ALTER`, `COMMIT`,
+No se soportan SQL `UPDATE`, `CREATE INDEX`, `ALTER`, `COMMIT`,
 `ROLLBACK`, `NULL`, subconsultas, alias, `HAVING`, `LIMIT` ni condiciones booleanas
 generales con `AND`/`OR`/`NOT`. El `AND` de `BETWEEN` es parte de esa sintaxis,
 no soporte de conjunciones arbitrarias. Tampoco hay listas generales de columnas
 de agrupación u ordenamiento.
+
+El whitespace puede incluir LF, CR o CRLF entre tokens. Se admiten comentarios
+de línea con `--` y comentarios de bloque con `/* ... */`; los comentarios de
+bloque sin cerrar producen un error léxico con ubicación precisa.
 
 Las tablas B+ agrupadas y los índices secundarios se pueden crear mediante la
 API nativa, no mediante estas sentencias SQL de creación. El planificador sí

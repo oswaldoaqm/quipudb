@@ -221,6 +221,7 @@ Reglas mínimas:
 - `GROUP BY` admite una sola columna y `COUNT(*)`, `SUM`, `MIN`, `MAX` y `AVG`.
 - Keywords sin sensibilidad a mayúsculas; identificadores preservados y resueltos exactamente como
   los almacena el catálogo.
+- Whitespace multilinea y comentarios `--` o `/* ... */` entre tokens.
 - Una sola sentencia por llamada, con punto y coma final opcional.
 - Strings usan el escape SQL `''`; las fechas usan `DATE 'YYYY-MM-DD'` y se convierten al tipo nativo.
 
@@ -228,7 +229,7 @@ Reglas mínimas:
 
 - `UPDATE`.
 - `JOIN`, aunque el core ya lo implemente.
-- `CREATE INDEX`, `DROP`, `ALTER` y demás DDL.
+- `CREATE INDEX`, `ALTER` y demás DDL fuera de `CREATE TABLE` y `DROP TABLE`.
 - `NULL` y lógica de tres valores.
 - `AND`, `OR`, `NOT`, subconsultas, expresiones aritméticas y funciones escalares.
 - `HAVING`, múltiples columnas de orden o agrupación y aliases.
@@ -237,6 +238,10 @@ Reglas mínimas:
 
 Si un criterio escrito de #24–#28 contradice esta lista, prevalece el issue. Cualquier ampliación
 adicional requiere actualizar primero este plan y el ADR.
+
+> Ampliación posterior: los issues #101 y #103 agregaron comentarios SQL y
+> `DROP TABLE`; el issue #102 convirtió el comportamiento multilinea y de
+> `DELETE` en un contrato explícitamente probado.
 
 ## Issues verificados y orden de entrega
 
