@@ -19,6 +19,7 @@ from engine.parser.ast import (
     DateLiteral,
     DeleteStatement,
     DoubleLiteral,
+    DropTableStatement,
     EndTransactionStatement,
     FromSource,
     GroupBy,
@@ -67,7 +68,6 @@ _UNSUPPORTED_WORDS = {
     "AS",
     "COMMIT",
     "DISTINCT",
-    "DROP",
     "EXCEPT",
     "HAVING",
     "IN",
@@ -125,6 +125,8 @@ class _Parser:
             return self._select(self._previous())
         if self._match(TokenKind.DELETE):
             return self._delete(self._previous())
+        if self._match(TokenKind.DROP):
+            return self._drop_table(self._previous())
         if self._match(TokenKind.BEGIN):
             return self._begin_transaction(self._previous())
         if self._match(TokenKind.END):
@@ -135,7 +137,7 @@ class _Parser:
             self._raise_unsupported(token)
         raise self._error(
             token,
-            "se esperaba CREATE TABLE, INSERT INTO, SELECT, DELETE FROM, "
+            "se esperaba CREATE TABLE, DROP TABLE, INSERT INTO, SELECT, DELETE FROM, "
             "BEGIN TRANSACTION o END TRANSACTION",
         )
 
@@ -388,6 +390,11 @@ class _Parser:
             where=where,
             span=combine_spans(start.span, where.span),
         )
+
+    def _drop_table(self, start: Token) -> DropTableStatement:
+        self._expect(TokenKind.TABLE, "se esperaba TABLE despues de DROP")
+        table = self._identifier("se esperaba el nombre de la tabla")
+        return DropTableStatement(table, combine_spans(start.span, table.span))
 
     def _begin_transaction(self, start: Token) -> BeginTransactionStatement:
         end = self._expect(TokenKind.TRANSACTION, "se esperaba TRANSACTION despues de BEGIN")

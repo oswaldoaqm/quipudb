@@ -33,6 +33,7 @@ class TokenKind(StrEnum):
     ON = "ON"
     WHERE = "WHERE"
     DELETE = "DELETE"
+    DROP = "DROP"
     ORDER = "ORDER"
     BY = "BY"
     ASC = "ASC"

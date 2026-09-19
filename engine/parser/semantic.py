@@ -18,6 +18,7 @@ from engine.parser.ast import (
     DateLiteral,
     DeleteStatement,
     DoubleLiteral,
+    DropTableStatement,
     FromSource,
     InsertStatement,
     IntegerLiteral,
@@ -38,6 +39,7 @@ from engine.parser.bound_ast import (
     BoundCondition,
     BoundCreateTable,
     BoundDeleteStatement,
+    BoundDropTableStatement,
     BoundGroupBy,
     BoundInsertStatement,
     BoundJoinRef,
@@ -385,6 +387,16 @@ def bind_delete(
     return BoundDeleteStatement(schema, where, statement.span)
 
 
+def bind_drop_table(
+    statement: DropTableStatement,
+    source: str | None = None,
+) -> BoundDropTableStatement:
+    """Valida el identificador de una sentencia ``DROP TABLE``."""
+
+    _validate_identifier(statement.table.name, "tabla", statement.table.span, source)
+    return BoundDropTableStatement(statement.table.name, statement.span)
+
+
 def _bind_projection(
     projection: ColumnReference | AggregateCall,
     scope: _Scope,
@@ -674,4 +686,10 @@ def _fail(message: str, span: Span, source: str | None) -> None:
     raise SQLSemanticError(message, span, source)
 
 
-__all__ = ["bind_create_table", "bind_delete", "bind_insert", "bind_select"]
+__all__ = [
+    "bind_create_table",
+    "bind_delete",
+    "bind_drop_table",
+    "bind_insert",
+    "bind_select",
+]

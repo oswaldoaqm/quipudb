@@ -127,6 +127,43 @@ def test_insert_actualiza_todos_los_indices_secundarios_existentes(db):
     assert db.table("personas").read(name_rid) == [1, "Ada"]
 
 
+def test_drop_table_sql_borra_tabla_y_archivos_de_indices(tmp_path):
+    db = quipudb.Database(tmp_path / "catalogo.txt")
+    processor = QueryProcessor(db)
+    processor.execute("CREATE TABLE datos (id INT PRIMARY KEY, nombre VARCHAR(20)) USING HEAP")
+    db.create_index("datos", "por_nombre", "nombre", quipudb.kind.EXTENDIBLE_HASH)
+    info = db.table_info("datos")
+    paths = [tmp_path / info.file, *(tmp_path / index.file for index in info.indexes)]
+    assert all(path.exists() for path in paths)
+
+    result = processor.execute("DROP TABLE datos")
+
+    assert result.affected_rows == 0
+    assert not db.has_table("datos")
+    assert all(not path.exists() for path in paths)
+
+
+def test_delete_multilinea_con_comentarios_actualiza_indice(db):
+    processor = QueryProcessor(db)
+    processor.execute("CREATE TABLE datos (id INT PRIMARY KEY, nombre VARCHAR(20)) USING HEAP")
+    index = db.create_index(
+        "datos", "por_nombre", "nombre", quipudb.kind.EXTENDIBLE_HASH
+    )
+    processor.execute("INSERT INTO datos VALUES (1, 'Ada')")
+    processor.execute("INSERT INTO datos VALUES (2, 'Grace')")
+
+    result = processor.execute(
+        "-- comentario inicial\n"
+        "DELETE\n"
+        "FROM datos /* comentario de bloque */\n"
+        "WHERE nombre = 'Ada'"
+    )
+
+    assert result.affected_rows == 1
+    assert db.table("datos").search(1) == []
+    assert index.search("Ada") == []
+
+
 def _create_select_table(db, storage):
     processor = QueryProcessor(db)
     if storage == quipudb.kind.BPLUS_CLUSTERED:
