@@ -10,7 +10,7 @@ from typing import ClassVar
 import pytest
 
 from engine.executor.processor import QueryProcessor
-from engine.parser.errors import SQLSemanticError
+from engine.parser.errors import SQLParseError, SQLSemanticError
 from engine.transactions import TransactionError
 
 
@@ -416,6 +416,79 @@ def test_insert_convierte_los_cinco_tipos_incluida_date(
     assert result.columns == ()
     assert result.rows == ()
     assert result.affected_rows == 1
+
+
+def test_lote_ejecuta_varios_insert_y_suma_filas_afectadas(
+    database: _FakeDatabase,
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("CREATE TABLE alumnos (id INT PRIMARY KEY, nombre VARCHAR(20))")
+
+    result = processor.execute(
+        "-- tres filas en una llamada\n"
+        "INSERT INTO alumnos VALUES (1, 'Ada');\n"
+        "INSERT INTO alumnos VALUES (2, 'Grace');\n"
+        "/* tambien admite un ultimo punto y coma */\n"
+        "INSERT INTO alumnos VALUES (3, 'Edsger');"
+    )
+
+    assert result.affected_rows == 3
+    assert database.tables["alumnos"].records == [
+        [1, "Ada"],
+        [2, "Grace"],
+        [3, "Edsger"],
+    ]
+
+
+def test_lote_se_analiza_completo_antes_de_modificar_datos(
+    database: _FakeDatabase,
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("CREATE TABLE alumnos (id INT PRIMARY KEY)")
+    sql = (
+        "INSERT INTO alumnos VALUES (1);\n"
+        "INSERT INTO alumnos VALUES (2);\n"
+        "INSERT INTO alumnos VALUES ("
+    )
+
+    with pytest.raises(SQLParseError, match="se esperaba un literal"):
+        processor.execute(sql)
+
+    assert database.tables["alumnos"].records == []
+
+
+def test_lote_devuelve_el_ultimo_resultado_y_acumula_mutaciones(
+    processor: QueryProcessor,
+) -> None:
+    result = processor.execute(
+        "CREATE TABLE alumnos (id INT PRIMARY KEY, nombre VARCHAR(20));\n"
+        "INSERT INTO alumnos VALUES (1, 'Ada');\n"
+        "INSERT INTO alumnos VALUES (2, 'Grace');\n"
+        "SELECT nombre FROM alumnos"
+    )
+
+    assert result.columns == ("nombre",)
+    assert result.rows == (("Ada",), ("Grace",))
+    assert result.affected_rows == 2
+    assert result.plan is not None
+    assert result.plan.query == "SELECT nombre FROM alumnos"
+
+
+def test_lote_transaccional_revierte_todos_los_insert_si_uno_falla(
+    database: _FakeDatabase,
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("CREATE TABLE alumnos (id INT PRIMARY KEY)")
+
+    with pytest.raises(SQLSemanticError, match="clave primaria"):
+        processor.execute(
+            "BEGIN TRANSACTION;\n"
+            "INSERT INTO alumnos VALUES (1);\n"
+            "INSERT INTO alumnos VALUES (1);\n"
+            "END TRANSACTION;"
+        )
+
+    assert database.tables["alumnos"].records == []
 
 
 def test_tabla_duplicada_se_traduce_y_conserva_schema_error(

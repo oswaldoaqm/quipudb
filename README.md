@@ -125,6 +125,14 @@ processor.execute(
 )
 processor.execute("INSERT INTO cursos VALUES (1, 'Bases de Datos 2', 18)")
 
+# Varias sentencias se envian juntas si estan separadas por punto y coma.
+batch = processor.execute(
+    """INSERT INTO cursos VALUES (2, 'Sistemas Operativos', 17);
+    INSERT INTO cursos VALUES (3, 'Compiladores', 16);
+    INSERT INTO cursos VALUES (4, 'Redes', 15);"""
+)
+print(batch.affected_rows)     # 3
+
 result = processor.execute("SELECT nombre, nota FROM cursos WHERE nota >= 14")
 print(result.columns)          # ('nombre', 'nota')
 print(result.rows)             # (('Bases de Datos 2', 18.0),)
@@ -155,7 +163,12 @@ utilizadas.
 
 Las sentencias pueden ocupar varias líneas y contener comentarios de línea
 `-- comentario` o de bloque `/* comentario */`. Los marcadores escritos dentro
-de un string se conservan como texto.
+de un string se conservan como texto. Una llamada también puede contener varias
+sentencias separadas por `;`: el script completo se analiza antes de ejecutar,
+se suman sus `affected_rows` y las filas y el plan pertenecen a la última
+sentencia. Las sentencias se confirman individualmente por defecto; para que un
+lote sea atómico ante un error de ejecución se encierra entre
+`BEGIN TRANSACTION;` y `END TRANSACTION;`.
 
 Para pruebas reproducibles puede limitarse la memoria de estos algoritmos sin
 cambiar los valores por defecto:

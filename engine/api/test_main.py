@@ -124,6 +124,28 @@ def test_una_sentencia_sin_filas_informa_en_affected_rows_y_manda_plan_null(clie
     assert cuerpo["plan"] is None
 
 
+def test_query_ejecuta_varios_insert_en_una_sola_peticion(cliente) -> None:
+    _poblar(cliente)
+
+    respuesta = cliente.post(
+        "/query",
+        json={
+            "sql": (
+                "INSERT INTO alumnos VALUES (10, 'diez', 10.0);\n"
+                "INSERT INTO alumnos VALUES (11, 'once', 11.0);\n"
+                "INSERT INTO alumnos VALUES (12, 'doce', 12.0);"
+            )
+        },
+    )
+
+    assert respuesta.status_code == 200
+    assert respuesta.json()["affected_rows"] == 3
+    filas = cliente.post(
+        "/query", json={"sql": "SELECT codigo FROM alumnos WHERE codigo >= 10"}
+    ).json()["rows"]
+    assert filas == [[10], [11], [12]]
+
+
 def test_drop_table_actualiza_el_catalogo_expuesto_por_la_api(cliente) -> None:
     _poblar(cliente)
 
