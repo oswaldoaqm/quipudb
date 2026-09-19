@@ -242,18 +242,26 @@ rollback de mejor esfuerzo si una operacion intermedia falla. Esto mantiene
 claves secundarias repetidas y evita RIDs colgados en el camino exitoso; no
 reemplaza las transacciones de 2.1.4.
 
+### Actualizacion 2026-09-19
+
+Los issues #101 y #103 amplian este ADR con comentarios SQL de linea y bloque
+y con `DROP TABLE`. El issue #102 fija mediante pruebas el soporte multilinea
+que el lexer ya proporcionaba y su combinacion con `DELETE`. `DROP TABLE`
+delega en la operacion existente del catalogo y se rechaza dentro de una
+transaccion explicita, igual que `CREATE TABLE`.
+
 ### Limites explicitos
 
 Quedan fuera de este subconjunto:
 
-- `UPDATE`, `JOIN`, `CREATE INDEX`, `DROP`, `ALTER` y el resto de DDL;
+- `UPDATE`, `JOIN`, `CREATE INDEX`, `ALTER` y el resto de DDL no enumerado;
 - `NULL` y la logica de tres valores;
 - operadores `!=` y `<>`, condiciones generales con `AND`, `OR` o `NOT`;
 - subconsultas, expresiones aritmeticas y funciones escalares;
 - aliases, `HAVING`, `LIMIT` y listas de varias columnas en `GROUP BY` u
   `ORDER BY`;
-- listas de columnas en `INSERT`, varias sentencias por llamada, comentarios e
-  identificadores delimitados;
+- listas de columnas en `INSERT`, varias sentencias por llamada e identificadores
+  delimitados;
 - `COMMIT`, `ROLLBACK` como sentencias SQL, y SQL espacial, textual o
   multimedia.
 

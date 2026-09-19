@@ -58,8 +58,10 @@ compilar el core. Cada token y nodo conserva un `Span` con offset, linea y
 columna, y todos los errores SQL pertenecen a una familia comun con esa
 ubicacion.
 
-El AST representa `CREATE TABLE`, `INSERT INTO`, `SELECT` y `DELETE FROM`, con
-las clausulas requeridas por los issues #24 a #28. Aceptar una sentencia no
+El AST representa `CREATE TABLE`, `DROP TABLE`, `INSERT INTO`, `SELECT`,
+`DELETE FROM`, `JOIN`, `BEGIN TRANSACTION` y `END TRANSACTION`. El lexer acepta
+consultas multilinea y omite comentarios `--` y `/* ... */` sin perder la
+ubicacion de los tokens. Aceptar una sentencia no
 significa que ya pueda ejecutarse: la validacion contra el esquema comienza en
 #25, la seleccion de una ruta fisica en #26 y los operadores externos de orden
 y agrupacion en #28. La EBNF completa y los limites deliberados viven en el
@@ -87,6 +89,11 @@ la primera mutacion. Despues quita exactamente `(clave secundaria, RID)` de
 cada indice con `remove_one` y borra por PK. Un fallo intermedio restaura de
 mejor esfuerzo las entradas conocidas y reinserta las filas con su RID nuevo;
 la atomicidad completa queda para transacciones.
+
+Desde #103, `DROP TABLE` valida el identificador, toma un lock exclusivo y
+delega en `Database::drop_table`, que elimina también los archivos de los
+índices asociados. Igual que `CREATE TABLE`, se rechaza dentro de una
+transacción explícita.
 
 Desde #28, `ORDER BY` encadena la ruta de acceso y el filtro con
 `ExternalSort`; ordena la fila completa antes de proyectar y soporta `ASC` y
