@@ -97,6 +97,17 @@ def parse_sql(sql: str) -> Statement:
     return _Parser(tokenize(sql), sql).parse()
 
 
+def parse_sql_script(sql: str) -> tuple[Statement, ...]:
+    """Convierte un script separado por ``;`` en AST inmutables.
+
+    El script completo se tokeniza y analiza antes de devolver el primer nodo.
+    Por tanto, un error lexico o sintactico conserva su ubicacion global y no
+    permite que el ejecutor aplique parcialmente las sentencias anteriores.
+    """
+
+    return _Parser(tokenize(sql), sql).parse_script()
+
+
 class _Parser:
     def __init__(self, tokens: tuple[Token, ...], source: str) -> None:
         self._tokens = tokens
@@ -115,6 +126,26 @@ class _Parser:
             self._raise_trailing_input()
         self._expect(TokenKind.EOF, "se esperaba el final de la sentencia")
         return statement
+
+    def parse_script(self) -> tuple[Statement, ...]:
+        statements: list[Statement] = []
+        while not self._check(TokenKind.EOF):
+            statements.append(self._statement())
+            if self._match(TokenKind.SEMICOLON):
+                continue
+            if not self._check(TokenKind.EOF):
+                raise self._error(
+                    self._peek(),
+                    "se esperaba ';' entre sentencias SQL",
+                )
+
+        if not statements:
+            raise self._error(
+                self._peek(),
+                "se esperaba al menos una sentencia SQL",
+            )
+        self._expect(TokenKind.EOF, "se esperaba el final del script SQL")
+        return tuple(statements)
 
     def _statement(self) -> Statement:
         if self._match(TokenKind.CREATE):
