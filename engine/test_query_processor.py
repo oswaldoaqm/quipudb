@@ -74,6 +74,25 @@ def test_insert_escribe_y_permite_leer_los_cinco_tipos(db):
     assert row[4] == quipudb.Date((date(2026, 9, 13) - date(1970, 1, 1)).days)
 
 
+def test_lote_inserta_varias_filas_con_una_sola_llamada(db):
+    processor = QueryProcessor(db)
+    processor.execute("CREATE TABLE alumnos (id INT PRIMARY KEY, nombre VARCHAR(20))")
+
+    result = processor.execute(
+        "-- carga por lote\n"
+        "INSERT INTO alumnos VALUES (1, 'Ada');\n"
+        "INSERT INTO alumnos VALUES (2, 'Grace');\n"
+        "INSERT INTO alumnos VALUES (3, 'Edsger');"
+    )
+
+    assert result.affected_rows == 3
+    assert db.table("alumnos").scan() == [
+        [1, "Ada"],
+        [2, "Grace"],
+        [3, "Edsger"],
+    ]
+
+
 def test_datos_sql_sobreviven_flush_cierre_y_reapertura(tmp_path):
     catalog = tmp_path / "catalogo.txt"
     db = quipudb.Database(catalog)
