@@ -58,10 +58,19 @@ compilar el core. Cada token y nodo conserva un `Span` con offset, linea y
 columna, y todos los errores SQL pertenecen a una familia comun con esa
 ubicacion.
 
+`engine.parser.parse_sql_script(source)` conserva ese contrato estricto y añade
+la entrada para lotes: analiza todas las sentencias separadas por `;` antes de
+devolver una tupla de AST. `QueryProcessor.execute()` usa esa entrada y las
+ejecuta en orden. En un lote suma `affected_rows` y conserva las filas y el plan
+de la ultima sentencia, de modo que el contrato HTTP no cambia. Los errores de
+parseo no producen efectos parciales; la atomicidad ante errores de ejecucion
+requiere `BEGIN TRANSACTION` y `END TRANSACTION` en el propio lote.
+
 El AST representa `CREATE TABLE`, `DROP TABLE`, `INSERT INTO`, `SELECT`,
 `DELETE FROM`, `JOIN`, `BEGIN TRANSACTION` y `END TRANSACTION`. El lexer acepta
 consultas multilinea y omite comentarios `--` y `/* ... */` sin perder la
-ubicacion de los tokens. Aceptar una sentencia no
+ubicacion de los tokens. Los scripts conservan esas ubicaciones globales aunque
+el error aparezca en una sentencia posterior. Aceptar una sentencia no
 significa que ya pueda ejecutarse: la validacion contra el esquema comienza en
 #25, la seleccion de una ruta fisica en #26 y los operadores externos de orden
 y agrupacion en #28. La EBNF completa y los limites deliberados viven en el
