@@ -18,6 +18,7 @@ from engine.parser.ast import (
     DateLiteral,
     DeleteStatement,
     DoubleLiteral,
+    DropTableStatement,
     EndTransactionStatement,
     InsertStatement,
     IntegerLiteral,
@@ -231,6 +232,41 @@ def test_delete_admite_between() -> None:
     assert statement.where.upper.value == 10
 
 
+def test_drop_table_construye_sentencia_y_span_sin_incluir_punto_y_coma() -> None:
+    sql = "DrOp TaBlE alumnos;"
+
+    statement = parse_sql(sql)
+
+    assert isinstance(statement, DropTableStatement)
+    assert statement.table.name == "alumnos"
+    assert statement.span.start == 0
+    assert statement.span.end == sql.index(";")
+
+
+@pytest.mark.parametrize("line_break", ["\n", "\r", "\r\n"])
+def test_delete_admite_formato_multilinea(line_break: str) -> None:
+    sql = line_break.join(("DELETE", "FROM alumnos", "WHERE codigo = 7"))
+
+    statement = parse_sql(sql)
+
+    assert isinstance(statement, DeleteStatement)
+    assert statement.where.span.line == 3
+    assert statement.where.span.column == 7
+
+
+def test_comentarios_pueden_separar_cualquier_parte_de_la_sentencia() -> None:
+    statement = parse_sql(
+        "/* cabecera */ SELECT nombre /* proyeccion */\n"
+        "FROM alumnos -- fuente\n"
+        "WHERE codigo = 7; -- fin"
+    )
+
+    assert isinstance(statement, SelectStatement)
+    assert statement.source.table.name == "alumnos"  # type: ignore[union-attr]
+    assert isinstance(statement.where, ComparisonCondition)
+    assert statement.where.value.value == 7
+
+
 def test_begin_transaction_parsea_como_sentencia_propia() -> None:
     statement = parse_sql("BEGIN TRANSACTION;")
 
@@ -300,6 +336,8 @@ def test_spans_del_ast_apuntan_a_sus_fragmentos_originales() -> None:
         ("SELECT * FROM alumnos ORDER BY", "se esperaba una columna"),
         ("DELETE FROM alumnos", "DELETE requiere"),
         ("DELETE alumnos WHERE id = 1", "se esperaba FROM"),
+        ("DROP alumnos", "se esperaba TABLE"),
+        ("DROP TABLE", "nombre de la tabla"),
         ("BEGIN", "se esperaba TRANSACTION despues de BEGIN"),
         ("END", "se esperaba TRANSACTION despues de END"),
         ("INSERT INTO alumnos VALUES (DATE '20260913')", "formato"),
