@@ -222,7 +222,8 @@ Reglas mínimas:
 - Keywords sin sensibilidad a mayúsculas; identificadores preservados y resueltos exactamente como
   los almacena el catálogo.
 - Whitespace multilinea y comentarios `--` o `/* ... */` entre tokens.
-- Una sola sentencia por llamada, con punto y coma final opcional.
+- `parse_sql` consume una sola sentencia con punto y coma final opcional;
+  `parse_sql_script` admite varias separadas por `;` para el ejecutor y la API.
 - Strings usan el escape SQL `''`; las fechas usan `DATE 'YYYY-MM-DD'` y se convierten al tipo nativo.
 
 ### Excluido
@@ -241,7 +242,8 @@ adicional requiere actualizar primero este plan y el ADR.
 
 > Ampliación posterior: los issues #101 y #103 agregaron comentarios SQL y
 > `DROP TABLE`; el issue #102 convirtió el comportamiento multilinea y de
-> `DELETE` en un contrato explícitamente probado.
+> `DELETE` en un contrato explícitamente probado. El issue #105 agregó lotes
+> de varias sentencias sin cambiar el contrato estricto de `parse_sql`.
 
 ## Issues verificados y orden de entrega
 
