@@ -4,7 +4,7 @@ from datetime import date
 
 import pytest
 
-from engine.parser import parse_sql
+from engine.parser import parse_sql, parse_sql_script
 from engine.parser.ast import (
     AggregateCall,
     AggregateFunction,
@@ -384,6 +384,45 @@ def test_rechaza_multiples_sentencias_aunque_tengan_punto_y_coma() -> None:
         parse_sql(sql)
 
     assert caught.value.span.start == sql.index("DELETE")
+
+
+def test_script_parsea_varias_sentencias_con_comentarios_y_multilinea() -> None:
+    sql = (
+        "-- carga inicial\n"
+        "INSERT INTO alumnos VALUES (1, 'Ada');\n"
+        "/* el punto y coma del texto no separa sentencias */\n"
+        "INSERT INTO alumnos VALUES (2, 'Grace; Hopper');\r\n"
+        "INSERT INTO alumnos VALUES (3, 'Edsger')"
+    )
+
+    statements = parse_sql_script(sql)
+
+    assert len(statements) == 3
+    assert all(isinstance(statement, InsertStatement) for statement in statements)
+    assert [statement.values[0].value for statement in statements] == [1, 2, 3]  # type: ignore[union-attr]
+    assert statements[1].values[1].value == "Grace; Hopper"  # type: ignore[union-attr]
+    assert [statement.span.line for statement in statements] == [2, 4, 5]
+
+
+def test_script_exige_punto_y_coma_entre_sentencias() -> None:
+    sql = "INSERT INTO alumnos VALUES (1)\nINSERT INTO alumnos VALUES (2)"
+
+    with pytest.raises(SQLParseError, match="se esperaba ';' entre sentencias") as caught:
+        parse_sql_script(sql)
+
+    assert caught.value.line == 2
+    assert caught.value.column == 1
+    assert caught.value.source == sql
+
+
+def test_script_vacio_se_rechaza_con_span_en_eof() -> None:
+    sql = "-- sin sentencias\n/* todavia vacio */"
+
+    with pytest.raises(SQLParseError, match="al menos una sentencia") as caught:
+        parse_sql_script(sql)
+
+    assert caught.value.offset == len(sql)
+    assert caught.value.line == 2
 
 
 @pytest.mark.parametrize(

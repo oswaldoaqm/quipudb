@@ -55,7 +55,7 @@ class TableInfo(BaseModel):
 
 
 class QueryRequest(BaseModel):
-    """Cuerpo de ``POST /query``."""
+    """Cuerpo de ``POST /query``; ``sql`` puede contener un lote separado por ``;``."""
 
     sql: str
 

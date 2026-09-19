@@ -44,7 +44,7 @@ from engine.parser.errors import (
     SQLUnsupportedError,
 )
 from engine.parser.lexer import tokenize
-from engine.parser.parser import parse_sql
+from engine.parser.parser import parse_sql, parse_sql_script
 from engine.parser.span import Span, combine_spans
 from engine.parser.tokens import Token, TokenKind, TokenValue
 
@@ -94,5 +94,6 @@ __all__ = [
     "Wildcard",
     "combine_spans",
     "parse_sql",
+    "parse_sql_script",
     "tokenize",
 ]

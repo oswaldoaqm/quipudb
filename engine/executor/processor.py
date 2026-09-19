@@ -27,8 +27,9 @@ from engine.parser import (
     JoinRef,
     SelectStatement,
     SQLSemanticError,
+    Statement,
     TableRef,
-    parse_sql,
+    parse_sql_script,
 )
 from engine.parser.bound_ast import BoundSchema
 from engine.parser.semantic import (
@@ -90,16 +91,52 @@ class QueryProcessor:
         self._autocommit_owner = object()
 
     def execute(self, source: str) -> QueryResult:
-        """Ejecuta una sentencia del subconjunto disponible."""
+        """Ejecuta una o varias sentencias separadas por punto y coma.
+
+        Todo el script se analiza antes de ejecutar. En un lote, las sentencias
+        se aplican en orden, ``affected_rows`` se suma y las filas y el plan
+        corresponden a la ultima sentencia. Para atomicidad ante errores de
+        ejecucion, el llamador debe usar una transaccion explicita.
+        """
 
         started_ns = perf_counter_ns()
-        statement = parse_sql(source)
+        statements = parse_sql_script(source)
+        results = [
+            self._execute_statement(
+                statement,
+                source,
+                started_ns if index == 0 else perf_counter_ns(),
+                source
+                if len(statements) == 1
+                else source[statement.span.start : statement.span.end],
+            )
+            for index, statement in enumerate(statements)
+        ]
+        if len(results) == 1:
+            return results[0]
+
+        last = results[-1]
+        return QueryResult(
+            columns=last.columns,
+            column_types=last.column_types,
+            rows=last.rows,
+            affected_rows=sum(result.affected_rows for result in results),
+            plan=last.plan,
+        )
+
+    def _execute_statement(
+        self,
+        statement: Statement,
+        source: str,
+        started_ns: int,
+        query_text: str,
+    ) -> QueryResult:
         if isinstance(statement, CreateTableStatement):
             return self._create_table(statement, source)
         if isinstance(statement, InsertStatement):
             return self._insert(statement, source)
         if isinstance(statement, SelectStatement):
-            return self._select(statement, source, started_ns)
+            return self._select(statement, source, started_ns, query_text)
         if isinstance(statement, DeleteStatement):
             return self._delete(statement, source)
         if isinstance(statement, DropTableStatement):
@@ -273,6 +310,7 @@ class QueryProcessor:
         statement: SelectStatement,
         source: str,
         started_ns: int,
+        query_text: str,
     ) -> QueryResult:
         referencias = _table_refs(statement.source)
         esquemas: dict[str, BoundSchema] = {}
@@ -331,7 +369,7 @@ class QueryProcessor:
                 )
 
             elapsed_ms = (perf_counter_ns() - started_ns) / 1_000_000
-            plan = Plan(query=source, root=execution.root, time_ms=elapsed_ms)
+            plan = Plan(query=query_text, root=execution.root, time_ms=elapsed_ms)
             return QueryResult(
                 columns=execution.columns,
                 column_types=execution.column_types,
