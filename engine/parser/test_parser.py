@@ -14,12 +14,15 @@ from engine.parser.ast import (
     ColumnReference,
     ComparisonCondition,
     ComparisonOperator,
+    CreateIndexStatement,
     CreateTableStatement,
     DateLiteral,
     DeleteStatement,
     DoubleLiteral,
     DropTableStatement,
     EndTransactionStatement,
+    ExplainStatement,
+    IndexKind,
     InsertStatement,
     IntegerLiteral,
     JoinRef,
@@ -74,6 +77,48 @@ def test_create_table_usa_heap_por_defecto_y_keywords_son_case_insensitive() -> 
     assert isinstance(statement, CreateTableStatement)
     assert statement.storage is StorageKind.HEAP
     assert statement.table.name == "datos"
+
+
+@pytest.mark.parametrize(
+    ("spelling", "expected"),
+    [
+        ("BPLUS", IndexKind.BPLUS_UNCLUSTERED),
+        ("BPLUS_UNCLUSTERED", IndexKind.BPLUS_UNCLUSTERED),
+        ("HASH", IndexKind.EXTENDIBLE_HASH),
+        ("EXTENDIBLE_HASH", IndexKind.EXTENDIBLE_HASH),
+    ],
+)
+def test_create_index_parsea_estructura_y_nombres(
+    spelling: str,
+    expected: IndexKind,
+) -> None:
+    sql = f"CREATE INDEX PorNota ON Alumnos (nota) USING {spelling};"
+
+    statement = parse_sql(sql)
+
+    assert isinstance(statement, CreateIndexStatement)
+    assert statement.index.name == "PorNota"
+    assert statement.table.name == "Alumnos"
+    assert statement.column.name == "nota"
+    assert statement.kind is expected
+    assert sql[statement.span.start : statement.span.end] == sql[:-1]
+
+
+@pytest.mark.parametrize(("prefix", "analyze"), [("EXPLAIN", False), ("EXPLAIN ANALYZE", True)])
+def test_explain_envuelve_un_select(prefix: str, analyze: bool) -> None:
+    sql = f"{prefix} SELECT nombre FROM alumnos WHERE id = 7"
+
+    statement = parse_sql(sql)
+
+    assert isinstance(statement, ExplainStatement)
+    assert statement.analyze is analyze
+    assert isinstance(statement.statement, SelectStatement)
+    assert statement.statement.source.table.name == "alumnos"  # type: ignore[union-attr]
+    assert sql[statement.statement.span.start : statement.statement.span.end] == (
+        "SELECT nombre FROM alumnos WHERE id = 7"
+    )
+    assert statement.span.start == 0
+    assert statement.span.end == len(sql)
 
 
 def test_parser_conserva_longitud_varchar_para_validacion_semantica_posterior() -> None:
@@ -322,6 +367,19 @@ def test_spans_del_ast_apuntan_a_sus_fragmentos_originales() -> None:
         ("CREATE TABLE alumnos (id VARCHAR(-1))", "sin signo"),
         ("CREATE TABLE alumnos (id INT PRIMARY)", "se esperaba KEY"),
         ("CREATE TABLE alumnos (id INT) USING", "HEAP o SEQUENTIAL"),
+        ("CREATE INDEX", "nombre del indice"),
+        ("CREATE INDEX por_id alumnos (id) USING HASH", "se esperaba ON"),
+        (
+            "CREATE INDEX por_id ON alumnos id USING HASH",
+            "despues del nombre de la tabla",
+        ),
+        ("CREATE INDEX por_id ON alumnos (id)", "se esperaba USING"),
+        ("CREATE INDEX por_id ON alumnos (id) USING HEAP", "se esperaba BPLUS"),
+        ("EXPLAIN", "solo admite una sentencia SELECT"),
+        (
+            "EXPLAIN ANALYZE DELETE FROM alumnos WHERE id = 1",
+            "solo admite una sentencia SELECT",
+        ),
         ("INSERT alumnos VALUES (1)", "se esperaba INTO"),
         ("INSERT INTO alumnos VALUES ()", "se esperaba un literal"),
         ("SELECT FROM alumnos", "columna o funcion de agregado"),
@@ -433,7 +491,6 @@ def test_script_vacio_se_rechaza_con_span_en_eof() -> None:
         ("INSERT INTO alumnos VALUES (NULL)", "NULL"),
         ("SELECT * FROM alumnos LIMIT 1", "LIMIT"),
         ("SELECT update FROM alumnos", "UPDATE"),
-        ("CREATE INDEX por_id", "INDEX"),
         ("CREATE TABLE null (id INT)", "NULL"),
         ("SELECT * FROM alumnos WHERE or = 1", "OR"),
         ("COMMIT", "COMMIT"),

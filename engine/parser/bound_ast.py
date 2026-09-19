@@ -9,6 +9,7 @@ from typing import TypeAlias
 from engine.parser.ast import (
     AggregateFunction,
     ComparisonOperator,
+    IndexKind,
     OrderDirection,
     SqlTypeName,
     StorageKind,
@@ -63,6 +64,17 @@ class BoundCreateTable:
 
     schema: BoundSchema
     storage: StorageKind
+    span: Span
+
+
+@dataclass(frozen=True, slots=True)
+class BoundCreateIndexStatement:
+    """CREATE INDEX validado contra el esquema de su tabla."""
+
+    index_name: str
+    table_name: str
+    column_name: str
+    kind: IndexKind
     span: Span
 
 
@@ -248,6 +260,7 @@ __all__ = [
     "BoundColumnReference",
     "BoundComparisonCondition",
     "BoundCondition",
+    "BoundCreateIndexStatement",
     "BoundCreateTable",
     "BoundDeleteStatement",
     "BoundDropTableStatement",
