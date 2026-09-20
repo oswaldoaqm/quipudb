@@ -277,3 +277,38 @@ def test_una_transaccion_sobrevive_entre_peticiones(cliente) -> None:
 
     filas = cliente.post("/query", json={"sql": "SELECT codigo FROM alumnos"}).json()["rows"]
     assert [7] in filas
+
+
+def test_un_error_de_transaccion_llega_al_navegador_con_cors(cliente) -> None:
+    """END TRANSACTION sin BEGIN no es un SQLError: antes salia sin la cabecera
+    CORS, el navegador la descartaba y el frontend creia que el motor estaba
+    caido."""
+
+    respuesta = cliente.post(
+        "/query",
+        json={"sql": "END TRANSACTION"},
+        headers={"Origin": "http://localhost:5173"},
+    )
+
+    assert respuesta.status_code == 400
+    assert respuesta.headers["access-control-allow-origin"] == "http://localhost:5173"
+    assert respuesta.json()["error"] == "no hay una transaccion activa: falta un BEGIN TRANSACTION"
+    assert respuesta.json()["kind"] is None
+
+
+def test_un_error_inesperado_tambien_lleva_cors() -> None:
+    class Roto:
+        def execute(self, _sql: str) -> None:
+            raise RuntimeError("disco lleno")
+
+    cliente = TestClient(
+        create_app(processor=Roto(), database=object(), native=object()),
+        raise_server_exceptions=False,
+    )
+    respuesta = cliente.post(
+        "/query", json={"sql": "SELECT 1"}, headers={"Origin": "http://localhost:5173"}
+    )
+
+    assert respuesta.status_code == 400
+    assert respuesta.headers["access-control-allow-origin"] == "http://localhost:5173"
+    assert respuesta.json()["error"] == "disco lleno"
