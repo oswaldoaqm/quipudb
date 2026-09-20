@@ -32,6 +32,7 @@ from engine.api.service import describe_catalog, to_error, to_response
 from engine.executor import QueryProcessor
 from engine.executor.native import load_native
 from engine.parser.errors import SQLError
+from engine.transactions import TransactionError
 
 ORIGENES = ("http://localhost:5173", "http://127.0.0.1:5173")
 """El servidor de desarrollo del frontend. Sin CORS la peticion muere en el
@@ -76,6 +77,11 @@ class Motor:
             yield self._processor, self._database, self._native
 
 
+def _sin_ubicacion(error: Exception) -> JSONResponse:
+    cuerpo = QueryErrorResponse(error=str(error) or type(error).__name__)
+    return JSONResponse(status_code=400, content=cuerpo.model_dump())
+
+
 def create_app(
     catalog: Path | None = None,
     processor: QueryProcessor | None = None,
@@ -117,12 +123,27 @@ def create_app(
         with motor.en_uso() as (processor_, _, _native):
             return to_response(processor_.execute(peticion.sql))
 
+    @app.exception_handler(TransactionError)
+    async def _transaction_error(_: Request, error: TransactionError) -> JSONResponse:
+        # BEGIN sin END, END sin BEGIN o un lock que no llego a tiempo. Tiene
+        # handler propio y no cae en el de `Exception` porque Starlette corre
+        # ese ultimo FUERA del middleware de CORS: la respuesta salia sin
+        # Access-Control-Allow-Origin y el navegador la descartaba, asi que el
+        # frontend mostraba "No se pudo contactar al motor" en vez del error.
+        return _sin_ubicacion(error)
+
     @app.exception_handler(Exception)
-    async def _otro_error(_: Request, error: Exception) -> JSONResponse:
+    async def _otro_error(request: Request, error: Exception) -> JSONResponse:
         # Un fallo sin ubicacion -- de E/S, por ejemplo -- manda los cuatro
         # campos de posicion en null y el frontend lo muestra sin subrayar.
-        cuerpo = QueryErrorResponse(error=str(error) or type(error).__name__)
-        return JSONResponse(status_code=400, content=cuerpo.model_dump())
+        # Este handler corre fuera del middleware de CORS (ver arriba), asi
+        # que la cabecera se pone a mano.
+        respuesta = _sin_ubicacion(error)
+        origen = request.headers.get("origin")
+        if origen in ORIGENES:
+            respuesta.headers["Access-Control-Allow-Origin"] = origen
+            respuesta.headers["Vary"] = "Origin"
+        return respuesta
 
     return app
 

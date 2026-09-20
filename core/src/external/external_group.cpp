@@ -12,6 +12,7 @@
 #include "quipudb/index/extendible_hash.hpp"
 #include "quipudb/storage/disk_manager.hpp"
 #include "quipudb/storage/page.hpp"
+#include "temporales.hpp"
 
 namespace quipudb {
 
@@ -433,8 +434,7 @@ std::uintmax_t ExternalGroupBy::temp_bytes() const {
 }
 
 std::filesystem::path ExternalGroupBy::nueva_ruta() {
-  return dir_ / ("quipudb_group_" + std::to_string(reinterpret_cast<std::uintptr_t>(this)) +
-                 "_" + std::to_string(serie_++) + ".part");
+  return dir_ / ("quipudb_group_" + detail::etiqueta_unica() + ".part");
 }
 
 std::vector<std::shared_ptr<ExternalGroupBy::Temporal>> ExternalGroupBy::repartir(
