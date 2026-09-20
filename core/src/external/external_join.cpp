@@ -10,6 +10,7 @@
 #include "quipudb/index/extendible_hash.hpp"
 #include "quipudb/storage/disk_manager.hpp"
 #include "quipudb/storage/page.hpp"
+#include "temporales.hpp"
 
 namespace quipudb {
 
@@ -358,9 +359,8 @@ Record ExternalJoin::unir(const Record& izq, const Record& der) const {
 }
 
 std::filesystem::path ExternalJoin::nueva_ruta(std::string_view lado, std::size_t i) {
-  return dir_ / ("quipudb_join_" + std::to_string(reinterpret_cast<std::uintptr_t>(this)) +
-                 "_" + std::string(lado) + "_" + std::to_string(i) + "_" +
-                 std::to_string(serie_++) + ".part");
+  return dir_ / ("quipudb_join_" + detail::etiqueta_unica() + "_" + std::string(lado) + "_" +
+                 std::to_string(i) + ".part");
 }
 
 std::uintmax_t ExternalJoin::temp_bytes() const {

@@ -358,7 +358,6 @@ class ExternalJoin {
   std::size_t por_pagina_izq_ = 0;  // de la entrada izquierda
   std::size_t por_pagina_der_ = 0;  // de la entrada derecha
   std::filesystem::path dir_;
-  std::uint64_t serie_ = 0;
 
   std::size_t filas_izq_ = 0;
   std::size_t filas_der_ = 0;
