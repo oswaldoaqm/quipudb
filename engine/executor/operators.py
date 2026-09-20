@@ -184,10 +184,11 @@ def _execute_join(
         temp_dir,
     )
 
-    # Un directorio propio por join. Sus particiones no tienen por que
-    # compartir espacio de nombres con las de otra consulta, y el core nombra
-    # los archivos por la direccion del objeto: dos joins consecutivos en el
-    # mismo proceso pueden reutilizar esa direccion.
+    # Un directorio propio por join: sus particiones no tienen por que
+    # compartir espacio de nombres con las de otra consulta, y asi se limpian
+    # de una pieza aunque algo falle a media ejecucion. Desde el #98 el core ya
+    # nombra sus temporales de forma unica por proceso, asi que esto es
+    # aislamiento, no un parche.
     particiones = Path(tempfile.mkdtemp(prefix="quipudb_join_", dir=temp_dir))
     try:
         join = native.ExternalJoin(

@@ -1081,3 +1081,104 @@ def test_la_concatenacion_de_python_coincide_con_output_schema_del_core(tmp_path
         column.byte_size() for column in del_core.columns
     ]
     assert de_python.record_size == del_core.record_size()
+
+
+# ---------------------------------------------------------------------------
+# Regresion del #98
+# ---------------------------------------------------------------------------
+
+
+def test_el_directorio_temporal_por_defecto_no_es_el_de_trabajo():
+    """pybind11 guarda los defaults como objeto Python.
+
+    Un `std::filesystem::path{}` vacio se volvia `pathlib.Path("")`, que Python
+    normaliza a `PosixPath('.')`. Al llegar a C++ ya no estaba vacio, el core no
+    aplicaba su directorio temporal, y los archivos de particion acababan en el
+    directorio de trabajo del proceso.
+    """
+
+    for clase in (quipudb.ExternalJoin, quipudb.ExternalSort, quipudb.ExternalGroupBy):
+        firma = clase.__init__.__doc__.splitlines()[0]
+        assert "dir: Optional[os.PathLike] = None" in firma, clase.__name__
+
+
+def test_dos_joins_seguidos_no_se_contaminan(tmp_path, monkeypatch):
+    """El nombre del temporal no puede depender de la direccion del objeto.
+
+    El asignador la reutiliza en cuanto se libera una instancia: el segundo
+    join regeneraba los nombres del primero y, si sus archivos habian
+    sobrevivido, leia datos ajenos y devolvia filas que no existen.
+    """
+
+    monkeypatch.chdir(tmp_path)
+
+    e1 = quipudb.Schema(
+        table_name="alumnos",
+        columns=[
+            quipudb.Column("codigo", quipudb.DataType.INT),
+            quipudb.Column("nombre", quipudb.DataType.VARCHAR, 16),
+        ],
+        key_column=0,
+    )
+    e2 = quipudb.Schema(
+        table_name="cursos",
+        columns=[
+            quipudb.Column("id", quipudb.DataType.INT),
+            quipudb.Column("alumno", quipudb.DataType.INT),
+        ],
+        key_column=0,
+    )
+    primero = quipudb.ExternalJoin(e1, 0, e2, 1, quipudb.ExternalJoin.Strategy.HASH)
+    assert (
+        len(
+            list(
+                primero.joined(
+                    quipudb.source_of([[i, f"a{i}"] for i in range(4)]),
+                    quipudb.source_of([[i, i] for i in range(4)]),
+                )
+            )
+        )
+        == 4
+    )
+    del primero
+
+    ea = quipudb.Schema(
+        table_name="a",
+        columns=[
+            quipudb.Column("id", quipudb.DataType.INT),
+            quipudb.Column("x", quipudb.DataType.INT),
+        ],
+        key_column=0,
+    )
+    eb = quipudb.Schema(
+        table_name="b",
+        columns=[
+            quipudb.Column("id", quipudb.DataType.INT),
+            quipudb.Column("y", quipudb.DataType.INT),
+        ],
+        key_column=0,
+    )
+    segundo = quipudb.ExternalJoin(ea, 0, eb, 0, quipudb.ExternalJoin.Strategy.HASH)
+    filas = list(segundo.joined(quipudb.source_of([[1, 10]]), quipudb.source_of([[1, 20]])))
+
+    assert filas == [[1, 10, 1, 20]]
+    assert segundo.left_rows() == 1
+    assert segundo.right_rows() == 1
+    assert segundo.output_rows() == 1
+
+
+def test_un_operador_externo_no_ensucia_el_directorio_de_trabajo(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    esquema = quipudb.Schema(
+        table_name="t",
+        columns=[
+            quipudb.Column("id", quipudb.DataType.INT),
+            quipudb.Column("v", quipudb.DataType.INT),
+        ],
+        key_column=0,
+    )
+    orden = quipudb.ExternalSort(esquema, 0, buffers=3, page_size=256)
+    list(orden.sorted(quipudb.source_of([[i, i] for i in range(500)])))
+
+    assert list(tmp_path.iterdir()) == []
