@@ -248,7 +248,6 @@ class ExternalGroupBy {
   std::size_t particiones_ = 0;
   std::size_t reparticiones_ = 0;
   bool cayo_ = false;
-  std::uint64_t serie_ = 0;  // para nombrar los temporales
 
   /// Particiones de la PRIMERA vuelta. Se mantienen vivas hasta el final: son
   /// las que tienen las filas originales sin agregar, y son lo que el fallback

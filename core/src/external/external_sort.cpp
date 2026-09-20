@@ -10,6 +10,7 @@
 #include "quipudb/error.hpp"
 #include "quipudb/storage/disk_manager.hpp"
 #include "quipudb/storage/page.hpp"
+#include "temporales.hpp"
 
 namespace quipudb {
 
@@ -178,8 +179,7 @@ ExternalSort::ExternalSort(Schema schema, std::size_t key_column, std::size_t bu
 ExternalSort::~ExternalSort() = default;
 
 std::filesystem::path ExternalSort::nueva_ruta() {
-  return dir_ / ("quipudb_sort_" + std::to_string(reinterpret_cast<std::uintptr_t>(this)) + "_" +
-                 std::to_string(serie_++) + ".run");
+  return dir_ / ("quipudb_sort_" + detail::etiqueta_unica() + ".run");
 }
 
 bool ExternalSort::antes(const Record& a, const Record& b) const {
