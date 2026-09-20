@@ -244,7 +244,6 @@ class ExternalSort {
   std::size_t total_ = 0;
   std::size_t runs_iniciales_ = 0;
   std::size_t pasadas_ = 0;
-  std::uint64_t serie_ = 0;  // para nombrar los temporales
 
   std::vector<std::shared_ptr<Temporal>> vivos_;
   OpStats stats_;
