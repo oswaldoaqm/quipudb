@@ -528,12 +528,23 @@ PYBIND11_MODULE(quipudb_native, m) {
   py::enum_<ExternalSort::Direction>(sort, "Direction")
       .value("ASC", ExternalSort::Direction::kAsc)
       .value("DESC", ExternalSort::Direction::kDesc);
-  sort.def(py::init<Schema, std::size_t, std::size_t, std::size_t, std::filesystem::path,
-                    ExternalSort::Direction>(),
+// `dir` se recibe como optional y no como `path` con default vacio.
+// pybind11 guarda los valores por defecto convertidos a OBJETO PYTHON: un
+// `std::filesystem::path{}` vacio se vuelve `pathlib.Path("")`, que Python
+// normaliza a `PosixPath('.')`. Al volver a C++ llegaba ".", que NO esta
+// vacio, asi que el `if (dir_.empty())` del core no disparaba y los temporales
+// acababan en el directorio de trabajo del proceso. Ese era el #98.
+  sort.def(py::init([](Schema esquema, std::size_t clave, std::size_t buffers,
+                       std::size_t pagina, std::optional<std::filesystem::path> dir,
+                       ExternalSort::Direction direccion) {
+             return std::make_unique<ExternalSort>(std::move(esquema), clave, buffers, pagina,
+                                                   dir.value_or(std::filesystem::path{}),
+                                                   direccion);
+           }),
            py::arg("schema"), py::arg("key_column"),
            py::arg("buffers") = ExternalSort::kDefaultBuffers,
            py::arg("page_size") = kDefaultPageSize,
-           py::arg("dir") = std::filesystem::path{},
+           py::arg("dir") = py::none(),
            py::arg("direction") = ExternalSort::Direction::kAsc)
       .def("sorted", &ExternalSort::sorted, py::arg("source"), py::keep_alive<0, 1>(),
            py::keep_alive<0, 2>(),
@@ -589,14 +600,20 @@ PYBIND11_MODULE(quipudb_native, m) {
       .value("HASH", ExternalGroupBy::Strategy::kHash)
       .value("SORT", ExternalGroupBy::Strategy::kSort);
   grupo.attr("MIN_PARTITIONS") = ExternalGroupBy::kMinPartitions;
-  grupo.def(py::init<Schema, std::size_t, std::vector<AggregateSpec>,
-                     ExternalGroupBy::Strategy, std::size_t, std::size_t,
-                     std::filesystem::path>(),
+  // Ver la nota sobre `dir` en ExternalSort.
+  grupo.def(py::init([](Schema esquema, std::size_t clave,
+                        std::vector<AggregateSpec> agregados,
+                        ExternalGroupBy::Strategy estrategia, std::size_t buffers,
+                        std::size_t pagina, std::optional<std::filesystem::path> dir) {
+              return std::make_unique<ExternalGroupBy>(
+                  std::move(esquema), clave, std::move(agregados), estrategia, buffers, pagina,
+                  dir.value_or(std::filesystem::path{}));
+            }),
             py::arg("schema"), py::arg("key_column"), py::arg("aggregates"),
             py::arg("strategy") = ExternalGroupBy::Strategy::kAuto,
             py::arg("buffers") = ExternalSort::kDefaultBuffers,
             py::arg("page_size") = kDefaultPageSize,
-            py::arg("dir") = std::filesystem::path{})
+            py::arg("dir") = py::none())
       .def("output_schema", &ExternalGroupBy::output_schema,
            py::return_value_policy::copy,
            "Esquema de la SALIDA: la clave seguida de una columna por "
@@ -659,13 +676,21 @@ PYBIND11_MODULE(quipudb_native, m) {
       .value("INDEX_NESTED", ExternalJoin::Strategy::kIndexNested);
   join.attr("MIN_PARTITIONS") = ExternalJoin::kMinPartitions;
   join.attr("MIN_BUFFERS") = ExternalJoin::kMinBuffers;
-  join.def(py::init<Schema, std::size_t, Schema, std::size_t, ExternalJoin::Strategy,
-                    std::size_t, std::size_t, std::filesystem::path>(),
+  // Ver la nota sobre `dir` en ExternalSort.
+  join.def(py::init([](Schema izquierda, std::size_t col_izq, Schema derecha,
+                       std::size_t col_der, ExternalJoin::Strategy estrategia,
+                       std::size_t buffers, std::size_t pagina,
+                       std::optional<std::filesystem::path> dir) {
+             return std::make_unique<ExternalJoin>(std::move(izquierda), col_izq,
+                                                   std::move(derecha), col_der, estrategia,
+                                                   buffers, pagina,
+                                                   dir.value_or(std::filesystem::path{}));
+           }),
            py::arg("left"), py::arg("left_column"), py::arg("right"), py::arg("right_column"),
            py::arg("strategy") = ExternalJoin::Strategy::kAuto,
            py::arg("buffers") = ExternalSort::kDefaultBuffers,
            py::arg("page_size") = kDefaultPageSize,
-           py::arg("dir") = std::filesystem::path{})
+           py::arg("dir") = py::none())
       .def("output_schema", &ExternalJoin::output_schema, py::return_value_policy::copy,
            "Las columnas de la izquierda seguidas de las de la derecha. Las que "
            "se llaman igual en los dos lados salen prefijadas por su tabla; la "
