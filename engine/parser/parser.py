@@ -19,6 +19,7 @@ from engine.parser.ast import (
     DateLiteral,
     DeleteStatement,
     DoubleLiteral,
+    DropTableStatement,
     EndTransactionStatement,
     FromSource,
     GroupBy,
@@ -67,7 +68,6 @@ _UNSUPPORTED_WORDS = {
     "AS",
     "COMMIT",
     "DISTINCT",
-    "DROP",
     "EXCEPT",
     "HAVING",
     "IN",
@@ -97,6 +97,17 @@ def parse_sql(sql: str) -> Statement:
     return _Parser(tokenize(sql), sql).parse()
 
 
+def parse_sql_script(sql: str) -> tuple[Statement, ...]:
+    """Convierte un script separado por ``;`` en AST inmutables.
+
+    El script completo se tokeniza y analiza antes de devolver el primer nodo.
+    Por tanto, un error lexico o sintactico conserva su ubicacion global y no
+    permite que el ejecutor aplique parcialmente las sentencias anteriores.
+    """
+
+    return _Parser(tokenize(sql), sql).parse_script()
+
+
 class _Parser:
     def __init__(self, tokens: tuple[Token, ...], source: str) -> None:
         self._tokens = tokens
@@ -116,6 +127,26 @@ class _Parser:
         self._expect(TokenKind.EOF, "se esperaba el final de la sentencia")
         return statement
 
+    def parse_script(self) -> tuple[Statement, ...]:
+        statements: list[Statement] = []
+        while not self._check(TokenKind.EOF):
+            statements.append(self._statement())
+            if self._match(TokenKind.SEMICOLON):
+                continue
+            if not self._check(TokenKind.EOF):
+                raise self._error(
+                    self._peek(),
+                    "se esperaba ';' entre sentencias SQL",
+                )
+
+        if not statements:
+            raise self._error(
+                self._peek(),
+                "se esperaba al menos una sentencia SQL",
+            )
+        self._expect(TokenKind.EOF, "se esperaba el final del script SQL")
+        return tuple(statements)
+
     def _statement(self) -> Statement:
         if self._match(TokenKind.CREATE):
             return self._create_table(self._previous())
@@ -125,6 +156,8 @@ class _Parser:
             return self._select(self._previous())
         if self._match(TokenKind.DELETE):
             return self._delete(self._previous())
+        if self._match(TokenKind.DROP):
+            return self._drop_table(self._previous())
         if self._match(TokenKind.BEGIN):
             return self._begin_transaction(self._previous())
         if self._match(TokenKind.END):
@@ -135,7 +168,7 @@ class _Parser:
             self._raise_unsupported(token)
         raise self._error(
             token,
-            "se esperaba CREATE TABLE, INSERT INTO, SELECT, DELETE FROM, "
+            "se esperaba CREATE TABLE, DROP TABLE, INSERT INTO, SELECT, DELETE FROM, "
             "BEGIN TRANSACTION o END TRANSACTION",
         )
 
@@ -388,6 +421,11 @@ class _Parser:
             where=where,
             span=combine_spans(start.span, where.span),
         )
+
+    def _drop_table(self, start: Token) -> DropTableStatement:
+        self._expect(TokenKind.TABLE, "se esperaba TABLE despues de DROP")
+        table = self._identifier("se esperaba el nombre de la tabla")
+        return DropTableStatement(table, combine_spans(start.span, table.span))
 
     def _begin_transaction(self, start: Token) -> BeginTransactionStatement:
         end = self._expect(TokenKind.TRANSACTION, "se esperaba TRANSACTION despues de BEGIN")

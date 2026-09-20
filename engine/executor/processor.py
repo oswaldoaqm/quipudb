@@ -20,17 +20,25 @@ from engine.parser import (
     BeginTransactionStatement,
     CreateTableStatement,
     DeleteStatement,
+    DropTableStatement,
     EndTransactionStatement,
     FromSource,
     InsertStatement,
     JoinRef,
     SelectStatement,
     SQLSemanticError,
+    Statement,
     TableRef,
-    parse_sql,
+    parse_sql_script,
 )
 from engine.parser.bound_ast import BoundSchema
-from engine.parser.semantic import bind_create_table, bind_delete, bind_insert, bind_select
+from engine.parser.semantic import (
+    bind_create_table,
+    bind_delete,
+    bind_drop_table,
+    bind_insert,
+    bind_select,
+)
 from engine.planner.native_catalog import from_native_table_info
 from engine.planner.optimizer import TableMetadata, optimize_delete, optimize_select
 from engine.planner.plan import Plan
@@ -83,18 +91,56 @@ class QueryProcessor:
         self._autocommit_owner = object()
 
     def execute(self, source: str) -> QueryResult:
-        """Ejecuta una sentencia del subconjunto disponible."""
+        """Ejecuta una o varias sentencias separadas por punto y coma.
+
+        Todo el script se analiza antes de ejecutar. En un lote, las sentencias
+        se aplican en orden, ``affected_rows`` se suma y las filas y el plan
+        corresponden a la ultima sentencia. Para atomicidad ante errores de
+        ejecucion, el llamador debe usar una transaccion explicita.
+        """
 
         started_ns = perf_counter_ns()
-        statement = parse_sql(source)
+        statements = parse_sql_script(source)
+        results = [
+            self._execute_statement(
+                statement,
+                source,
+                started_ns if index == 0 else perf_counter_ns(),
+                source
+                if len(statements) == 1
+                else source[statement.span.start : statement.span.end],
+            )
+            for index, statement in enumerate(statements)
+        ]
+        if len(results) == 1:
+            return results[0]
+
+        last = results[-1]
+        return QueryResult(
+            columns=last.columns,
+            column_types=last.column_types,
+            rows=last.rows,
+            affected_rows=sum(result.affected_rows for result in results),
+            plan=last.plan,
+        )
+
+    def _execute_statement(
+        self,
+        statement: Statement,
+        source: str,
+        started_ns: int,
+        query_text: str,
+    ) -> QueryResult:
         if isinstance(statement, CreateTableStatement):
             return self._create_table(statement, source)
         if isinstance(statement, InsertStatement):
             return self._insert(statement, source)
         if isinstance(statement, SelectStatement):
-            return self._select(statement, source, started_ns)
+            return self._select(statement, source, started_ns, query_text)
         if isinstance(statement, DeleteStatement):
             return self._delete(statement, source)
+        if isinstance(statement, DropTableStatement):
+            return self._drop_table(statement, source)
         if isinstance(statement, BeginTransactionStatement):
             return self._begin_transaction()
         if isinstance(statement, EndTransactionStatement):
@@ -239,11 +285,32 @@ class QueryProcessor:
         finally:
             self._release_autocommit(bound.table_name)
 
+    def _drop_table(self, statement: DropTableStatement, source: str) -> QueryResult:
+        if self._transaction is not None:
+            raise TransactionError("DROP TABLE no se puede ejecutar dentro de una transaccion")
+        bound = bind_drop_table(statement, source)
+
+        self._lock_or_abort(bound.table_name, LockMode.EXCLUSIVE)
+        try:
+            try:
+                self._database.drop_table(bound.table_name)
+            except self._domain_errors as error:
+                self._raise_semantic(
+                    error,
+                    f"no se pudo eliminar la tabla {bound.table_name!r}",
+                    statement.table.span,
+                    source,
+                )
+            return QueryResult()
+        finally:
+            self._release_autocommit(bound.table_name)
+
     def _select(
         self,
         statement: SelectStatement,
         source: str,
         started_ns: int,
+        query_text: str,
     ) -> QueryResult:
         referencias = _table_refs(statement.source)
         esquemas: dict[str, BoundSchema] = {}
@@ -302,7 +369,7 @@ class QueryProcessor:
                 )
 
             elapsed_ms = (perf_counter_ns() - started_ns) / 1_000_000
-            plan = Plan(query=source, root=execution.root, time_ms=elapsed_ms)
+            plan = Plan(query=query_text, root=execution.root, time_ms=elapsed_ms)
             return QueryResult(
                 columns=execution.columns,
                 column_types=execution.column_types,

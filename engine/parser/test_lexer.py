@@ -24,6 +24,7 @@ KEYWORDS = (
     ("from", TokenKind.FROM),
     ("where", TokenKind.WHERE),
     ("delete", TokenKind.DELETE),
+    ("drop", TokenKind.DROP),
     ("order", TokenKind.ORDER),
     ("by", TokenKind.BY),
     ("asc", TokenKind.ASC),
@@ -178,6 +179,57 @@ def test_spans_con_lf_crlf_y_espacios() -> None:
     assert tokens[1].span == Span(9, 15, 2, 3, 2, 9)
     assert tokens[2].span == Span(17, 21, 3, 1, 3, 5)
     assert tokens[3].span == Span(21, 21, 3, 5, 3, 5)
+
+
+def test_comentarios_de_linea_y_bloque_se_omiten_y_conservan_posiciones() -> None:
+    source = "SELECT/* bloque\n segunda */nombre-- cola\r\nFROM"
+
+    tokens = tokenize(source)
+
+    assert [token.kind for token in tokens] == [
+        TokenKind.SELECT,
+        TokenKind.IDENTIFIER,
+        TokenKind.FROM,
+        TokenKind.EOF,
+    ]
+    assert tokens[1].value == "nombre"
+    assert tokens[1].span.line == 2
+    assert tokens[1].span.column == 12
+    assert tokens[2].span.line == 3
+    assert tokens[2].span.column == 1
+
+
+@pytest.mark.parametrize("line_break", ["\n", "\r", "\r\n"])
+def test_comentario_de_linea_termina_con_cualquier_salto(line_break: str) -> None:
+    tokens = tokenize(f"SELECT-- comentario{line_break}FROM")
+
+    assert [token.kind for token in tokens] == [TokenKind.SELECT, TokenKind.FROM, TokenKind.EOF]
+    assert tokens[1].span.line == 2
+    assert tokens[1].span.column == 1
+
+
+def test_comentario_de_linea_puede_terminar_en_eof() -> None:
+    select, eof = tokenize("SELECT -- comentario")
+
+    assert select.kind is TokenKind.SELECT
+    assert eof.kind is TokenKind.EOF
+    assert eof.span.start == len("SELECT -- comentario")
+
+
+def test_marcadores_de_comentario_dentro_de_strings_son_texto() -> None:
+    first, second, _ = tokenize("'-- no' '/* tampoco */'")
+
+    assert first.value == "-- no"
+    assert second.value == "/* tampoco */"
+
+
+def test_comentario_de_bloque_sin_cerrar_informa_todo_el_intervalo() -> None:
+    source = "SELECT /* comentario\nsin cerrar"
+
+    with pytest.raises(SQLLexError, match="comentario de bloque sin cerrar") as raised:
+        tokenize(source)
+
+    assert raised.value.span == Span(7, len(source), 1, 8, 2, 11)
 
 
 def test_token_es_inmutable() -> None:

@@ -10,7 +10,7 @@ from typing import ClassVar
 import pytest
 
 from engine.executor.processor import QueryProcessor
-from engine.parser.errors import SQLSemanticError
+from engine.parser.errors import SQLParseError, SQLSemanticError
 from engine.transactions import TransactionError
 
 
@@ -257,7 +257,9 @@ class _FakeDatabase:
         self.infos: dict[str, _TableInfo] = {}
         self.indexes: dict[tuple[str, str], _FakeIndex] = {}
         self.create_calls: list[tuple[_Schema, str]] = []
+        self.drop_calls: list[str] = []
         self.fail_create: _NativeError | None = None
+        self.fail_drop: _NativeError | None = None
         self.fail_index_open: _NativeError | None = None
 
     def create_table(self, schema: _Schema, storage: str) -> _FakeTable:
@@ -285,6 +287,18 @@ class _FakeDatabase:
             return self.infos[name]
         except KeyError as exc:
             raise _SchemaError(f"tabla inexistente: {name}") from exc
+
+    def drop_table(self, name: str) -> None:
+        self.drop_calls.append(name)
+        if self.fail_drop is not None:
+            raise self.fail_drop
+        if name not in self.tables:
+            raise _SchemaError(f"tabla inexistente: {name}")
+        del self.tables[name]
+        del self.infos[name]
+        self.indexes = {
+            key: index for key, index in self.indexes.items() if key[0] != name
+        }
 
     def index(self, table: str, name: str) -> _FakeIndex:
         if self.fail_index_open is not None:
@@ -404,6 +418,79 @@ def test_insert_convierte_los_cinco_tipos_incluida_date(
     assert result.affected_rows == 1
 
 
+def test_lote_ejecuta_varios_insert_y_suma_filas_afectadas(
+    database: _FakeDatabase,
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("CREATE TABLE alumnos (id INT PRIMARY KEY, nombre VARCHAR(20))")
+
+    result = processor.execute(
+        "-- tres filas en una llamada\n"
+        "INSERT INTO alumnos VALUES (1, 'Ada');\n"
+        "INSERT INTO alumnos VALUES (2, 'Grace');\n"
+        "/* tambien admite un ultimo punto y coma */\n"
+        "INSERT INTO alumnos VALUES (3, 'Edsger');"
+    )
+
+    assert result.affected_rows == 3
+    assert database.tables["alumnos"].records == [
+        [1, "Ada"],
+        [2, "Grace"],
+        [3, "Edsger"],
+    ]
+
+
+def test_lote_se_analiza_completo_antes_de_modificar_datos(
+    database: _FakeDatabase,
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("CREATE TABLE alumnos (id INT PRIMARY KEY)")
+    sql = (
+        "INSERT INTO alumnos VALUES (1);\n"
+        "INSERT INTO alumnos VALUES (2);\n"
+        "INSERT INTO alumnos VALUES ("
+    )
+
+    with pytest.raises(SQLParseError, match="se esperaba un literal"):
+        processor.execute(sql)
+
+    assert database.tables["alumnos"].records == []
+
+
+def test_lote_devuelve_el_ultimo_resultado_y_acumula_mutaciones(
+    processor: QueryProcessor,
+) -> None:
+    result = processor.execute(
+        "CREATE TABLE alumnos (id INT PRIMARY KEY, nombre VARCHAR(20));\n"
+        "INSERT INTO alumnos VALUES (1, 'Ada');\n"
+        "INSERT INTO alumnos VALUES (2, 'Grace');\n"
+        "SELECT nombre FROM alumnos"
+    )
+
+    assert result.columns == ("nombre",)
+    assert result.rows == (("Ada",), ("Grace",))
+    assert result.affected_rows == 2
+    assert result.plan is not None
+    assert result.plan.query == "SELECT nombre FROM alumnos"
+
+
+def test_lote_transaccional_revierte_todos_los_insert_si_uno_falla(
+    database: _FakeDatabase,
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("CREATE TABLE alumnos (id INT PRIMARY KEY)")
+
+    with pytest.raises(SQLSemanticError, match="clave primaria"):
+        processor.execute(
+            "BEGIN TRANSACTION;\n"
+            "INSERT INTO alumnos VALUES (1);\n"
+            "INSERT INTO alumnos VALUES (1);\n"
+            "END TRANSACTION;"
+        )
+
+    assert database.tables["alumnos"].records == []
+
+
 def test_tabla_duplicada_se_traduce_y_conserva_schema_error(
     processor: QueryProcessor,
 ) -> None:
@@ -423,6 +510,68 @@ def test_insert_en_tabla_inexistente_se_traduce_y_conserva_schema_error(
         processor.execute("INSERT INTO ausente VALUES (1)")
 
     assert isinstance(captured.value.__cause__, _SchemaError)
+
+
+def test_drop_table_elimina_tabla_e_indices_y_devuelve_resultado_vacio(
+    database: _FakeDatabase,
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("CREATE TABLE datos (id INT PRIMARY KEY, nombre VARCHAR(20)) USING HEAP")
+    database.add_index("datos", "por_nombre", 1)
+
+    result = processor.execute("DROP TABLE datos")
+
+    assert result.columns == ()
+    assert result.rows == ()
+    assert result.affected_rows == 0
+    assert database.drop_calls == ["datos"]
+    assert "datos" not in database.tables
+    assert not database.indexes
+
+
+def test_drop_table_inexistente_se_traduce_y_conserva_schema_error(
+    processor: QueryProcessor,
+) -> None:
+    with pytest.raises(SQLSemanticError, match="no se pudo eliminar") as captured:
+        processor.execute("DROP TABLE ausente")
+
+    assert isinstance(captured.value.__cause__, _SchemaError)
+    assert captured.value.span.start == len("DROP TABLE ")
+
+
+def test_drop_table_se_rechaza_dentro_de_una_transaccion(
+    database: _FakeDatabase,
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("CREATE TABLE datos (id INT PRIMARY KEY)")
+    processor.execute("BEGIN TRANSACTION")
+
+    with pytest.raises(TransactionError, match="DROP TABLE"):
+        processor.execute("DROP TABLE datos")
+
+    assert "datos" in database.tables
+    processor.execute("END TRANSACTION")
+
+
+def test_delete_multilinea_con_comentarios_mantiene_indice(
+    database: _FakeDatabase,
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("CREATE TABLE datos (id INT PRIMARY KEY, nombre VARCHAR(20)) USING HEAP")
+    index = database.add_index("datos", "por_nombre", 1)
+    processor.execute("INSERT INTO datos VALUES (1, 'Ada')")
+    processor.execute("INSERT INTO datos VALUES (2, 'Grace')")
+
+    result = processor.execute(
+        "-- borrar una fila\n"
+        "DELETE\n"
+        "FROM datos /* tabla objetivo */\n"
+        "WHERE nombre = 'Ada'"
+    )
+
+    assert result.affected_rows == 1
+    assert database.tables["datos"].records == [[2, "Grace"]]
+    assert index.search("Ada") == []
 
 
 @pytest.mark.parametrize("native_error_type", [_InvalidRecord, _DuplicateKey])

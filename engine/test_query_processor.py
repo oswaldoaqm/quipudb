@@ -74,6 +74,25 @@ def test_insert_escribe_y_permite_leer_los_cinco_tipos(db):
     assert row[4] == quipudb.Date((date(2026, 9, 13) - date(1970, 1, 1)).days)
 
 
+def test_lote_inserta_varias_filas_con_una_sola_llamada(db):
+    processor = QueryProcessor(db)
+    processor.execute("CREATE TABLE alumnos (id INT PRIMARY KEY, nombre VARCHAR(20))")
+
+    result = processor.execute(
+        "-- carga por lote\n"
+        "INSERT INTO alumnos VALUES (1, 'Ada');\n"
+        "INSERT INTO alumnos VALUES (2, 'Grace');\n"
+        "INSERT INTO alumnos VALUES (3, 'Edsger');"
+    )
+
+    assert result.affected_rows == 3
+    assert db.table("alumnos").scan() == [
+        [1, "Ada"],
+        [2, "Grace"],
+        [3, "Edsger"],
+    ]
+
+
 def test_datos_sql_sobreviven_flush_cierre_y_reapertura(tmp_path):
     catalog = tmp_path / "catalogo.txt"
     db = quipudb.Database(catalog)
@@ -125,6 +144,43 @@ def test_insert_actualiza_todos_los_indices_secundarios_existentes(db):
     (id_rid,) = by_id.search(1)
     assert name_rid == id_rid
     assert db.table("personas").read(name_rid) == [1, "Ada"]
+
+
+def test_drop_table_sql_borra_tabla_y_archivos_de_indices(tmp_path):
+    db = quipudb.Database(tmp_path / "catalogo.txt")
+    processor = QueryProcessor(db)
+    processor.execute("CREATE TABLE datos (id INT PRIMARY KEY, nombre VARCHAR(20)) USING HEAP")
+    db.create_index("datos", "por_nombre", "nombre", quipudb.kind.EXTENDIBLE_HASH)
+    info = db.table_info("datos")
+    paths = [tmp_path / info.file, *(tmp_path / index.file for index in info.indexes)]
+    assert all(path.exists() for path in paths)
+
+    result = processor.execute("DROP TABLE datos")
+
+    assert result.affected_rows == 0
+    assert not db.has_table("datos")
+    assert all(not path.exists() for path in paths)
+
+
+def test_delete_multilinea_con_comentarios_actualiza_indice(db):
+    processor = QueryProcessor(db)
+    processor.execute("CREATE TABLE datos (id INT PRIMARY KEY, nombre VARCHAR(20)) USING HEAP")
+    index = db.create_index(
+        "datos", "por_nombre", "nombre", quipudb.kind.EXTENDIBLE_HASH
+    )
+    processor.execute("INSERT INTO datos VALUES (1, 'Ada')")
+    processor.execute("INSERT INTO datos VALUES (2, 'Grace')")
+
+    result = processor.execute(
+        "-- comentario inicial\n"
+        "DELETE\n"
+        "FROM datos /* comentario de bloque */\n"
+        "WHERE nombre = 'Ada'"
+    )
+
+    assert result.affected_rows == 1
+    assert db.table("datos").search(1) == []
+    assert index.search("Ada") == []
 
 
 def _create_select_table(db, storage):

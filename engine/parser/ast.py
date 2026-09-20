@@ -220,6 +220,12 @@ class DeleteStatement:
 
 
 @dataclass(frozen=True, slots=True)
+class DropTableStatement:
+    table: Identifier
+    span: Span
+
+
+@dataclass(frozen=True, slots=True)
 class BeginTransactionStatement:
     span: Span
 
@@ -234,6 +240,7 @@ Statement: TypeAlias = (
     | InsertStatement
     | SelectStatement
     | DeleteStatement
+    | DropTableStatement
     | BeginTransactionStatement
     | EndTransactionStatement
 )
