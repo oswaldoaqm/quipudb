@@ -5,6 +5,7 @@ frontend (seccion 2.1.5), por eso la estructura del plan es un contrato entre
 el core, el parser y el frontend, y no un detalle interno.
 """
 
+from engine.planner.explain import explain_select
 from engine.planner.native_catalog import from_native_table_info, load_table_metadata
 from engine.planner.optimizer import (
     AccessRoute,
@@ -24,6 +25,7 @@ __all__ = [
     "PhysicalDeletePlan",
     "PhysicalSelectPlan",
     "TableMetadata",
+    "explain_select",
     "from_native_table_info",
     "load_table_metadata",
     "optimize_delete",

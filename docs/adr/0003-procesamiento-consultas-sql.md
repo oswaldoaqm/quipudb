@@ -53,9 +53,14 @@ document             = statement, [ ";" ], EOF ;
 script               = statement, { ";", statement }, [ ";" ], EOF ;
 
 statement            = create_table
+                     | create_index
                      | insert
                      | select
-                     | delete ;
+                     | explain
+                     | delete
+                     | drop_table
+                     | begin_transaction
+                     | end_transaction ;
 
 create_table         = "CREATE", "TABLE", identifier, "(",
                        column_definition, { ",", column_definition }, ")",
@@ -67,6 +72,11 @@ data_type            = "INT"
                      | "DATE"
                      | "VARCHAR", "(", unsigned_integer, ")" ;
 storage_kind         = "HEAP" | "SEQUENTIAL" ;
+
+create_index         = "CREATE", "INDEX", identifier, "ON", identifier,
+                       "(", identifier, ")", "USING", index_kind ;
+index_kind           = "BPLUS" | "BPLUS_UNCLUSTERED"
+                     | "HASH" | "EXTENDIBLE_HASH" ;
 
 insert               = "INSERT", "INTO", identifier, "VALUES", "(",
                        literal, { ",", literal }, ")" ;
@@ -90,6 +100,10 @@ order_by_clause      = "ORDER", "BY", identifier,
                        [ "ASC" | "DESC" ] ;
 
 delete               = "DELETE", "FROM", identifier, where_clause ;
+drop_table           = "DROP", "TABLE", identifier ;
+explain              = "EXPLAIN", [ "ANALYZE" ], select ;
+begin_transaction    = "BEGIN", "TRANSACTION" ;
+end_transaction      = "END", "TRANSACTION" ;
 
 literal              = signed_double
                      | signed_integer
@@ -120,11 +134,11 @@ otros formatos numericos.
 Una comilla simple dentro de un string se representa con `''`; la barra
 invertida no introduce escapes. Una fecha usa exactamente
 `DATE 'YYYY-MM-DD'` y debe representar una fecha de calendario valida. Los
-comentarios y los identificadores delimitados por comillas no forman parte de
-la gramatica.
+comentarios se omiten antes del parser. Los identificadores delimitados por
+comillas no forman parte de la gramatica.
 
-El punto y coma final es opcional, pero no se acepta ningun token despues de
-el. Por tanto, una cadena con dos sentencias siempre falla. `DELETE` exige
+En `parse_sql` el punto y coma final es opcional y una segunda sentencia falla.
+`parse_sql_script` acepta varias sentencias separadas por `;`. `DELETE` exige
 `WHERE` sintacticamente para impedir un borrado total accidental. `BETWEEN` es
 inclusivo y `AND` solo actua como separador de sus limites; no introduce una
 segunda condicion.
@@ -145,6 +159,9 @@ analisis semantico aplicara estas reglas antes de tocar disco:
   `PRIMARY KEY`; `VARCHAR(n)` exige `n > 0`.
 - Si se omite `USING`, la organizacion es `HEAP`. La alternativa explicita es
   `USING SEQUENTIAL`.
+- `CREATE INDEX` exige una tabla y columna existentes. `BPLUS` representa un
+  B+ secundario no agrupado y `HASH`, un hash extensible; solo se construyen
+  sobre tablas HEAP y quedan fuera de transacciones explicitas.
 - `INSERT` es posicional, sin lista de columnas, y debe aportar un valor por
   columna con un tipo compatible.
 - La tabla, las columnas proyectadas y las columnas de `WHERE`, `GROUP BY` y
@@ -159,6 +176,8 @@ analisis semantico aplicara estas reglas antes de tocar disco:
 - `ORDER BY` admite una sola columna. La direccion omitida equivale a `ASC`;
   `DESC` invierte el orden. En una consulta agrupada, la columna de orden debe
   ser la columna de agrupacion, pues no hay aliases para nombrar agregados.
+- `EXPLAIN` solo envuelve `SELECT`. Sin `ANALYZE` describe el IR fisico sin
+  ejecutar operadores; con `ANALYZE` ejecuta e instrumenta la consulta.
 
 El orden de clausulas queda fijado por la EBNF: `WHERE`, luego `GROUP BY` y por
 ultimo `ORDER BY`. Cada clausula aparece como maximo una vez.
@@ -166,7 +185,7 @@ ultimo `ORDER BY`. Cada clausula aparece como maximo una vez.
 ### AST, posiciones y errores
 
 Los nodos del AST seran dataclasses congeladas con `slots`; sus colecciones
-seran tuplas. Modelaran de forma separada las cuatro sentencias, identificadores,
+seran tuplas. Modelaran de forma separada las sentencias, identificadores,
 tipos, definiciones de columna, literales, proyecciones, agregados, condiciones,
 agrupacion y orden. Las keywords y operadores se almacenaran como enums
 normalizados; identificadores y valores de string conservaran su contenido.
@@ -195,10 +214,11 @@ issues posteriores.
 ### Resultado y plan de ejecucion
 
 Desde #25, la fachada es `QueryProcessor.execute(source)` y devuelve un
-`QueryResult` inmutable con cuatro campos:
+`QueryResult` inmutable con cinco campos:
 
 ```text
 columns       tuple[str, ...] con los nombres devueltos
+column_types  tuple[SqlTypeName, ...] con un tipo por columna
 rows          tuple[tuple[object, ...], ...] con las filas materializadas
 affected_rows int no negativo con la cantidad de filas modificadas
 plan          Plan del ADR 0002 o None mientras la sentencia no tenga plan
@@ -211,8 +231,8 @@ construir las filas que exponga a otras capas.
 
 Para `SELECT`, `columns` y `rows` contienen la salida y `affected_rows` es cero.
 Para `INSERT` y `DELETE`, `affected_rows` informa las filas modificadas y no se
-devuelven filas. `CREATE TABLE` no devuelve filas ni cuenta filas modificadas.
-`CREATE TABLE`, `INSERT` y `DELETE` devuelven `plan=None`: el ADR 0002 no define
+devuelven filas. Los DDL no devuelven filas ni cuentan filas modificadas.
+`CREATE TABLE`, `CREATE INDEX`, `INSERT` y `DELETE` devuelven `plan=None`: el ADR 0002 no define
 una operacion `CREATE`, y la atribucion de escrituras entre una tabla y varios
 indices todavia necesita el acuerdo descrito a continuacion. Desde #26, todo
 `SELECT` devuelve el `Plan` medido de la ruta que realmente recorrio.
@@ -260,11 +280,17 @@ ejecutor procesa los AST en orden, suma `affected_rows` y expone el resultado de
 la ultima sentencia; la atomicidad de errores de ejecucion requiere una
 transaccion explicita dentro del script.
 
+Los issues #107 y #108 añaden `CREATE INDEX` y `EXPLAIN`. La creación delega en
+el catálogo existente, que construye el índice sobre las filas actuales.
+`EXPLAIN` convierte el plan físico en pasos con estadísticas cero;
+`EXPLAIN ANALYZE` ejecuta el `SELECT` y conserva las estadísticas medidas. Los
+dos devuelven el plan sin las filas de la consulta explicada.
+
 ### Limites explicitos
 
 Quedan fuera de este subconjunto:
 
-- `UPDATE`, `JOIN`, `CREATE INDEX`, `ALTER` y el resto de DDL no enumerado;
+- `UPDATE`, `ALTER` y el resto de DDL no enumerado;
 - `NULL` y la logica de tres valores;
 - operadores `!=` y `<>`, condiciones generales con `AND`, `OR` o `NOT`;
 - subconsultas, expresiones aritmeticas y funciones escalares;

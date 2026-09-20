@@ -146,6 +146,83 @@ def test_insert_actualiza_todos_los_indices_secundarios_existentes(db):
     assert db.table("personas").read(name_rid) == [1, "Ada"]
 
 
+@pytest.mark.parametrize(
+    ("sql_kind", "native_kind"),
+    [
+        ("BPLUS", quipudb.kind.BPLUS_UNCLUSTERED),
+        ("HASH", quipudb.kind.EXTENDIBLE_HASH),
+    ],
+)
+def test_create_index_sql_construye_sobre_datos_existentes(
+    db,
+    sql_kind,
+    native_kind,
+):
+    processor = QueryProcessor(db)
+    processor.execute("CREATE TABLE personas (id INT PRIMARY KEY, nombre VARCHAR(20))")
+    processor.execute("INSERT INTO personas VALUES (1, 'Ada')")
+    processor.execute("INSERT INTO personas VALUES (2, 'Grace')")
+
+    result = processor.execute(
+        f"CREATE INDEX por_nombre ON personas (nombre) USING {sql_kind}"
+    )
+
+    assert result == QueryResult()
+    info = db.table_info("personas")
+    assert [(index.name, index.column, index.kind) for index in info.indexes] == [
+        ("por_nombre", 1, native_kind)
+    ]
+    (rid,) = db.index("personas", "por_nombre").search("Ada")
+    assert db.table("personas").read(rid) == [1, "Ada"]
+
+
+def test_create_index_sql_es_usado_por_select_y_explain(db):
+    processor = QueryProcessor(db)
+    processor.execute("CREATE TABLE personas (id INT PRIMARY KEY, nombre VARCHAR(20))")
+    processor.execute("INSERT INTO personas VALUES (1, 'Ada')")
+    processor.execute("CREATE INDEX por_nombre ON personas (nombre) USING HASH")
+
+    explained = processor.execute(
+        "EXPLAIN SELECT id FROM personas WHERE nombre = 'Ada'"
+    )
+    selected = processor.execute("SELECT id FROM personas WHERE nombre = 'Ada'")
+
+    assert explained.plan is not None
+    assert [step.op.value for step in explained.plan.root.walk()] == [
+        "index_search",
+        "fetch",
+        "project",
+    ]
+    assert explained.plan.root.subtree_stats().records_examined == 0
+    assert selected.rows == ((1,),)
+    assert selected.plan is not None
+    assert selected.plan.root.walk()[0].structure.value == quipudb.kind.EXTENDIBLE_HASH
+
+
+def test_explain_analyze_ejecuta_select_y_mide_plan_real(db):
+    processor = QueryProcessor(db)
+    processor.execute("CREATE TABLE personas (id INT PRIMARY KEY, nombre VARCHAR(20))")
+    processor.execute("INSERT INTO personas VALUES (1, 'Ada')")
+    processor.execute("INSERT INTO personas VALUES (2, 'Grace')")
+
+    result = processor.execute("EXPLAIN ANALYZE SELECT nombre FROM personas")
+
+    assert result.rows == ()
+    assert result.plan is not None
+    assert result.plan.query == "SELECT nombre FROM personas"
+    assert result.plan.root.subtree_stats().records_examined >= 2
+
+
+def test_create_index_sql_traduce_restriccion_de_tabla_heap(db):
+    processor = QueryProcessor(db)
+    processor.execute(
+        "CREATE TABLE personas (id INT PRIMARY KEY, nombre VARCHAR(20)) USING SEQUENTIAL"
+    )
+
+    with pytest.raises(SQLSemanticError, match="no se pudo crear el indice"):
+        processor.execute("CREATE INDEX por_nombre ON personas (nombre) USING HASH")
+
+
 def test_drop_table_sql_borra_tabla_y_archivos_de_indices(tmp_path):
     db = quipudb.Database(tmp_path / "catalogo.txt")
     processor = QueryProcessor(db)

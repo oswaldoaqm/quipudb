@@ -36,8 +36,10 @@ no equivale a haber iniciado una modificación protegida por undo.
 | Sentencia/capacidad | Alcance actual |
 |---|---|
 | `CREATE TABLE` | Columnas `INT`, `DOUBLE`, `VARCHAR(n)`, `BOOL`, `DATE`; una clave primaria; almacenamiento HEAP por defecto o SEQUENTIAL |
+| `CREATE INDEX` | Un índice secundario B+ no agrupado o hash extensible sobre una columna de una tabla HEAP |
 | `INSERT INTO ... VALUES (...)` | Una tupla posicional por sentencia |
 | `SELECT` | `*` o proyección de columnas; filtro simple opcional |
+| `EXPLAIN [ANALYZE] SELECT` | Plan físico sin ejecutar, o plan medido después de ejecutar el SELECT |
 | `WHERE` | Una comparación `=`, `<`, `<=`, `>`, `>=` o `BETWEEN` inclusivo |
 | `ORDER BY` | Una columna, ASC o DESC |
 | `GROUP BY` | Una columna; agregados `COUNT(*)`, `SUM`, `MIN`, `MAX`, `AVG`, sujetos a validación semántica |
@@ -45,7 +47,7 @@ no equivale a haber iniciado una modificación protegida por undo.
 | `DROP TABLE` | Elimina la tabla y sus índices asociados; fuera de transacciones explícitas |
 | `BEGIN TRANSACTION`, `END TRANSACTION` | Inicio y confirmación de transacción explícita |
 
-No se soportan SQL `UPDATE`, `CREATE INDEX`, `ALTER`, `COMMIT`,
+No se soportan SQL `UPDATE`, `ALTER`, `COMMIT`,
 `ROLLBACK`, `NULL`, subconsultas, alias, `HAVING`, `LIMIT` ni condiciones booleanas
 generales con `AND`/`OR`/`NOT`. El `AND` de `BETWEEN` es parte de esa sintaxis,
 no soporte de conjunciones arbitrarias. Tampoco hay listas generales de columnas
@@ -64,10 +66,11 @@ si puede ocurrir despues de que una sentencia previa se haya confirmado; un
 lote que requiera atomicidad debe incluir `BEGIN TRANSACTION` y
 `END TRANSACTION`.
 
-Las tablas B+ agrupadas y los índices secundarios se pueden crear mediante la
-API nativa, no mediante estas sentencias SQL de creación. El planificador sí
-puede utilizar estructuras existentes en el catálogo cuando su acceso es válido.
-La disponibilidad de JOIN en C++/bindings no modifica la gramática.
+Las tablas B+ agrupadas todavía se crean mediante la API nativa. Los índices
+secundarios sí se pueden crear por SQL con
+`CREATE INDEX nombre ON tabla (columna) USING BPLUS|HASH`; los nombres largos
+`BPLUS_UNCLUSTERED` y `EXTENDIBLE_HASH` son alias aceptados. El core restringe
+estos índices a tablas HEAP y los construye sobre los registros existentes.
 
 ## Selección de accesos y operadores
 
@@ -90,6 +93,12 @@ Las restricciones de proyección, tipos y agregados se verifican semánticamente
 El planificador es por reglas. La selección interna entre algoritmos de JOIN
 nativo es otra decisión, no evidencia de un optimizador SQL de joins o basado
 en costos globales.
+
+`EXPLAIN SELECT` enlaza nombres y tipos y ejecuta el optimizador, pero no abre
+un recorrido ni genera temporales: sus estadísticas por paso son cero.
+`EXPLAIN ANALYZE SELECT` sí ejecuta la consulta para completar tiempos y
+contadores. En ambos casos `QueryResult.rows` queda vacío y `QueryResult.plan`
+contiene el árbol, que es la salida relevante para el frontend.
 
 ## Modificaciones y coherencia con índices
 

@@ -219,6 +219,8 @@ Reglas mínimas:
 - `DELETE` exige `WHERE`; no se habilitará borrado total implícito.
 - `ORDER BY` admite una sola columna y `ASC` o `DESC`.
 - `GROUP BY` admite una sola columna y `COUNT(*)`, `SUM`, `MIN`, `MAX` y `AVG`.
+- `CREATE INDEX nombre ON tabla (columna) USING BPLUS|HASH` crea indices secundarios.
+- `EXPLAIN [ANALYZE] SELECT` devuelve la ruta prevista o sus medidas reales.
 - Keywords sin sensibilidad a mayúsculas; identificadores preservados y resueltos exactamente como
   los almacena el catálogo.
 - Whitespace multilinea y comentarios `--` o `/* ... */` entre tokens.
@@ -229,8 +231,7 @@ Reglas mínimas:
 ### Excluido
 
 - `UPDATE`.
-- `JOIN`, aunque el core ya lo implemente.
-- `CREATE INDEX`, `ALTER` y demás DDL fuera de `CREATE TABLE` y `DROP TABLE`.
+- `ALTER` y demás DDL fuera de `CREATE TABLE`, `CREATE INDEX` y `DROP TABLE`.
 - `NULL` y lógica de tres valores.
 - `AND`, `OR`, `NOT`, subconsultas, expresiones aritméticas y funciones escalares.
 - `HAVING`, múltiples columnas de orden o agrupación y aliases.
@@ -243,7 +244,8 @@ adicional requiere actualizar primero este plan y el ADR.
 > Ampliación posterior: los issues #101 y #103 agregaron comentarios SQL y
 > `DROP TABLE`; el issue #102 convirtió el comportamiento multilinea y de
 > `DELETE` en un contrato explícitamente probado. El issue #105 agregó lotes
-> de varias sentencias sin cambiar el contrato estricto de `parse_sql`.
+> de varias sentencias sin cambiar el contrato estricto de `parse_sql`. Los
+> issues #107 y #108 agregaron `CREATE INDEX` y `EXPLAIN [ANALYZE] SELECT`.
 
 ## Issues verificados y orden de entrega
 
