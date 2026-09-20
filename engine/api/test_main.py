@@ -156,6 +156,57 @@ def test_drop_table_actualiza_el_catalogo_expuesto_por_la_api(cliente) -> None:
     assert cliente.get("/tables").json() == []
 
 
+def test_create_index_sql_actualiza_tables_y_explain_lo_selecciona(cliente) -> None:
+    _poblar(cliente)
+
+    creada = cliente.post(
+        "/query",
+        json={
+            "sql": "CREATE INDEX por_promedio ON alumnos (promedio) USING BPLUS"
+        },
+    )
+    explicada = cliente.post(
+        "/query",
+        json={
+            "sql": "EXPLAIN SELECT nombre FROM alumnos WHERE promedio >= 15"
+        },
+    )
+
+    assert creada.status_code == 200
+    assert cliente.get("/tables").json()[0]["indexes"] == [
+        {
+            "name": "por_promedio",
+            "column": "promedio",
+            "structure": "bplus_unclustered",
+            "supports_range": True,
+        }
+    ]
+    assert explicada.status_code == 200
+    cuerpo = explicada.json()
+    assert cuerpo["rows"] == []
+    assert cuerpo["plan"]["root"]["children"][0]["children"][0]["op"] == "index_range"
+    assert cuerpo["plan"]["totals"] == {
+        "pages_read": 0,
+        "pages_written": 0,
+        "records_examined": 0,
+        "records_returned": 0,
+    }
+
+
+def test_explain_analyze_devuelve_estadisticas_reales_por_http(cliente) -> None:
+    _poblar(cliente)
+
+    respuesta = cliente.post(
+        "/query",
+        json={"sql": "EXPLAIN ANALYZE SELECT nombre FROM alumnos"},
+    )
+
+    assert respuesta.status_code == 200
+    cuerpo = respuesta.json()
+    assert cuerpo["rows"] == []
+    assert cuerpo["plan"]["totals"]["records_examined"] >= 3
+
+
 def test_un_join_llega_por_http_con_su_paso_en_el_plan(cliente) -> None:
     _poblar(cliente)
     cliente.post("/query", json={"sql": (

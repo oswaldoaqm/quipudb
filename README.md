@@ -109,9 +109,9 @@ db.flush()
 
 ### Procesar SQL
 
-Con los bindings compilados, `QueryProcessor` ejecuta `CREATE TABLE`, `DROP TABLE`,
-`INSERT INTO`, `SELECT` y `DELETE FROM`. El resultado de una consulta incluye
-las filas y el plan físico realmente recorrido:
+Con los bindings compilados, `QueryProcessor` ejecuta `CREATE TABLE`,
+`CREATE INDEX`, `DROP TABLE`, `INSERT INTO`, `SELECT`, `EXPLAIN` y
+`DELETE FROM`. El resultado de una consulta incluye las filas y el plan físico:
 
 ```python
 import quipudb_native as q
@@ -133,10 +133,20 @@ batch = processor.execute(
 )
 print(batch.affected_rows)     # 3
 
+# Los indices secundarios solo se crean sobre tablas HEAP.
+processor.execute("CREATE INDEX cursos_por_nota ON cursos (nota) USING BPLUS")
+
 result = processor.execute("SELECT nombre, nota FROM cursos WHERE nota >= 14")
 print(result.columns)          # ('nombre', 'nota')
 print(result.rows)             # (('Bases de Datos 2', 18.0),)
 print(result.plan.to_dict())   # scan/filter/project y sus estadísticas
+
+planned = processor.execute("EXPLAIN SELECT nombre FROM cursos WHERE nota >= 14")
+measured = processor.execute(
+    "EXPLAIN ANALYZE SELECT nombre FROM cursos WHERE nota >= 14"
+)
+print(planned.plan.to_dict())  # ruta elegida, sin leer filas: contadores en cero
+print(measured.plan.to_dict()) # misma consulta ejecutada, con medidas reales
 
 ordered = processor.execute("SELECT nombre, nota FROM cursos ORDER BY nota DESC")
 grouped = processor.execute(
@@ -160,6 +170,14 @@ y usa external sorting; `GROUP BY` admite `COUNT(*)`, `SUM`, `MIN`, `MAX` y
 `AVG`, y usa external hashing con fallback seguro a sort. El plan explica la
 dirección, los runs, las pasadas, la estrategia y las particiones realmente
 utilizadas.
+
+`CREATE INDEX nombre ON tabla (columna) USING BPLUS` crea un B+ secundario no
+agrupado; `USING HASH` crea un hash extensible. También se aceptan los nombres
+explícitos `BPLUS_UNCLUSTERED` y `EXTENDIBLE_HASH`. El índice se construye sobre
+las filas existentes y queda disponible para el optimizador. `EXPLAIN` admite
+un `SELECT`, genera el plan sin recorrer sus filas y deja sus contadores en
+cero. `EXPLAIN ANALYZE` sí ejecuta el `SELECT` para obtener estadísticas reales;
+ambos devuelven el plan y no devuelven las filas de la consulta explicada.
 
 Las sentencias pueden ocupar varias líneas y contener comentarios de línea
 `-- comentario` o de bloque `/* comentario */`. Los marcadores escritos dentro

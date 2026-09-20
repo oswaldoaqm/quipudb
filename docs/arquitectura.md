@@ -66,9 +66,10 @@ de la ultima sentencia, de modo que el contrato HTTP no cambia. Los errores de
 parseo no producen efectos parciales; la atomicidad ante errores de ejecucion
 requiere `BEGIN TRANSACTION` y `END TRANSACTION` en el propio lote.
 
-El AST representa `CREATE TABLE`, `DROP TABLE`, `INSERT INTO`, `SELECT`,
-`DELETE FROM`, `JOIN`, `BEGIN TRANSACTION` y `END TRANSACTION`. El lexer acepta
-consultas multilinea y omite comentarios `--` y `/* ... */` sin perder la
+El AST representa `CREATE TABLE`, `CREATE INDEX`, `DROP TABLE`, `INSERT INTO`,
+`SELECT`, `EXPLAIN`, `DELETE FROM`, `JOIN`, `BEGIN TRANSACTION` y
+`END TRANSACTION`. El lexer acepta consultas multilinea y omite comentarios
+`--` y `/* ... */` sin perder la
 ubicacion de los tokens. Los scripts conservan esas ubicaciones globales aunque
 el error aparezca en una sentencia posterior. Aceptar una sentencia no
 significa que ya pueda ejecutarse: la validacion contra el esquema comienza en
@@ -103,6 +104,19 @@ Desde #103, `DROP TABLE` valida el identificador, toma un lock exclusivo y
 delega en `Database::drop_table`, que elimina también los archivos de los
 índices asociados. Igual que `CREATE TABLE`, se rechaza dentro de una
 transacción explícita.
+
+Desde #107, `CREATE INDEX nombre ON tabla (columna) USING BPLUS|HASH` valida la
+tabla y la columna, toma un lock exclusivo y delega en
+`Database::create_index`. El core construye el B+ secundario no agrupado o el
+hash extensible sobre las filas que ya existen. Solo se admite sobre tablas
+HEAP y, como los otros DDL, se rechaza dentro de una transacción explícita.
+
+Desde #108, `EXPLAIN SELECT` transforma el IR físico a `Plan` sin ejecutar
+operadores: los pasos muestran la ruta elegida con tiempos y contadores en
+cero. `EXPLAIN ANALYZE SELECT` recorre la misma ruta instrumentada que un
+`SELECT` normal y devuelve sus medidas reales. Los dos comandos devuelven el
+plan sin las filas de la consulta explicada, por lo que el contrato HTTP y el
+Panel de Plan existente no requieren campos nuevos.
 
 Desde #28, `ORDER BY` encadena la ruta de acceso y el filtro con
 `ExternalSort`; ordena la fila completa antes de proyectar y soporta `ASC` y

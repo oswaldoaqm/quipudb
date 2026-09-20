@@ -44,6 +44,11 @@ class StorageKind(StrEnum):
     SEQUENTIAL = "SEQUENTIAL"
 
 
+class IndexKind(StrEnum):
+    BPLUS_UNCLUSTERED = "BPLUS_UNCLUSTERED"
+    EXTENDIBLE_HASH = "EXTENDIBLE_HASH"
+
+
 @dataclass(frozen=True, slots=True)
 class IntegerLiteral:
     value: int
@@ -168,6 +173,15 @@ class CreateTableStatement:
 
 
 @dataclass(frozen=True, slots=True)
+class CreateIndexStatement:
+    index: Identifier
+    table: Identifier
+    column: Identifier
+    kind: IndexKind
+    span: Span
+
+
+@dataclass(frozen=True, slots=True)
 class InsertStatement:
     table: Identifier
     values: tuple[Literal, ...]
@@ -213,6 +227,13 @@ class SelectStatement:
 
 
 @dataclass(frozen=True, slots=True)
+class ExplainStatement:
+    statement: SelectStatement
+    analyze: bool
+    span: Span
+
+
+@dataclass(frozen=True, slots=True)
 class DeleteStatement:
     table: Identifier
     where: Condition
@@ -237,8 +258,10 @@ class EndTransactionStatement:
 
 Statement: TypeAlias = (
     CreateTableStatement
+    | CreateIndexStatement
     | InsertStatement
     | SelectStatement
+    | ExplainStatement
     | DeleteStatement
     | DropTableStatement
     | BeginTransactionStatement

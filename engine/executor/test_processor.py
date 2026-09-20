@@ -257,6 +257,7 @@ class _FakeDatabase:
         self.infos: dict[str, _TableInfo] = {}
         self.indexes: dict[tuple[str, str], _FakeIndex] = {}
         self.create_calls: list[tuple[_Schema, str]] = []
+        self.create_index_calls: list[tuple[str, str, str, str]] = []
         self.drop_calls: list[str] = []
         self.fail_create: _NativeError | None = None
         self.fail_drop: _NativeError | None = None
@@ -315,6 +316,35 @@ class _FakeDatabase:
         index = _FakeIndex(kind)
         self.indexes[(table, name)] = index
         self.infos[table].indexes.append(_IndexInfo(name, column, kind))
+        return index
+
+    def create_index(
+        self,
+        table: str,
+        name: str,
+        column: str,
+        kind: str,
+    ) -> _FakeIndex:
+        self.create_index_calls.append((table, name, column, kind))
+        if table not in self.tables:
+            raise _SchemaError(f"tabla inexistente: {table}")
+        if (table, name) in self.indexes:
+            raise _SchemaError(f"el indice {name} ya existe")
+        schema = self.infos[table].schema
+        try:
+            position = next(
+                index for index, definition in enumerate(schema.columns)
+                if definition.name == column
+            )
+        except StopIteration as exc:
+            raise _SchemaError(f"columna inexistente: {column}") from exc
+        index = self.add_index(table, name, position, kind)
+        for record, rid in zip(
+            self.tables[table].records,
+            self.tables[table].rids,
+            strict=True,
+        ):
+            index.insert(record[position], rid)
         return index
 
 
@@ -527,6 +557,129 @@ def test_drop_table_elimina_tabla_e_indices_y_devuelve_resultado_vacio(
     assert database.drop_calls == ["datos"]
     assert "datos" not in database.tables
     assert not database.indexes
+
+
+@pytest.mark.parametrize(
+    ("sql_kind", "native_kind"),
+    [
+        ("BPLUS", _Kind.BPLUS_UNCLUSTERED),
+        ("HASH", _Kind.EXTENDIBLE_HASH),
+    ],
+)
+def test_create_index_construye_indice_sobre_filas_existentes(
+    database: _FakeDatabase,
+    processor: QueryProcessor,
+    sql_kind: str,
+    native_kind: str,
+) -> None:
+    processor.execute("CREATE TABLE datos (id INT PRIMARY KEY, nombre VARCHAR(20))")
+    processor.execute("INSERT INTO datos VALUES (1, 'Ada')")
+    processor.execute("INSERT INTO datos VALUES (2, 'Grace')")
+
+    result = processor.execute(
+        f"CREATE INDEX por_nombre ON datos (nombre) USING {sql_kind}"
+    )
+
+    assert result.affected_rows == 0
+    assert database.create_index_calls == [
+        ("datos", "por_nombre", "nombre", native_kind)
+    ]
+    index = database.index("datos", "por_nombre")
+    (rid,) = index.search("Ada")
+    assert database.table("datos").read(rid) == [1, "Ada"]
+
+
+def test_create_index_pasa_a_ser_elegible_para_el_optimizador(
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("CREATE TABLE datos (id INT PRIMARY KEY, nombre VARCHAR(20))")
+    processor.execute("INSERT INTO datos VALUES (1, 'Ada')")
+    processor.execute("CREATE INDEX por_nombre ON datos (nombre) USING HASH")
+
+    result = processor.execute("SELECT id FROM datos WHERE nombre = 'Ada'")
+
+    assert result.rows == ((1,),)
+    assert result.plan is not None
+    assert [step.op.value for step in result.plan.root.walk()] == [
+        "index_search",
+        "fetch",
+        "project",
+    ]
+
+
+def test_create_index_rechaza_columna_inexistente_antes_de_tocar_el_core(
+    database: _FakeDatabase,
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("CREATE TABLE datos (id INT PRIMARY KEY)")
+
+    with pytest.raises(SQLSemanticError, match="columna 'ausente' no existe"):
+        processor.execute("CREATE INDEX por_ausente ON datos (ausente) USING HASH")
+
+    assert database.create_index_calls == []
+
+
+def test_create_index_duplicado_se_traduce_a_error_semantico(
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("CREATE TABLE datos (id INT PRIMARY KEY)")
+    sql = "CREATE INDEX por_id ON datos (id) USING BPLUS"
+    processor.execute(sql)
+
+    with pytest.raises(SQLSemanticError, match="ya existe") as caught:
+        processor.execute(sql)
+
+    assert isinstance(caught.value.__cause__, _SchemaError)
+
+
+def test_create_index_se_rechaza_dentro_de_una_transaccion(
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("CREATE TABLE datos (id INT PRIMARY KEY)")
+    processor.execute("BEGIN TRANSACTION")
+
+    with pytest.raises(TransactionError, match="CREATE INDEX"):
+        processor.execute("CREATE INDEX por_id ON datos (id) USING HASH")
+
+    processor.execute("END TRANSACTION")
+
+
+def test_explain_planifica_sin_ejecutar_el_select(
+    database: _FakeDatabase,
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("CREATE TABLE datos (id INT PRIMARY KEY, nombre VARCHAR(20))")
+    processor.execute("INSERT INTO datos VALUES (1, 'Ada')")
+    processor.execute("INSERT INTO datos VALUES (2, 'Grace')")
+    table = database.table("datos")
+    table.reset_stats()
+
+    result = processor.execute("EXPLAIN SELECT nombre FROM datos")
+
+    assert result.columns == ()
+    assert result.rows == ()
+    assert result.plan is not None
+    assert result.plan.query == "SELECT nombre FROM datos"
+    assert [step.op.value for step in result.plan.root.walk()] == ["scan", "project"]
+    assert result.plan.root.subtree_stats().records_examined == 0
+    assert table.stats().records_examined == 0
+
+
+def test_explain_analyze_ejecuta_y_reporta_estadisticas_reales(
+    processor: QueryProcessor,
+) -> None:
+    processor.execute("CREATE TABLE datos (id INT PRIMARY KEY, nombre VARCHAR(20))")
+    processor.execute("INSERT INTO datos VALUES (1, 'Ada')")
+    processor.execute("INSERT INTO datos VALUES (2, 'Grace')")
+
+    result = processor.execute("EXPLAIN ANALYZE SELECT nombre FROM datos")
+
+    assert result.columns == ()
+    assert result.rows == ()
+    assert result.plan is not None
+    assert result.plan.query == "SELECT nombre FROM datos"
+    assert result.plan.root.subtree_stats().records_examined >= 2
+    assert result.plan.time_ms >= result.plan.root.subtree_time_ms()
 
 
 def test_drop_table_inexistente_se_traduce_y_conserva_schema_error(

@@ -14,6 +14,7 @@ from engine.parser.ast import (
     BooleanLiteral,
     ColumnReference,
     ComparisonCondition,
+    CreateIndexStatement,
     CreateTableStatement,
     DateLiteral,
     DeleteStatement,
@@ -37,6 +38,7 @@ from engine.parser.bound_ast import (
     BoundColumnReference,
     BoundComparisonCondition,
     BoundCondition,
+    BoundCreateIndexStatement,
     BoundCreateTable,
     BoundDeleteStatement,
     BoundDropTableStatement,
@@ -128,6 +130,39 @@ def bind_create_table(
         )
 
     return BoundCreateTable(schema, statement.storage, statement.span)
+
+
+def bind_create_index(
+    statement: CreateIndexStatement,
+    schema: BoundSchema,
+    source: str | None = None,
+) -> BoundCreateIndexStatement:
+    """Valida nombres y resuelve la columna de un ``CREATE INDEX``."""
+
+    _validate_identifier(statement.index.name, "indice", statement.index.span, source)
+    _validate_identifier(statement.table.name, "tabla", statement.table.span, source)
+    _validate_identifier(statement.column.name, "columna", statement.column.span, source)
+    if statement.table.name != schema.table_name:
+        _fail(
+            f"CREATE INDEX apunta a {statement.table.name}, pero el esquema es de "
+            f"{schema.table_name}",
+            statement.table.span,
+            source,
+        )
+    if statement.column.name not in {column.name for column in schema.columns}:
+        _fail(
+            f"la columna {statement.column.name!r} no existe en la tabla "
+            f"{schema.table_name!r}",
+            statement.column.span,
+            source,
+        )
+    return BoundCreateIndexStatement(
+        index_name=statement.index.name,
+        table_name=statement.table.name,
+        column_name=statement.column.name,
+        kind=statement.kind,
+        span=statement.span,
+    )
 
 
 def bind_insert(
@@ -687,6 +722,7 @@ def _fail(message: str, span: Span, source: str | None) -> None:
 
 
 __all__ = [
+    "bind_create_index",
     "bind_create_table",
     "bind_delete",
     "bind_drop_table",

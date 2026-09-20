@@ -18,10 +18,12 @@ from engine.executor.operators import execute_select
 from engine.executor.result import QueryResult
 from engine.parser import (
     BeginTransactionStatement,
+    CreateIndexStatement,
     CreateTableStatement,
     DeleteStatement,
     DropTableStatement,
     EndTransactionStatement,
+    ExplainStatement,
     FromSource,
     InsertStatement,
     JoinRef,
@@ -31,16 +33,23 @@ from engine.parser import (
     TableRef,
     parse_sql_script,
 )
-from engine.parser.bound_ast import BoundSchema
+from engine.parser.bound_ast import BoundSchema, BoundSelectStatement
 from engine.parser.semantic import (
+    bind_create_index,
     bind_create_table,
     bind_delete,
     bind_drop_table,
     bind_insert,
     bind_select,
 )
+from engine.planner.explain import explain_select
 from engine.planner.native_catalog import from_native_table_info
-from engine.planner.optimizer import TableMetadata, optimize_delete, optimize_select
+from engine.planner.optimizer import (
+    PhysicalSelectPlan,
+    TableMetadata,
+    optimize_delete,
+    optimize_select,
+)
 from engine.planner.plan import Plan
 from engine.transactions import (
     DEFAULT_LOCK_TIMEOUT,
@@ -133,10 +142,14 @@ class QueryProcessor:
     ) -> QueryResult:
         if isinstance(statement, CreateTableStatement):
             return self._create_table(statement, source)
+        if isinstance(statement, CreateIndexStatement):
+            return self._create_index(statement, source)
         if isinstance(statement, InsertStatement):
             return self._insert(statement, source)
         if isinstance(statement, SelectStatement):
             return self._select(statement, source, started_ns, query_text)
+        if isinstance(statement, ExplainStatement):
+            return self._explain(statement, source, started_ns)
         if isinstance(statement, DeleteStatement):
             return self._delete(statement, source)
         if isinstance(statement, DropTableStatement):
@@ -285,6 +298,50 @@ class QueryProcessor:
         finally:
             self._release_autocommit(bound.table_name)
 
+    def _create_index(
+        self,
+        statement: CreateIndexStatement,
+        source: str,
+    ) -> QueryResult:
+        if self._transaction is not None:
+            raise TransactionError("CREATE INDEX no se puede ejecutar dentro de una transaccion")
+        try:
+            table_info = self._database.table_info(statement.table.name)
+        except self._domain_errors as error:
+            self._raise_semantic(
+                error,
+                f"la tabla {statement.table.name!r} no existe",
+                statement.table.span,
+                source,
+            )
+
+        schema = from_native_schema(table_info.schema, self._native)
+        bound = bind_create_index(statement, schema, source)
+        kind = {
+            "BPLUS_UNCLUSTERED": self._native.kind.BPLUS_UNCLUSTERED,
+            "EXTENDIBLE_HASH": self._native.kind.EXTENDIBLE_HASH,
+        }[bound.kind.value]
+
+        self._lock_or_abort(bound.table_name, LockMode.EXCLUSIVE)
+        try:
+            try:
+                self._database.create_index(
+                    bound.table_name,
+                    bound.index_name,
+                    bound.column_name,
+                    kind,
+                )
+            except self._domain_errors as error:
+                self._raise_semantic(
+                    error,
+                    f"no se pudo crear el indice {bound.index_name!r}",
+                    statement.index.span,
+                    source,
+                )
+            return QueryResult()
+        finally:
+            self._release_autocommit(bound.table_name)
+
     def _drop_table(self, statement: DropTableStatement, source: str) -> QueryResult:
         if self._transaction is not None:
             raise TransactionError("DROP TABLE no se puede ejecutar dentro de una transaccion")
@@ -312,25 +369,7 @@ class QueryProcessor:
         started_ns: int,
         query_text: str,
     ) -> QueryResult:
-        referencias = _table_refs(statement.source)
-        esquemas: dict[str, BoundSchema] = {}
-        metadata: dict[str, TableMetadata] = {}
-        for referencia in referencias:
-            try:
-                table_info = self._database.table_info(referencia.table.name)
-                filas = int(self._database.table(referencia.table.name).size())
-            except self._domain_errors as error:
-                self._raise_semantic(
-                    error,
-                    f"la tabla {referencia.table.name!r} no existe",
-                    referencia.table.span,
-                    source,
-                )
-            esquemas[referencia.table.name] = from_native_schema(table_info.schema, self._native)
-            metadata[referencia.table.name] = from_native_table_info(table_info, rows=filas)
-
-        bound = bind_select(statement, esquemas, source)
-        physical_plan = optimize_select(bound, metadata)
+        bound, physical_plan, referencias, esquemas = self._prepare_select(statement, source)
 
         primera = referencias[0].table
         # Orden alfabetico, no el del FROM: dos consultas concurrentes sobre el
@@ -379,6 +418,54 @@ class QueryProcessor:
         finally:
             for nombre in reversed(tomadas):
                 self._release_autocommit(nombre)
+
+    def _prepare_select(
+        self,
+        statement: SelectStatement,
+        source: str,
+    ) -> tuple[BoundSelectStatement, PhysicalSelectPlan, list[TableRef], dict[str, BoundSchema]]:
+        referencias = _table_refs(statement.source)
+        esquemas: dict[str, BoundSchema] = {}
+        metadata: dict[str, TableMetadata] = {}
+        for referencia in referencias:
+            try:
+                table_info = self._database.table_info(referencia.table.name)
+                filas = int(self._database.table(referencia.table.name).size())
+            except self._domain_errors as error:
+                self._raise_semantic(
+                    error,
+                    f"la tabla {referencia.table.name!r} no existe",
+                    referencia.table.span,
+                    source,
+                )
+            esquemas[referencia.table.name] = from_native_schema(table_info.schema, self._native)
+            metadata[referencia.table.name] = from_native_table_info(table_info, rows=filas)
+
+        bound = bind_select(statement, esquemas, source)
+        physical_plan = optimize_select(bound, metadata)
+        return bound, physical_plan, referencias, esquemas
+
+    def _explain(
+        self,
+        statement: ExplainStatement,
+        source: str,
+        started_ns: int,
+    ) -> QueryResult:
+        query = source[statement.statement.span.start : statement.statement.span.end]
+        if statement.analyze:
+            analyzed = self._select(statement.statement, source, started_ns, query)
+            return QueryResult(plan=analyzed.plan)
+
+        _, physical_plan, _, _ = self._prepare_select(statement.statement, source)
+        elapsed_ms = (perf_counter_ns() - started_ns) / 1_000_000
+        return QueryResult(
+            plan=explain_select(
+                physical_plan,
+                query,
+                source,
+                planning_ms=elapsed_ms,
+            )
+        )
 
     def _delete(self, statement: DeleteStatement, source: str) -> QueryResult:
         try:
