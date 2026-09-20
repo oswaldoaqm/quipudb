@@ -25,6 +25,8 @@ Se implementara un lexer propio y un parser descendente recursivo en Python,
 sin una dependencia externa de parsing. `parse_sql(source)` sera una funcion
 pura: recibira una cadena, consumira exactamente una sentencia y devolvera un
 AST; no abrira una base de datos ni importara `quipudb_native`.
+`parse_sql_script(source)` reutilizara el mismo lexer y parser para devolver
+varios AST separados por `;`, despues de validar el script completo.
 
 La implementacion se separa en estas fases:
 
@@ -48,6 +50,7 @@ tokens. `EOF` representa el final de la cadena.
 
 ```ebnf
 document             = statement, [ ";" ], EOF ;
+script               = statement, { ";", statement }, [ ";" ], EOF ;
 
 statement            = create_table
                      | insert
@@ -242,18 +245,32 @@ rollback de mejor esfuerzo si una operacion intermedia falla. Esto mantiene
 claves secundarias repetidas y evita RIDs colgados en el camino exitoso; no
 reemplaza las transacciones de 2.1.4.
 
+### Actualizacion 2026-09-19
+
+Los issues #101 y #103 amplian este ADR con comentarios SQL de linea y bloque
+y con `DROP TABLE`. El issue #102 fija mediante pruebas el soporte multilinea
+que el lexer ya proporcionaba y su combinacion con `DELETE`. `DROP TABLE`
+delega en la operacion existente del catalogo y se rechaza dentro de una
+transaccion explicita, igual que `CREATE TABLE`.
+
+El issue #105 distingue ese formato multilinea de un script SQL. La nueva
+entrada `parse_sql_script` analiza el lote completo antes de ejecutarlo y usa
+`;` como separador. `parse_sql` mantiene su contrato de una sentencia. El
+ejecutor procesa los AST en orden, suma `affected_rows` y expone el resultado de
+la ultima sentencia; la atomicidad de errores de ejecucion requiere una
+transaccion explicita dentro del script.
+
 ### Limites explicitos
 
 Quedan fuera de este subconjunto:
 
-- `UPDATE`, `JOIN`, `CREATE INDEX`, `DROP`, `ALTER` y el resto de DDL;
+- `UPDATE`, `JOIN`, `CREATE INDEX`, `ALTER` y el resto de DDL no enumerado;
 - `NULL` y la logica de tres valores;
 - operadores `!=` y `<>`, condiciones generales con `AND`, `OR` o `NOT`;
 - subconsultas, expresiones aritmeticas y funciones escalares;
 - aliases, `HAVING`, `LIMIT` y listas de varias columnas en `GROUP BY` u
   `ORDER BY`;
-- listas de columnas en `INSERT`, varias sentencias por llamada, comentarios e
-  identificadores delimitados;
+- listas de columnas en `INSERT` e identificadores delimitados;
 - `COMMIT`, `ROLLBACK` como sentencias SQL, y SQL espacial, textual o
   multimedia.
 

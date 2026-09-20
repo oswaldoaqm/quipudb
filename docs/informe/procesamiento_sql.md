@@ -9,12 +9,15 @@ No acredita autoría ni aprobación del responsable.
 ## Propósito y recorrido de una consulta
 
 [QueryProcessor](../../engine/executor/processor.py) ofrece la entrada Python
-del motor SQL. Cada llamada recibe una sentencia, no un script SQL completo.
+del motor SQL. Cada llamada recibe una sentencia o un script con varias
+sentencias separadas por punto y coma.
 
 1. El [lexer](../../engine/parser/lexer.py) convierte el texto en tokens y
    conserva posiciones para explicar errores.
 2. El [parser descendente recursivo](../../engine/parser/parser.py) construye
-   un AST inmutable. Acepta un punto y coma final opcional.
+   AST inmutables. `parse_sql` acepta exactamente una sentencia;
+   `parse_sql_script` analiza primero el lote completo y exige `;` entre
+   sentencias.
 3. La [validación semántica](../../engine/parser/semantic.py) resuelve tablas,
    columnas, tipos, literales y restricciones del subconjunto antes de ejecutar.
 4. El [planificador](../../engine/planner/optimizer.py) elige accesos y operaciones
@@ -39,13 +42,27 @@ no equivale a haber iniciado una modificación protegida por undo.
 | `ORDER BY` | Una columna, ASC o DESC |
 | `GROUP BY` | Una columna; agregados `COUNT(*)`, `SUM`, `MIN`, `MAX`, `AVG`, sujetos a validación semántica |
 | `DELETE FROM ... WHERE ...` | Requiere filtro; mantiene índices secundarios |
+| `DROP TABLE` | Elimina la tabla y sus índices asociados; fuera de transacciones explícitas |
 | `BEGIN TRANSACTION`, `END TRANSACTION` | Inicio y confirmación de transacción explícita |
 
-No se soportan SQL `UPDATE`, `JOIN`, `CREATE INDEX`, `DROP`, `ALTER`, `COMMIT`,
+No se soportan SQL `UPDATE`, `CREATE INDEX`, `ALTER`, `COMMIT`,
 `ROLLBACK`, `NULL`, subconsultas, alias, `HAVING`, `LIMIT` ni condiciones booleanas
 generales con `AND`/`OR`/`NOT`. El `AND` de `BETWEEN` es parte de esa sintaxis,
 no soporte de conjunciones arbitrarias. Tampoco hay listas generales de columnas
 de agrupación u ordenamiento.
+
+El whitespace puede incluir LF, CR o CRLF entre tokens. Se admiten comentarios
+de línea con `--` y comentarios de bloque con `/* ... */`; los comentarios de
+bloque sin cerrar producen un error léxico con ubicación precisa.
+
+`QueryProcessor.execute` ejecuta en orden todos los AST de un script. Suma las
+filas afectadas y devuelve las filas y el plan de la ultima sentencia para
+mantener el contrato singular de `POST /query`. Como todo el texto se analiza
+antes de tocar datos, un error lexico o sintactico posterior no deja sentencias
+anteriores aplicadas. Fuera de una transaccion explicita, un error de ejecucion
+si puede ocurrir despues de que una sentencia previa se haya confirmado; un
+lote que requiera atomicidad debe incluir `BEGIN TRANSACTION` y
+`END TRANSACTION`.
 
 Las tablas B+ agrupadas y los índices secundarios se pueden crear mediante la
 API nativa, no mediante estas sentencias SQL de creación. El planificador sí

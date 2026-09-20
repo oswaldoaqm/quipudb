@@ -27,6 +27,7 @@ _KEYWORDS = {
         TokenKind.ON,
         TokenKind.WHERE,
         TokenKind.DELETE,
+        TokenKind.DROP,
         TokenKind.ORDER,
         TokenKind.BY,
         TokenKind.ASC,
@@ -89,10 +90,14 @@ class _Lexer:
             elif character.isascii() and character.isdigit():
                 tokens.append(self._scan_number())
             elif character == "-":
-                if self._peek(1).isascii() and self._peek(1).isdigit():
+                if self._peek(1) == "-":
+                    self._skip_line_comment()
+                elif self._peek(1).isascii() and self._peek(1).isdigit():
                     tokens.append(self._scan_number())
                 else:
                     self._raise_unexpected_character()
+            elif character == "/" and self._peek(1) == "*":
+                self._skip_block_comment()
             elif character == "'":
                 tokens.append(self._scan_string())
             elif character in _SINGLE_CHARACTER_TOKENS:
@@ -248,6 +253,32 @@ class _Lexer:
             return self._token(TokenKind.STRING, mark, "".join(value))
 
         raise SQLLexError("string sin cerrar", self._span_from(mark), self._source)
+
+    def _skip_line_comment(self) -> None:
+        """Omite ``--`` hasta el salto de linea o EOF."""
+
+        self._advance()
+        self._advance()
+        while not self._at_end and self._peek() not in "\r\n":
+            self._advance()
+
+    def _skip_block_comment(self) -> None:
+        """Omite ``/* ... */`` conservando posiciones y saltos de linea."""
+
+        mark = self._mark()
+        self._advance()
+        self._advance()
+        while not self._at_end:
+            if self._peek() == "*" and self._peek(1) == "/":
+                self._advance()
+                self._advance()
+                return
+            self._advance()
+        raise SQLLexError(
+            "comentario de bloque sin cerrar",
+            self._span_from(mark),
+            self._source,
+        )
 
     def _scan_single_character(self) -> Token:
         mark = self._mark()
