@@ -2,6 +2,7 @@
 fastapi>=0.115
 uvicorn[standard]>=0.32
 pydantic>=2.9
+python-multipart>=0.0.9  # lo pide FastAPI para recibir archivos (#114)
 
 # Benchmarks y comparacion experimental (seccion 2.1.6)
 psycopg[binary]>=3.2
