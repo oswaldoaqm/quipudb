@@ -11,13 +11,14 @@ columna, tampoco entra por CSV.
 
 from __future__ import annotations
 
+import codecs
 import csv
 import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
-from typing import TextIO
+from typing import BinaryIO, TextIO
 
 from engine.parser.ast import SqlTypeName
 from engine.parser.bound_ast import BoundColumn, BoundSchema, BoundValue
@@ -241,6 +242,78 @@ def convert_field(text: str, column: BoundColumn, *, decimal_comma: bool = False
     raise AssertionError(f"tipo SQL desconocido: {tipo!r}")
 
 
+def check_utf8(binary: BinaryIO, chunk_size: int = 1 << 16) -> None:
+    """Recorre el archivo por partes y lo deja al inicio si es UTF-8 valido.
+
+    Se hace antes de cargar porque el decodificador de texto trabaja por
+    bloques: sin esta pasada, un byte invalido cerca del final saltaria con
+    miles de filas ya insertadas y sin poder decir en que linea esta.
+    """
+
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    line = 1
+    while chunk := binary.read(chunk_size):
+        pendientes = len(decoder.getstate()[0])
+        try:
+            decoder.decode(chunk)
+        except UnicodeDecodeError as error:
+            line += chunk.count(b"\n", 0, max(0, error.start - pendientes))
+            raise CsvLoadError(
+                f"el archivo no es UTF-8 valido (linea {line}); guardalo como UTF-8 "
+                "y vuelve a subirlo",
+                line=line,
+            ) from None
+        line += chunk.count(b"\n")
+    try:
+        decoder.decode(b"", final=True)
+    except UnicodeDecodeError:
+        raise CsvLoadError("el archivo termina a mitad de un caracter UTF-8", line=line) from None
+    binary.seek(0)
+
+
+_UTF8_MULTIBYTE = re.compile(rb"[\xc2-\xf4][\x80-\xbf]")
+
+
+def detect_encoding(binary: BinaryIO, chunk_size: int = 1 << 16) -> str:
+    """Devuelve ``"utf-8"`` o ``"cp1252"`` y deja el archivo al inicio.
+
+    "Guardar como CSV" en un Excel de Windows en espanol escribe en cp1252,
+    no en UTF-8: una "n" con tilde es el byte 0xF1 suelto. Rechazar esos
+    archivos obligaria a cada usuario a saber que es una codificacion, asi que
+    se aceptan. Pero solo si el archivo no tiene NINGUNA secuencia UTF-8 de
+    varios bytes: si las tiene, es UTF-8 con un byte roto, y leerlo como
+    cp1252 convertiria cada tilde en basura sin avisar. En ese caso se
+    rechaza con la linea del primer byte invalido.
+    """
+
+    try:
+        check_utf8(binary, chunk_size)
+        return "utf-8"
+    except CsvLoadError as error_utf8:
+        binary.seek(0)
+        if _tiene_utf8_multibyte(binary, chunk_size):
+            raise
+        binary.seek(0)
+        decoder = codecs.getincrementaldecoder("cp1252")()
+        try:
+            while chunk := binary.read(chunk_size):
+                decoder.decode(chunk)
+        except UnicodeDecodeError:
+            raise error_utf8 from None
+        binary.seek(0)
+        return "cp1252"
+
+
+def _tiene_utf8_multibyte(binary: BinaryIO, chunk_size: int) -> bool:
+    cola = b""
+    while chunk := binary.read(chunk_size):
+        # El ultimo byte del bloque anterior puede ser el inicio de la secuencia.
+        if _UTF8_MULTIBYTE.search(cola + chunk):
+            return True
+        cola = chunk[-1:]
+    return False
+
+
 def _int(valor: str, column: BoundColumn) -> int:
     if not _ENTERO.fullmatch(valor):
         raise ValueError(f"columna {column.name}: {valor!r} no es un INT")
@@ -305,8 +378,10 @@ __all__ = [
     "CsvLoadError",
     "LoadReport",
     "RowError",
+    "check_utf8",
     "convert_field",
     "convert_row",
+    "detect_encoding",
     "match_header",
     "read_header",
 ]
