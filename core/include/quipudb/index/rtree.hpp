@@ -52,7 +52,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "quipudb/catalog/table.hpp"
@@ -102,6 +104,15 @@ struct Rect {
   /// el criterio con el que la insercion elige subarbol (#116).
   [[nodiscard]] constexpr double enlargement(const Rect& r) const noexcept {
     return united(r).area() - area();
+  }
+  /// Semiperimetro. Desempata cuando las areas no dicen nada: con puntos
+  /// alineados o repetidos todos los MBR tienen area 0, y entonces el unico
+  /// criterio que distingue un rectangulo largo de uno corto es este.
+  [[nodiscard]] constexpr double margin() const noexcept {
+    return (max_x - min_x) + (max_y - min_y);
+  }
+  [[nodiscard]] constexpr double margin_enlargement(const Rect& r) const noexcept {
+    return united(r).margin() - margin();
   }
 
   friend constexpr bool operator==(const Rect&, const Rect&) = default;
@@ -170,6 +181,25 @@ class RTree {
   /// Paginas de datos del archivo, contando las libres.
   [[nodiscard]] PageId page_count() const noexcept { return disk_.page_count(); }
 
+  /// Inserta un punto (#116). Coordenadas no finitas -- NaN o infinito -- son
+  /// un InvalidRecord: un NaN hace falsa cualquier comparacion y rompe los MBR
+  /// de todo el camino sin que nada lo denuncie.
+  void insert(Point point, RID rid);
+
+  /// Todas las entradas de las hojas, sin podar. Para pruebas y para
+  /// reconstruir; las consultas usan la busqueda por rectangulo (#117).
+  [[nodiscard]] std::vector<RTreeLeafEntry> scan();
+
+  /// Reparto del split cuadratico de Guttman, como funcion pura: recibe los
+  /// M+1 rectangulos de un nodo desbordado y devuelve que indices van a cada
+  /// lado, con al menos `min_fill` en cada uno. Ver el comentario en rtree.cpp.
+  struct SplitGroups {
+    std::vector<std::size_t> first;
+    std::vector<std::size_t> second;
+  };
+  [[nodiscard]] static SplitGroups quadratic_split(std::span<const Rect> rects,
+                                                   std::size_t min_fill);
+
   /// Recorre el arbol entero y devuelve "" si todo cuadra, o la primera
   /// violacion encontrada: un MBR que no es exactamente la union de sus
   /// hijos, hojas a distinta altura, un nodo fuera de [m, M] (salvo la raiz),
@@ -212,6 +242,31 @@ class RTree {
   [[nodiscard]] PageId allocate();
   /// Manda la pagina a la free list. No encoge el archivo.
   void free_page(PageId id);
+
+  /// Lo que se inserta en un nodo: un punto en una hoja, o un subarbol en un
+  /// nodo interno. La eliminacion (#118) reinserta de las dos clases.
+  struct Item {
+    bool is_point = true;
+    RTreeLeafEntry point;
+    RTreeBranch branch;
+
+    [[nodiscard]] Rect rect() const noexcept {
+      return is_point ? Rect::of(point.point) : branch.mbr;
+    }
+  };
+
+  /// Inserta `item` en un nodo del nivel `level`, contando desde las hojas
+  /// (hoja = 1, raiz = height_). Un punto va al nivel 1; un subarbol cuyas
+  /// hojas estan k niveles abajo va al nivel k + 1.
+  void insert_item(const Item& item, std::size_t level);
+
+  /// El hijo que menos hay que ampliar para meter `r`.
+  [[nodiscard]] static std::size_t choose_subtree(const RTreeNode& node, const Rect& r);
+
+  /// Parte un nodo desbordado en dos con `quadratic_split`.
+  [[nodiscard]] std::pair<RTreeNode, RTreeNode> split(const RTreeNode& node) const;
+
+  void scan_node(PageId id, std::vector<RTreeLeafEntry>& out);
 
   /// Verifica el subarbol con raiz en `id`, que esta a profundidad `nivel`
   /// (1 = raiz). Devuelve el MBR del nodo en `mbr` y los puntos que contiene
