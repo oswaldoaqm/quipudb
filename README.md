@@ -216,6 +216,85 @@ Detalles que conviene saber:
   materializadas para `DELETE`; `source_of()` lo envuelve sin entregarlo a los
   algoritmos externos.
 
+### API REST
+
+Con los bindings compilados y `requirements.txt` instalado, la API se levanta
+desde la raiz del repositorio:
+
+```bash
+export PYTHONPATH=build-py/bindings
+export QUIPUDB_CATALOG=datos/catalogo.txt   # opcional; este es el valor por defecto
+uvicorn engine.api.main:app --reload --port 8000
+```
+
+| Ruta | Que hace |
+|---|---|
+| `POST /query` | Ejecuta SQL (`{"sql": "..."}`) y devuelve filas y plan |
+| `GET /tables` | Describe cada tabla: columnas, indices y numero de registros |
+| `POST /tables/{tabla}/load` | Carga un CSV en una tabla existente |
+
+La documentacion interactiva queda en `http://localhost:8000/docs`.
+
+#### Carga masiva desde CSV
+
+El archivo va como `multipart/form-data` en el campo `file`:
+
+```bash
+curl -F "file=@alumnos.csv" http://localhost:8000/tables/alumnos/load
+```
+
+```json
+{
+  "table": "alumnos",
+  "encoding": "utf-8",
+  "inserted": 99998,
+  "failed": 2,
+  "errors": [
+    {"line": 58, "error": "columna codigo: 'x12' no es un INT"},
+    {"line": 904, "error": "no se pudo insertar: la clave primaria ya existe en alumnos"}
+  ],
+  "errors_truncated": false
+}
+```
+
+- **La cabecera es obligatoria** y empareja las columnas por nombre, en
+  cualquier orden y sin distinguir mayusculas (salvo que la tabla tenga dos
+  columnas que solo difieran en eso). Si falta, sobra o se repite alguna, se
+  responde 400 diciendo cuales y no se inserta nada. Las columnas sin nombre
+  al final de la cabecera se ignoran, pero sus campos tienen que venir vacios.
+- **El separador se detecta en la cabecera**: coma, punto y coma o tabulador.
+  Un CSV guardado desde Excel en espanol usa punto y coma y coma decimal; en
+  ese caso un `DOUBLE` puede venir como `15,5`.
+- **Los valores se convierten al tipo del esquema** con las mismas reglas que
+  un `INSERT`: `INT` de 32 bits, `DOUBLE` finito, `BOOL` como `true`/`false` o
+  `1`/`0`, `DATE` como `AAAA-MM-DD` y `VARCHAR(n)` de hasta `n` bytes en UTF-8.
+  Un campo vacio solo es valido en un `VARCHAR`, porque el motor no tiene
+  `NULL`.
+- **Por defecto la carga es parcial**: cada fila se inserta por separado; las
+  que no se pueden convertir o insertar se cuentan en `failed` y se detallan
+  con la linea del archivo donde empiezan (contando la cabecera). Solo se
+  listan las primeras 100; `errors_truncated` avisa si hubo mas.
+- **Con `?atomic=true`** la primera fila que falla deshace todas las anteriores
+  y se responde 400 con su linea. Usa la misma bitacora de deshacer que
+  `BEGIN TRANSACTION`, que guarda una entrada por fila cargada.
+- **Codificacion: UTF-8 (con o sin BOM) o cp1252**, que es lo que escribe
+  "Guardar como CSV" en un Excel de Windows en espanol. `encoding` en la
+  respuesta dice cual se uso. Un archivo con tildes en UTF-8 y algun byte roto
+  no se reinterpreta como cp1252 (cambiaria cada tilde por basura): se rechaza
+  entero antes de insertar, indicando la primera linea invalida.
+- **No se lee entero en memoria**: FastAPI lo deja en un archivo temporal y se
+  procesa fila por fila. 100 000 filas cargan en unos segundos.
+- No se puede cargar con un `BEGIN TRANSACTION` abierto, y la tabla queda con
+  un lock exclusivo mientras dura la carga.
+
+Desde Python, sin pasar por HTTP:
+
+```python
+with open("alumnos.csv", encoding="utf-8-sig", newline="") as archivo:
+    reporte = processor.load_csv("alumnos", archivo)
+print(reporte.inserted, reporte.failed)
+```
+
 ## Interfaz
 
 Los cuatro paneles de la seccion 2.1.5 -- archivos, consultas, resultados y
