@@ -14,10 +14,13 @@ from engine.api.schemas import (
     ColumnInfo,
     ErrorKind,
     IndexInfo,
+    LoadResponse,
+    LoadRowError,
     QueryErrorResponse,
     QueryResponse,
     TableInfo,
 )
+from engine.executor.bulk_load import LoadReport
 from engine.executor.native import from_native_schema
 from engine.executor.result import QueryResult
 from engine.parser.bound_ast import BoundSchema
@@ -133,6 +136,19 @@ def to_error(error: SQLError) -> QueryErrorResponse:
     )
 
 
+def to_load_response(report: LoadReport, encoding: str = "utf-8") -> LoadResponse:
+    """Convierte el reporte de una carga parcial al cuerpo de la respuesta."""
+
+    return LoadResponse(
+        table=report.table,
+        encoding=encoding,
+        inserted=report.inserted,
+        failed=report.failed,
+        errors=[LoadRowError(line=e.line, error=e.error) for e in report.errors],
+        errors_truncated=report.errors_truncated,
+    )
+
+
 def _kind_of(error: SQLError) -> ErrorKind | None:
     for clase, nombre in _KINDS:
         if isinstance(error, clase):
@@ -140,4 +156,10 @@ def _kind_of(error: SQLError) -> ErrorKind | None:
     return None
 
 
-__all__ = ["describe_catalog", "describe_table", "to_error", "to_response"]
+__all__ = [
+    "describe_catalog",
+    "describe_table",
+    "to_error",
+    "to_load_response",
+    "to_response",
+]

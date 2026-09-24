@@ -29,10 +29,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      # fastapi, pydantic y httpx los necesitan las pruebas de engine/api:
+      # fastapi, pydantic, httpx y python-multipart los necesitan las pruebas
+      # de engine/api:
       # sin ellos pytest ni siquiera puede importarlas y el job pasaria en
       # verde sin haber probado la API.
-      - run: pip install ruff pytest fastapi pydantic httpx
+      - run: pip install ruff pytest fastapi pydantic httpx python-multipart
       - run: ruff check engine benchmarks
       - run: python -m pytest -q
 
@@ -44,7 +45,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - run: pip install pytest fastapi pydantic httpx
+      - run: pip install pytest fastapi pydantic httpx python-multipart
       - name: Configurar con los bindings activados
         run: >
           cmake -S . -B build-py -DCMAKE_BUILD_TYPE=Release
