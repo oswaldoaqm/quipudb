@@ -20,6 +20,7 @@ from threading import Lock
 from typing import Annotated, Any
 
 from fastapi import FastAPI, File, Query, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -162,6 +163,19 @@ def create_app(
         # linea es la del CSV, no la de un SQL: el frontend no la subraya.
         cuerpo = QueryErrorResponse(error=error.message, line=error.line)
         return JSONResponse(status_code=400, content=cuerpo.model_dump())
+
+    @app.exception_handler(RequestValidationError)
+    async def _peticion_invalida(_: Request, error: RequestValidationError) -> JSONResponse:
+        # Sin esto FastAPI responde {"detail": [...]}, que el frontend no
+        # entiende y muestra como "El motor respondio 422". Se mantiene el 422
+        # y se usa la misma forma que el resto de errores.
+        partes = []
+        for detalle in error.errors():
+            campo = ".".join(str(parte) for parte in detalle.get("loc", ())[1:])
+            mensaje = str(detalle.get("msg", "valor invalido"))
+            partes.append(f"{campo}: {mensaje}" if campo else mensaje)
+        cuerpo = QueryErrorResponse(error="peticion invalida: " + "; ".join(partes))
+        return JSONResponse(status_code=422, content=cuerpo.model_dump())
 
     @app.exception_handler(TransactionError)
     async def _transaction_error(_: Request, error: TransactionError) -> JSONResponse:
