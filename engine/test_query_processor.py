@@ -806,3 +806,25 @@ def test_una_sentencia_sin_filas_no_declara_tipos(db):
     assert result.columns == ()
     assert result.column_types == ()
     assert result.affected_rows == 1
+
+
+@pytest.mark.parametrize("estructura", [None, "HASH", "BPLUS"])
+def test_cero_y_menos_cero_dan_lo_mismo_con_o_sin_indice(db, estructura) -> None:
+    # 0.0 = -0.0 en SQL. El hash extensible los mandaba al mismo bucket pero
+    # despues comparaba bytes, y con indice la consulta perdia una fila que
+    # sin indice si devolvia.
+    processor = QueryProcessor(db)
+    processor.execute("CREATE TABLE precios (id INT PRIMARY KEY, precio DOUBLE) USING HEAP")
+    if estructura is not None:
+        processor.execute(f"CREATE INDEX por_precio ON precios (precio) USING {estructura}")
+    processor.execute(
+        "INSERT INTO precios VALUES (1, 0.0); INSERT INTO precios VALUES (2, -0.0);"
+        "INSERT INTO precios VALUES (3, 1.5)"
+    )
+
+    for literal in ("0.0", "-0.0"):
+        filas = processor.execute(f"SELECT id FROM precios WHERE precio = {literal}").rows
+        assert sorted(filas) == [(1,), (2,)], (estructura, literal)
+
+    assert processor.execute("DELETE FROM precios WHERE precio = 0").affected_rows == 2
+    assert processor.execute("SELECT id FROM precios").rows == ((3,),)

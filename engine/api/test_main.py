@@ -312,3 +312,19 @@ def test_un_error_inesperado_tambien_lleva_cors() -> None:
     assert respuesta.status_code == 400
     assert respuesta.headers["access-control-allow-origin"] == "http://localhost:5173"
     assert respuesta.json()["error"] == "disco lleno"
+
+
+def test_un_cuerpo_que_no_es_json_responde_con_la_forma_de_los_errores(cliente) -> None:
+    # Antes salia {"detail": [...]} y el frontend solo mostraba el codigo 422.
+    respuesta = cliente.post(
+        "/query", content=b"no json", headers={"content-type": "application/json"}
+    )
+    assert respuesta.status_code == 422
+    assert respuesta.json()["error"].startswith("peticion invalida:")
+    assert respuesta.json()["line"] is None
+
+
+def test_una_peticion_sin_sql_dice_que_campo_falta(cliente) -> None:
+    respuesta = cliente.post("/query", json={})
+    assert respuesta.status_code == 422
+    assert respuesta.json()["error"] == "peticion invalida: sql: Field required"

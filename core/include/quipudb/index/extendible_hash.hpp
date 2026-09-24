@@ -407,6 +407,11 @@ class ExtendibleHash {
   /// Indice de la entrada de directorio del bucket hermano: el que difiere
   /// solo en el bit mas alto de la profundidad local.
   [[nodiscard]] std::size_t hermano_de(std::size_t index, std::size_t local) const noexcept;
+  /// Si la clave guardada en `entrada` es igual a `buscada` (ya codificada).
+  /// No basta comparar bytes: en un DOUBLE, 0.0 y -0.0 son iguales para
+  /// `compare` y difieren en el bit de signo.
+  [[nodiscard]] bool misma_clave(std::span<const std::byte> entrada,
+                                 std::span<const std::byte> buscada) const noexcept;
 
   /// Quita la ultima pagina del directorio mientras ningun bucket este en la
   /// profundidad global. Devuelve cuantas veces redujo.
