@@ -159,6 +159,13 @@ class RTree {
   static constexpr std::size_t kLeafEntrySize = 2 * sizeof(double) + sizeof(PageId) + sizeof(SlotId);
   static constexpr std::size_t kBranchSize = 4 * sizeof(double) + sizeof(PageId);
   static constexpr std::size_t kMinOrder = 4;
+  /// Mayor coordenada admitida, en valor absoluto. Sobra para grados (180) y
+  /// para metros; mas alla, el area de un MBR desborda el double.
+  static constexpr double kMaxCoordinate = 1e150;
+  [[nodiscard]] static constexpr bool in_range(Point p) noexcept {
+    return p.x >= -kMaxCoordinate && p.x <= kMaxCoordinate && p.y >= -kMaxCoordinate &&
+           p.y <= kMaxCoordinate;
+  }
 
   /// Abre el archivo o lo crea vacio. `order = 0` usa el maximo que cabe en
   /// la pagina. Reabrir con otro orden es un SchemaError, y con otra version
@@ -183,7 +190,8 @@ class RTree {
 
   /// Inserta un punto (#116). Coordenadas no finitas -- NaN o infinito -- son
   /// un InvalidRecord: un NaN hace falsa cualquier comparacion y rompe los MBR
-  /// de todo el camino sin que nada lo denuncie.
+  /// de todo el camino sin que nada lo denuncie. Tambien lo son las que pasan
+  /// de `kMaxCoordinate`.
   void insert(Point point, RID rid);
 
   /// Los puntos que caen dentro de `region`, bordes incluidos (#117).
