@@ -186,6 +186,18 @@ class RTree {
   /// de todo el camino sin que nada lo denuncie.
   void insert(Point point, RID rid);
 
+  /// Los puntos que caen dentro de `region`, bordes incluidos (#117).
+  ///
+  /// Solo baja por los hijos cuyo MBR se solapa con la region: es la primitiva
+  /// sobre la que se construyen el radio, el k-NN y el poligono (2.2.1.B), que
+  /// empiezan todos podando por rectangulo. Reporta en `stats()` las paginas
+  /// leidas, las entradas de hoja examinadas y las devueltas.
+  ///
+  /// Una region con coordenadas no finitas es InvalidRecord. Una region
+  /// invertida (min > max) no contiene nada y devuelve vacio sin leer, igual
+  /// que un BETWEEN con los limites al reves.
+  [[nodiscard]] std::vector<RTreeLeafEntry> search(const Rect& region);
+
   /// Todas las entradas de las hojas, sin podar. Para pruebas y para
   /// reconstruir; las consultas usan la busqueda por rectangulo (#117).
   [[nodiscard]] std::vector<RTreeLeafEntry> scan();
@@ -267,6 +279,7 @@ class RTree {
   [[nodiscard]] std::pair<RTreeNode, RTreeNode> split(const RTreeNode& node) const;
 
   void scan_node(PageId id, std::vector<RTreeLeafEntry>& out);
+  void search_node(PageId id, const Rect& region, std::vector<RTreeLeafEntry>& out);
 
   /// Verifica el subarbol con raiz en `id`, que esta a profundidad `nivel`
   /// (1 = raiz). Devuelve el MBR del nodo en `mbr` y los puntos que contiene
