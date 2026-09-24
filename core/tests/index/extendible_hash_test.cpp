@@ -266,8 +266,16 @@ TEST_F(HashTest, CeroYMenosCeroSonLaMismaClaveYVanAlMismoBucket) {
   h.insert(Value{0.0}, carga(1));
   h.insert(Value{-0.0}, carga(2));
   EXPECT_EQ(h.check_invariants(), "");
-  EXPECT_EQ(h.bucket_at(0), h.bucket_at(0));
   EXPECT_EQ(h.size(), 2u);
+
+  // Llegar al mismo bucket no basta: dentro de el tambien hay que compararlas
+  // como iguales. Antes se comparaban bytes y cada busqueda hallaba una sola.
+  EXPECT_EQ(h.find(Value{0.0}).size(), 2u);
+  EXPECT_EQ(h.find(Value{-0.0}).size(), 2u);
+  EXPECT_TRUE(h.erase_one(Value{-0.0}, carga(1)));  // se inserto como 0.0
+  EXPECT_FALSE(h.erase_one(Value{0.0}, carga(1)));  // ya no esta
+  EXPECT_EQ(h.erase_all(Value{0.0}), 1u);           // la que entro como -0.0
+  EXPECT_EQ(h.size(), 0u);
 }
 
 TEST_F(HashTest, IndexaTambienUnaColumnaDeTexto) {
