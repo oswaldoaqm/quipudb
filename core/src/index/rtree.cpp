@@ -1,6 +1,7 @@
 #include "quipudb/index/rtree.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -251,6 +252,14 @@ void RTree::insert(Point point, RID rid) {
     throw InvalidRecord("coordenada no finita en el R-Tree: (" + std::to_string(point.x) + ", " +
                         std::to_string(point.y) + ")");
   }
+  if (!in_range(point)) {
+    // Con coordenadas mas grandes, el area de un MBR desborda a infinito,
+    // la ampliacion sale inf - inf = NaN y el split ya no puede comparar.
+    char texto[96];
+    std::snprintf(texto, sizeof texto, "(%.6g, %.6g); el maximo en valor absoluto es %g", point.x,
+                  point.y, kMaxCoordinate);
+    throw InvalidRecord(std::string("coordenada fuera del rango del R-Tree: ") + texto);
+  }
   Item item;
   item.point = {point, rid};
   insert_item(item, 1);
@@ -438,6 +447,13 @@ RTree::SplitGroups RTree::quadratic_split(std::span<const Rect> rects, std::size
       }
     }
 
+    // Con coordenadas en rango las diferencias son finitas y siempre hay una
+    // elegida; esto solo evita leer fuera del vector si algun dia no lo son.
+    if (elegida == n) {
+      elegida = static_cast<std::size_t>(
+          std::find(asignado.begin(), asignado.end(), false) - asignado.begin());
+    }
+
     // Al lado que menos crece; despues al de menor semiperimetro ganado, al de
     // menor area y al que tiene menos entradas.
     const Rect& r = rects[elegida];
@@ -506,7 +522,8 @@ std::pair<RTreeNode, RTreeNode> RTree::split(const RTreeNode& node) const {
 // quitar el nodo en falta y reinsertar sus entradas desde la raiz, donde la
 // eleccion de subarbol las manda al sitio que les corresponde.
 bool RTree::remove(Point point, RID rid) {
-  if (root_ == kInvalidPage || !std::isfinite(point.x) || !std::isfinite(point.y)) {
+  if (root_ == kInvalidPage || !std::isfinite(point.x) || !std::isfinite(point.y) ||
+      !in_range(point)) {
     return false;
   }
   std::vector<PathStep> camino;
