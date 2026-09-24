@@ -502,7 +502,7 @@ std::vector<std::vector<std::byte>> ExtendibleHash::find(const Key& key) {
       const auto e = scratch_.read_bytes(kBucketHeader + static_cast<std::size_t>(i) * entry_size_,
                                          entry_size_);
       ++stats_.records_examined;
-      if (!std::equal(buscada.begin(), buscada.end(), e.begin())) continue;
+      if (!misma_clave(e, buscada)) continue;
       out.emplace_back(e.begin() + static_cast<std::ptrdiff_t>(key_size_), e.end());
       ++stats_.records_returned;
     }
@@ -562,9 +562,7 @@ std::size_t ExtendibleHash::erase_all(const Key& key) {
   const std::size_t i = dir_index(h);
   const std::size_t quitadas = quitar_de(
       dir_[i],
-      [&](std::span<const std::byte> e) {
-        return std::equal(buscada.begin(), buscada.end(), e.begin());
-      },
+      [&](std::span<const std::byte> e) { return misma_clave(e, buscada); },
       /*una_sola=*/false);
 
   if (quitadas > 0) {
@@ -591,7 +589,9 @@ bool ExtendibleHash::erase_one(const Key& key, std::span<const std::byte> payloa
   const std::size_t quitadas = quitar_de(
       dir_[i],
       [&](std::span<const std::byte> e) {
-        return std::equal(buscada.begin(), buscada.end(), e.begin());
+        return misma_clave(e, std::span<const std::byte>(buscada).first(key_size_)) &&
+               std::equal(buscada.begin() + static_cast<std::ptrdiff_t>(key_size_),
+                          buscada.end(), e.begin() + static_cast<std::ptrdiff_t>(key_size_));
       },
       /*una_sola=*/true);
 
@@ -601,6 +601,20 @@ bool ExtendibleHash::erase_one(const Key& key, std::span<const std::byte> payloa
     save_meta();
   }
   return quitadas > 0;
+}
+
+bool ExtendibleHash::misma_clave(std::span<const std::byte> entrada,
+                                 std::span<const std::byte> buscada) const noexcept {
+  if (key_column_.type == DataType::Double) {
+    // Como en `hash_of`: 0.0 y -0.0 son la misma clave. NaN no llega aqui,
+    // `Schema::validate` no lo deja entrar en un registro.
+    double a = 0.0;
+    double b = 0.0;
+    std::memcpy(&a, entrada.data(), sizeof a);
+    std::memcpy(&b, buscada.data(), sizeof b);
+    return a == b;
+  }
+  return std::equal(buscada.begin(), buscada.end(), entrada.begin());
 }
 
 std::size_t ExtendibleHash::hermano_de(std::size_t index, std::size_t local) const noexcept {
