@@ -154,6 +154,42 @@ TEST_F(RTreeInsercionTest, RechazaCoordenadasNoFinitas) {
 // Persistencia
 // ---------------------------------------------------------------------------
 
+TEST_F(RTreeInsercionTest, RechazaCoordenadasFueraDeRango) {
+  RTree arbol(path_, kDefaultPageSize, 4);
+  const double max = RTree::kMaxCoordinate;
+  EXPECT_THROW(arbol.insert(Point{max * 10, 0}, RID{1, 0}), InvalidRecord);
+  EXPECT_THROW(arbol.insert(Point{0, -max * 10}, RID{1, 0}), InvalidRecord);
+  EXPECT_THROW(arbol.insert(Point{std::numeric_limits<double>::max(), 0}, RID{1, 0}),
+               InvalidRecord);
+  EXPECT_EQ(arbol.size(), 0u);
+  // Lo que nunca pudo entrar tampoco se puede borrar.
+  EXPECT_FALSE(arbol.remove(Point{max * 10, 0}, RID{1, 0}));
+}
+
+// Con coordenadas cerca de DBL_MAX el area de un MBR era infinita, la
+// ampliacion salia inf - inf = NaN y el split leia fuera de su vector: el
+// archivo crecia a 126 000 paginas y terminaba pidiendo la pagina 0. En el
+// borde del rango admitido las cuentas tienen que seguir siendo finitas.
+TEST_F(RTreeInsercionTest, EnElBordeDelRangoLasCuentasSiguenSiendoFinitas) {
+  RTree arbol(path_, kDefaultPageSize, 4);
+  const double max = RTree::kMaxCoordinate;
+  std::mt19937 gen(8);
+  std::uniform_real_distribution<double> u(-1.0, 1.0);
+  std::vector<RTreeLeafEntry> puntos;
+  for (std::size_t i = 0; i < 2000; ++i) {
+    puntos.push_back({Point{u(gen) * max, u(gen) * max}, rid_de(i)});
+    arbol.insert(puntos.back().point, puntos.back().rid);
+  }
+  puntos.push_back({Point{max, -max}, rid_de(2000)});
+  arbol.insert(puntos.back().point, puntos.back().rid);
+
+  ASSERT_EQ(arbol.check_invariants(), "");
+  EXPECT_EQ(arbol.search(Rect{-max, -max, max, max}).size(), puntos.size());
+  for (const auto& e : puntos) ASSERT_TRUE(arbol.remove(e.point, e.rid));
+  EXPECT_EQ(arbol.check_invariants(), "");
+  EXPECT_EQ(arbol.free_pages(), arbol.page_count());
+}
+
 TEST_F(RTreeInsercionTest, SeReabreConTodosSusPuntosYSigueCreciendo) {
   std::vector<RTreeLeafEntry> insertadas;
   std::mt19937 gen(7);
