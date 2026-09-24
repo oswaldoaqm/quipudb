@@ -86,11 +86,40 @@ class QueryErrorResponse(BaseModel):
     end_column: int | None = None
 
 
+class LoadRowError(BaseModel):
+    """Una fila del CSV que no entro."""
+
+    line: int
+    """Linea del archivo donde empieza la fila, contando la cabecera como 1."""
+
+    error: str
+
+
+class LoadResponse(BaseModel):
+    """Cuerpo de ``POST /tables/{tabla}/load``.
+
+    Todavia no lo consume el frontend, asi que no tiene espejo en
+    ``types.ts``. ``failed`` cuenta todas las filas que no entraron; ``errors``
+    detalla solo las primeras, y ``errors_truncated`` avisa si hay mas.
+    """
+
+    table: str
+    encoding: Literal["utf-8", "cp1252"]
+    """Con que se leyo el archivo. cp1252 es lo que escribe Excel en Windows."""
+
+    inserted: int
+    failed: int
+    errors: list[LoadRowError]
+    errors_truncated: bool
+
+
 __all__ = [
     "ColumnInfo",
     "ErrorKind",
     "IndexInfo",
     "IndexStructure",
+    "LoadResponse",
+    "LoadRowError",
     "QueryErrorResponse",
     "QueryRequest",
     "QueryResponse",

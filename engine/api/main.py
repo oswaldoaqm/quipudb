@@ -1,7 +1,7 @@
 """API HTTP del motor: lo unico que el frontend (2.1.5) consume.
 
-Dos rutas, `POST /query` y `GET /tables`, con la forma que fija
-`frontend/src/api/types.ts`. Levantar con:
+`POST /query` y `GET /tables`, con la forma que fija
+`frontend/src/api/types.ts`, y `POST /tables/{tabla}/load` para cargar un CSV. Levantar con:
 
     uvicorn engine.api.main:app --reload --port 8000
 
@@ -11,25 +11,28 @@ El catalogo sale de la variable de entorno ``QUIPUDB_CATALOG``; por defecto,
 
 from __future__ import annotations
 
+import io
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, File, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from engine.api.schemas import (
+    LoadResponse,
     QueryErrorResponse,
     QueryRequest,
     QueryResponse,
     TableInfo,
 )
-from engine.api.service import describe_catalog, to_error, to_response
+from engine.api.service import describe_catalog, to_error, to_load_response, to_response
 from engine.executor import QueryProcessor
+from engine.executor.bulk_load import CsvLoadError, detect_encoding
 from engine.executor.native import load_native
 from engine.parser.errors import SQLError
 from engine.transactions import TransactionError
@@ -122,6 +125,43 @@ def create_app(
     def ejecutar(peticion: QueryRequest) -> QueryResponse:
         with motor.en_uso() as (processor_, _, _native):
             return to_response(processor_.execute(peticion.sql))
+
+    @app.post(
+        "/tables/{tabla}/load",
+        response_model=LoadResponse,
+        responses={400: {"model": QueryErrorResponse}, 404: {"model": QueryErrorResponse}},
+    )
+    def cargar_csv(
+        tabla: str,
+        file: Annotated[UploadFile, File(description="CSV con cabecera, en UTF-8 o cp1252")],
+        atomic: Annotated[bool, Query(description="Si una fila falla, no queda ninguna")] = False,
+    ) -> LoadResponse | JSONResponse:
+        # Starlette ya dejo el archivo en un SpooledTemporaryFile, que pasa a
+        # disco despues de 1 MB. Envolverlo en texto sin leerlo entero es lo
+        # que permite cargar 100 000 filas sin tenerlas en memoria.
+        codificacion = detect_encoding(file.file)
+        texto = io.TextIOWrapper(
+            file.file,
+            encoding="utf-8-sig" if codificacion == "utf-8" else codificacion,
+            newline="",
+        )
+        try:
+            with motor.en_uso() as (processor_, catalogo, _native):
+                if not catalogo.has_table(tabla):
+                    cuerpo = QueryErrorResponse(error=f"la tabla {tabla!r} no existe")
+                    return JSONResponse(status_code=404, content=cuerpo.model_dump())
+                reporte = processor_.load_csv(tabla, texto, atomic=atomic)
+        finally:
+            # Sin detach, cerrar el envoltorio cerraria el archivo de Starlette.
+            texto.detach()
+        return to_load_response(reporte, codificacion)
+
+    @app.exception_handler(CsvLoadError)
+    async def _csv_error(_: Request, error: CsvLoadError) -> JSONResponse:
+        # Cabecera que no calza, archivo vacio o carga atomica deshecha. La
+        # linea es la del CSV, no la de un SQL: el frontend no la subraya.
+        cuerpo = QueryErrorResponse(error=error.message, line=error.line)
+        return JSONResponse(status_code=400, content=cuerpo.model_dump())
 
     @app.exception_handler(TransactionError)
     async def _transaction_error(_: Request, error: TransactionError) -> JSONResponse:
