@@ -277,12 +277,7 @@ void RTree::insert_item(const Item& item, std::size_t level) {
 
   // Bajada: se guarda el camino con los nodos ya leidos para no volver a
   // leerlos al subir.
-  struct Paso {
-    PageId id;
-    RTreeNode node;
-    std::size_t hijo;
-  };
-  std::vector<Paso> camino;
+  std::vector<PathStep> camino;
   const Rect r = item.rect();
   PageId id = root_;
   RTreeNode node = read_node(id);
@@ -328,14 +323,14 @@ void RTree::insert_item(const Item& item, std::size_t level) {
       return;
     }
 
-    Paso padre = std::move(camino.back());
+    PathStep padre = std::move(camino.back());
     camino.pop_back();
     const Rect mbr = node.mbr();
-    if (!hermano && padre.node.children[padre.hijo].mbr == mbr) {
+    if (!hermano && padre.node.children[padre.child].mbr == mbr) {
       // Nada cambio para los de arriba: no hace falta reescribirlos.
       return;
     }
-    padre.node.children[padre.hijo].mbr = mbr;
+    padre.node.children[padre.child].mbr = mbr;
     if (hermano) padre.node.children.push_back(*hermano);
     id = padre.id;
     node = std::move(padre.node);
@@ -498,6 +493,119 @@ std::pair<RTreeNode, RTreeNode> RTree::split(const RTreeNode& node) const {
   repartir(g.first, a);
   repartir(g.second, b);
   return {std::move(a), std::move(b)};
+}
+
+// ---------------------------------------------------------------------------
+// Eliminacion (#118)
+// ---------------------------------------------------------------------------
+
+// Guttman: Delete + CondenseTree. El R-Tree no rebalancea como el B+ -- no se
+// piden prestadas entradas a un hermano ni se fusionan nodos --, porque en un
+// indice espacial no hay un "hermano de al lado" natural: dos nodos contiguos
+// en el padre pueden estar en extremos opuestos del mapa. Lo que se hace es
+// quitar el nodo en falta y reinsertar sus entradas desde la raiz, donde la
+// eleccion de subarbol las manda al sitio que les corresponde.
+bool RTree::remove(Point point, RID rid) {
+  if (root_ == kInvalidPage || !std::isfinite(point.x) || !std::isfinite(point.y)) {
+    return false;
+  }
+  std::vector<PathStep> camino;
+  PathStep hoja;
+  if (!find_leaf(root_, point, rid, camino, hoja)) return false;
+
+  hoja.node.points.erase(hoja.node.points.begin() + static_cast<std::ptrdiff_t>(hoja.child));
+  --count_;
+
+  // CondenseTree: subir por el camino. Cada nodo que quedo por debajo del
+  // minimo se quita de su padre y sus entradas se apartan, recordando a que
+  // nivel pertenecen.
+  std::vector<std::pair<Item, std::size_t>> huerfanos;
+  PageId id = hoja.id;
+  RTreeNode node = std::move(hoja.node);
+  std::size_t nivel = 1;
+  while (!camino.empty()) {
+    PathStep padre = std::move(camino.back());
+    camino.pop_back();
+    const auto pos = padre.node.children.begin() + static_cast<std::ptrdiff_t>(padre.child);
+    if (node.size() < min_fill_) {
+      // Las entradas de este nodo pertenecen a su nivel: los puntos van a una
+      // hoja y las ramas de un nodo interno, a un nodo de esa misma altura.
+      // Bajarlas a puntos sueltos es el error clasico de esta operacion:
+      // mezclaria hojas a distintas alturas.
+      for (const auto& e : node.points) {
+        Item it;
+        it.point = e;
+        huerfanos.emplace_back(it, nivel);
+      }
+      for (const auto& b : node.children) {
+        Item it;
+        it.is_point = false;
+        it.branch = b;
+        huerfanos.emplace_back(it, nivel);
+      }
+      padre.node.children.erase(pos);
+      free_page(id);
+    } else {
+      write_node(id, node);
+      pos->mbr = node.mbr();  // encoge si el punto borrado estaba en el borde
+    }
+    id = padre.id;
+    node = std::move(padre.node);
+    ++nivel;
+  }
+
+  // `node` es la raiz.
+  if (node.size() == 0) {
+    // Solo pasa si la raiz era una hoja con el ultimo punto: el arbol queda
+    // vacio y su pagina, libre.
+    free_page(id);
+    root_ = kInvalidPage;
+    height_ = 0;
+  } else {
+    write_node(id, node);
+  }
+
+  // Reinsertar puede partir nodos en cascada, asi que un borrado puede dejar
+  // mas nodos de los que habia. Por eso las paginas de los nodos quitados se
+  // liberaron ANTES: la reinsercion las reutiliza primero, y el archivo solo
+  // crece si el pico supera todo lo que hay en la free list.
+  for (const auto& [item, nivel_item] : huerfanos) insert_item(item, nivel_item);
+  shrink_root();
+  save_meta();
+  return true;
+}
+
+bool RTree::find_leaf(PageId id, Point point, RID rid, std::vector<PathStep>& path,
+                      PathStep& leaf) {
+  RTreeNode node = read_node(id);
+  if (node.leaf) {
+    for (std::size_t i = 0; i < node.points.size(); ++i) {
+      if (node.points[i].point == point && node.points[i].rid == rid) {
+        leaf = {id, std::move(node), i};
+        return true;
+      }
+    }
+    return false;
+  }
+  for (std::size_t i = 0; i < node.children.size(); ++i) {
+    if (!node.children[i].mbr.contains(point)) continue;
+    const PageId hijo = node.children[i].child;
+    path.push_back({id, node, i});
+    if (find_leaf(hijo, point, rid, path, leaf)) return true;
+    path.pop_back();
+  }
+  return false;
+}
+
+void RTree::shrink_root() {
+  while (root_ != kInvalidPage && height_ > 1) {
+    const RTreeNode raiz = read_node(root_);
+    if (raiz.children.size() != 1) return;
+    const PageId vieja = root_;
+    root_ = raiz.children.front().child;
+    free_page(vieja);
+    --height_;
+  }
 }
 
 // ---------------------------------------------------------------------------
