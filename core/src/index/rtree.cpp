@@ -500,6 +500,41 @@ std::pair<RTreeNode, RTreeNode> RTree::split(const RTreeNode& node) const {
   return {std::move(a), std::move(b)};
 }
 
+// ---------------------------------------------------------------------------
+// Busqueda por rectangulo (#117)
+// ---------------------------------------------------------------------------
+
+std::vector<RTreeLeafEntry> RTree::search(const Rect& region) {
+  if (!std::isfinite(region.min_x) || !std::isfinite(region.min_y) ||
+      !std::isfinite(region.max_x) || !std::isfinite(region.max_y)) {
+    throw InvalidRecord("region de busqueda con coordenadas no finitas");
+  }
+  std::vector<RTreeLeafEntry> out;
+  if (root_ == kInvalidPage || region.min_x > region.max_x || region.min_y > region.max_y) {
+    return out;
+  }
+  search_node(root_, region, out);
+  stats_.records_returned += out.size();
+  return out;
+}
+
+void RTree::search_node(PageId id, const Rect& region, std::vector<RTreeLeafEntry>& out) {
+  const RTreeNode node = read_node(id);
+  if (node.leaf) {
+    stats_.records_examined += node.points.size();
+    for (const auto& e : node.points) {
+      if (region.contains(e.point)) out.push_back(e);
+    }
+    return;
+  }
+  // La poda: un subarbol cuyo MBR no toca la region no puede tener nada
+  // dentro, porque su MBR cubre todos sus puntos. Es exactamente lo que
+  // check_invariants garantiza.
+  for (const auto& b : node.children) {
+    if (region.intersects(b.mbr)) search_node(b.child, region, out);
+  }
+}
+
 std::vector<RTreeLeafEntry> RTree::scan() {
   std::vector<RTreeLeafEntry> out;
   out.reserve(count_);
