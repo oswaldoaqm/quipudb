@@ -1,8 +1,10 @@
 #include "quipudb/index/rtree.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -238,6 +240,280 @@ std::size_t RTree::free_pages() {
     ++n;
   }
   return n;
+}
+
+// ---------------------------------------------------------------------------
+// Insercion (#116)
+// ---------------------------------------------------------------------------
+
+void RTree::insert(Point point, RID rid) {
+  if (!std::isfinite(point.x) || !std::isfinite(point.y)) {
+    throw InvalidRecord("coordenada no finita en el R-Tree: (" + std::to_string(point.x) + ", " +
+                        std::to_string(point.y) + ")");
+  }
+  Item item;
+  item.point = {point, rid};
+  insert_item(item, 1);
+  ++count_;
+  save_meta();
+}
+
+void RTree::insert_item(const Item& item, std::size_t level) {
+  if (root_ == kInvalidPage) {
+    if (!item.is_point) {
+      throw std::logic_error("un subarbol no se puede insertar en un R-Tree vacio");
+    }
+    RTreeNode hoja;
+    hoja.points.push_back(item.point);
+    root_ = allocate();
+    write_node(root_, hoja);
+    height_ = 1;
+    return;
+  }
+  if (level == 0 || level > height_) {
+    throw std::logic_error("nivel de insercion " + std::to_string(level) +
+                           " fuera de un arbol de altura " + std::to_string(height_));
+  }
+
+  // Bajada: se guarda el camino con los nodos ya leidos para no volver a
+  // leerlos al subir.
+  struct Paso {
+    PageId id;
+    RTreeNode node;
+    std::size_t hijo;
+  };
+  std::vector<Paso> camino;
+  const Rect r = item.rect();
+  PageId id = root_;
+  RTreeNode node = read_node(id);
+  for (std::size_t nivel = height_; nivel > level; --nivel) {
+    const std::size_t i = choose_subtree(node, r);
+    const PageId hijo = node.children[i].child;
+    camino.push_back({id, std::move(node), i});
+    id = hijo;
+    node = read_node(id);
+  }
+
+  if (item.is_point) {
+    node.points.push_back(item.point);
+  } else {
+    node.children.push_back(item.branch);
+  }
+
+  // Subida: partir lo que desborde y reajustar los MBR hasta donde cambien.
+  while (true) {
+    std::optional<RTreeBranch> hermano;
+    if (node.size() > order_) {
+      auto [izq, der] = split(node);
+      write_node(id, izq);
+      const PageId nuevo = allocate();
+      write_node(nuevo, der);
+      hermano = RTreeBranch{der.mbr(), nuevo};
+      node = std::move(izq);
+    } else {
+      write_node(id, node);
+    }
+
+    if (camino.empty()) {
+      if (hermano) {
+        // Se partio la raiz: el arbol crece un nivel, y solo crece por arriba,
+        // que es lo que mantiene todas las hojas a la misma altura.
+        RTreeNode raiz;
+        raiz.leaf = false;
+        raiz.children = {RTreeBranch{node.mbr(), id}, *hermano};
+        root_ = allocate();
+        write_node(root_, raiz);
+        ++height_;
+      }
+      return;
+    }
+
+    Paso padre = std::move(camino.back());
+    camino.pop_back();
+    const Rect mbr = node.mbr();
+    if (!hermano && padre.node.children[padre.hijo].mbr == mbr) {
+      // Nada cambio para los de arriba: no hace falta reescribirlos.
+      return;
+    }
+    padre.node.children[padre.hijo].mbr = mbr;
+    if (hermano) padre.node.children.push_back(*hermano);
+    id = padre.id;
+    node = std::move(padre.node);
+  }
+}
+
+// Guttman: el hijo cuyo MBR menos crece en area. Con puntos alineados o
+// repetidos las areas son todas 0 y el criterio no distingue nada, asi que se
+// desempata por cuanto crece el semiperimetro y despues por el area menor.
+std::size_t RTree::choose_subtree(const RTreeNode& node, const Rect& r) {
+  std::size_t mejor = 0;
+  double mejor_area = std::numeric_limits<double>::infinity();
+  double mejor_margen = std::numeric_limits<double>::infinity();
+  double mejor_tamano = std::numeric_limits<double>::infinity();
+  for (std::size_t i = 0; i < node.children.size(); ++i) {
+    const Rect& m = node.children[i].mbr;
+    const double area = m.enlargement(r);
+    const double margen = m.margin_enlargement(r);
+    const double tamano = m.area();
+    if (area < mejor_area || (area == mejor_area && margen < mejor_margen) ||
+        (area == mejor_area && margen == mejor_margen && tamano < mejor_tamano)) {
+      mejor = i;
+      mejor_area = area;
+      mejor_margen = margen;
+      mejor_tamano = tamano;
+    }
+  }
+  return mejor;
+}
+
+// Split cuadratico de Guttman.
+//
+// Se eligio el cuadratico y no el lineal (ver el contrato del #115): elige
+// como semillas el par que mas area desperdiciaria juntas, y reparte el resto
+// empezando por la entrada que mas "prefiere" un lado. Deja MBR que se solapan
+// menos, y el solape es lo que obliga a una busqueda a bajar por varias ramas.
+// Cuesta O(M^2) por split; con M = 113 son unas trece mil comparaciones, y los
+// splits son raros frente a las busquedas. El 2.2.4 mide esa consecuencia.
+//
+// Igual que en `choose_subtree`, donde el area no distingue se desempata por
+// semiperimetro: sin eso, con puntos alineados todas las semillas empatan en 0
+// y se elige el primer par, que parte muy mal.
+RTree::SplitGroups RTree::quadratic_split(std::span<const Rect> rects, std::size_t min_fill) {
+  const std::size_t n = rects.size();
+  if (n < 2 || 2 * min_fill > n) {
+    throw std::logic_error("no se pueden repartir " + std::to_string(n) +
+                           " entradas en dos grupos de al menos " + std::to_string(min_fill));
+  }
+
+  // PickSeeds.
+  std::size_t s1 = 0;
+  std::size_t s2 = 1;
+  double peor = -std::numeric_limits<double>::infinity();
+  double peor_margen = -std::numeric_limits<double>::infinity();
+  for (std::size_t i = 0; i < n; ++i) {
+    for (std::size_t j = i + 1; j < n; ++j) {
+      const Rect juntos = rects[i].united(rects[j]);
+      const double desperdicio = juntos.area() - rects[i].area() - rects[j].area();
+      const double margen = juntos.margin();
+      if (desperdicio > peor || (desperdicio == peor && margen > peor_margen)) {
+        peor = desperdicio;
+        peor_margen = margen;
+        s1 = i;
+        s2 = j;
+      }
+    }
+  }
+
+  SplitGroups g;
+  g.first.push_back(s1);
+  g.second.push_back(s2);
+  Rect mbr1 = rects[s1];
+  Rect mbr2 = rects[s2];
+  std::vector<bool> asignado(n, false);
+  asignado[s1] = asignado[s2] = true;
+  std::size_t restantes = n - 2;
+
+  while (restantes > 0) {
+    // Si un grupo necesita todo lo que queda para llegar al minimo, se lo
+    // lleva. Esto es lo que garantiza que el split termine con dos lados
+    // validos, y funciona porque min_fill <= n/2.
+    std::vector<std::size_t>* forzado = nullptr;
+    if (g.first.size() + restantes == min_fill) forzado = &g.first;
+    if (g.second.size() + restantes == min_fill) forzado = &g.second;
+    if (forzado != nullptr) {
+      for (std::size_t i = 0; i < n; ++i) {
+        if (!asignado[i]) forzado->push_back(i);
+      }
+      break;
+    }
+
+    // PickNext: la entrada con mas diferencia entre ir a un lado o al otro.
+    std::size_t elegida = n;
+    double mayor = -1.0;
+    double mayor_margen = -1.0;
+    for (std::size_t i = 0; i < n; ++i) {
+      if (asignado[i]) continue;
+      const double dif = std::abs(mbr1.enlargement(rects[i]) - mbr2.enlargement(rects[i]));
+      const double dif_margen =
+          std::abs(mbr1.margin_enlargement(rects[i]) - mbr2.margin_enlargement(rects[i]));
+      if (dif > mayor || (dif == mayor && dif_margen > mayor_margen)) {
+        mayor = dif;
+        mayor_margen = dif_margen;
+        elegida = i;
+      }
+    }
+
+    // Al lado que menos crece; despues al de menor semiperimetro ganado, al de
+    // menor area y al que tiene menos entradas.
+    const Rect& r = rects[elegida];
+    const double a1 = mbr1.enlargement(r);
+    const double a2 = mbr2.enlargement(r);
+    const double m1 = mbr1.margin_enlargement(r);
+    const double m2 = mbr2.margin_enlargement(r);
+    bool al_primero = true;
+    if (a1 != a2) {
+      al_primero = a1 < a2;
+    } else if (m1 != m2) {
+      al_primero = m1 < m2;
+    } else if (mbr1.area() != mbr2.area()) {
+      al_primero = mbr1.area() < mbr2.area();
+    } else {
+      al_primero = g.first.size() <= g.second.size();
+    }
+    if (al_primero) {
+      g.first.push_back(elegida);
+      mbr1 = mbr1.united(r);
+    } else {
+      g.second.push_back(elegida);
+      mbr2 = mbr2.united(r);
+    }
+    asignado[elegida] = true;
+    --restantes;
+  }
+  return g;
+}
+
+std::pair<RTreeNode, RTreeNode> RTree::split(const RTreeNode& node) const {
+  std::vector<Rect> rects;
+  rects.reserve(node.size());
+  if (node.leaf) {
+    for (const auto& e : node.points) rects.push_back(Rect::of(e.point));
+  } else {
+    for (const auto& b : node.children) rects.push_back(b.mbr);
+  }
+  const SplitGroups g = quadratic_split(rects, min_fill_);
+
+  RTreeNode a;
+  RTreeNode b;
+  a.leaf = b.leaf = node.leaf;
+  const auto repartir = [&](const std::vector<std::size_t>& indices, RTreeNode& destino) {
+    for (const std::size_t i : indices) {
+      if (node.leaf) {
+        destino.points.push_back(node.points[i]);
+      } else {
+        destino.children.push_back(node.children[i]);
+      }
+    }
+  };
+  repartir(g.first, a);
+  repartir(g.second, b);
+  return {std::move(a), std::move(b)};
+}
+
+std::vector<RTreeLeafEntry> RTree::scan() {
+  std::vector<RTreeLeafEntry> out;
+  out.reserve(count_);
+  if (root_ != kInvalidPage) scan_node(root_, out);
+  return out;
+}
+
+void RTree::scan_node(PageId id, std::vector<RTreeLeafEntry>& out) {
+  const RTreeNode node = read_node(id);
+  if (node.leaf) {
+    out.insert(out.end(), node.points.begin(), node.points.end());
+    return;
+  }
+  for (const auto& b : node.children) scan_node(b.child, out);
 }
 
 // ---------------------------------------------------------------------------
