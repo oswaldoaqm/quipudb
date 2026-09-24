@@ -198,6 +198,15 @@ class RTree {
   /// que un BETWEEN con los limites al reves.
   [[nodiscard]] std::vector<RTreeLeafEntry> search(const Rect& region);
 
+  /// Borra el punto con ese RID (#118). Tienen que coincidir los dos: varios
+  /// registros pueden estar en el mismo lugar. Devuelve false si no estaba.
+  ///
+  /// Los MBR afectados encogen hasta la raiz. Un nodo que queda por debajo
+  /// del minimo se quita y sus entradas se reinsertan desde la raiz -- las de
+  /// un nodo interno a su misma altura, como subarboles --, y su pagina va a
+  /// la free list. Si la raiz queda con un solo hijo, el arbol baja un nivel.
+  bool remove(Point point, RID rid);
+
   /// Todas las entradas de las hojas, sin podar. Para pruebas y para
   /// reconstruir; las consultas usan la busqueda por rectangulo (#117).
   [[nodiscard]] std::vector<RTreeLeafEntry> scan();
@@ -255,6 +264,14 @@ class RTree {
   /// Manda la pagina a la free list. No encoge el archivo.
   void free_page(PageId id);
 
+  /// Un paso del camino desde la raiz: el nodo ya leido y por que hijo se
+  /// siguio. Lo usan la insercion para subir y la eliminacion para condensar.
+  struct PathStep {
+    PageId id = kInvalidPage;
+    RTreeNode node;
+    std::size_t child = 0;
+  };
+
   /// Lo que se inserta en un nodo: un punto en una hoja, o un subarbol en un
   /// nodo interno. La eliminacion (#118) reinserta de las dos clases.
   struct Item {
@@ -279,6 +296,15 @@ class RTree {
   [[nodiscard]] std::pair<RTreeNode, RTreeNode> split(const RTreeNode& node) const;
 
   void scan_node(PageId id, std::vector<RTreeLeafEntry>& out);
+
+  /// Busca la hoja que tiene exactamente (point, rid), bajando por todos los
+  /// hijos cuyo MBR contiene el punto: con solape puede haber mas de uno.
+  /// Deja en `path` el camino hasta el padre de la hoja.
+  bool find_leaf(PageId id, Point point, RID rid, std::vector<PathStep>& path, PathStep& leaf);
+
+  /// Mientras la raiz sea interna con un solo hijo, ese hijo pasa a ser la
+  /// raiz y el arbol baja un nivel.
+  void shrink_root();
   void search_node(PageId id, const Rect& region, std::vector<RTreeLeafEntry>& out);
 
   /// Verifica el subarbol con raiz en `id`, que esta a profundidad `nivel`
