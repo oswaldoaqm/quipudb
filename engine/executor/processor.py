@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 from time import perf_counter_ns
-from typing import Any
+from typing import Any, TextIO
 
+from engine.executor.bulk_load import (
+    CsvHeader,
+    CsvLoadError,
+    LoadReport,
+    convert_row,
+    match_header,
+    read_header,
+)
 from engine.executor.dml import collect_delete_candidates, delete_with_indexes, insert_with_indexes
 from engine.executor.external import ExternalExecutionOptions, execute_external_select
 from engine.executor.native import (
@@ -172,6 +181,131 @@ class QueryProcessor:
             raise TransactionError("no hay una transaccion activa para deshacer")
         self._transaction.rollback()
         self._transaction = None
+
+    def load_csv(self, table_name: str, stream: TextIO, *, atomic: bool = False) -> LoadReport:
+        """Carga en ``table_name`` las filas de un CSV con cabecera (#114).
+
+        El archivo se lee fila por fila: lo unico que crece con su tamano es
+        la bitacora de deshacer cuando ``atomic`` es verdadero. La cabecera se
+        empareja con el esquema antes de insertar nada, asi que un CSV de otra
+        tabla se rechaza entero con ``CsvLoadError``.
+
+        Sin ``atomic``, cada fila es su propia unidad: las que no se pueden
+        convertir o insertar se cuentan y se reportan con su linea, y las demas
+        quedan. Con ``atomic``, la primera fila que falla deshace todas las
+        anteriores y se lanza ``CsvLoadError`` con esa linea.
+
+        No se puede cargar dentro de un ``BEGIN TRANSACTION``: la carga toma su
+        propio lock exclusivo de la tabla durante todo el archivo.
+        """
+
+        if self._transaction is not None:
+            raise TransactionError(
+                "la carga masiva no se puede ejecutar dentro de una transaccion: "
+                "falta un END TRANSACTION"
+            )
+        try:
+            table_info = self._database.table_info(table_name)
+        except self._domain_errors:
+            raise CsvLoadError(f"la tabla {table_name!r} no existe") from None
+
+        schema = from_native_schema(table_info.schema, self._native)
+        index_metadata = list(table_info.indexes)
+        try:
+            header = read_header(stream)
+        except UnicodeDecodeError as error:
+            raise CsvLoadError(f"no se pudo leer la cabecera: {error}", line=1) from None
+        mapping = match_header(header.fields, schema, line=header.line)
+        reader = csv.reader(stream, delimiter=header.delimiter, strict=True)
+
+        report = LoadReport(table_name)
+        transaction = Transaction(self._database, self._lock_manager) if atomic else None
+        if transaction is not None:
+            transaction.ensure_lock(table_name, LockMode.EXCLUSIVE, self._lock_timeout)
+        else:
+            self._lock_manager.acquire(
+                table_name, self._autocommit_owner, LockMode.EXCLUSIVE, self._lock_timeout
+            )
+
+        try:
+            while True:
+                # La linea donde EMPIEZA la fila: un texto entre comillas puede
+                # ocupar varias, y es la primera la que el usuario busca.
+                line = header.line + reader.line_num + 1
+                try:
+                    fields = next(reader)
+                except StopIteration:
+                    break
+                except csv.Error as error:
+                    error_message = f"CSV mal formado: {error}"
+                except UnicodeDecodeError:
+                    # No se puede saber donde vuelve a ser texto valido, asi
+                    # que el resto del archivo no se lee.
+                    error_message = "el archivo deja de ser UTF-8 valido; el resto no se leyo"
+                    if transaction is None:
+                        report.fail(line, error_message)
+                        break
+                else:
+                    if not fields:
+                        continue  # linea en blanco
+                    error_message = self._load_row(
+                        table_name, fields, mapping, schema, header, index_metadata, transaction
+                    )
+                    if error_message is None:
+                        report.inserted += 1
+                        continue
+
+                if transaction is not None:
+                    raise CsvLoadError(
+                        f"linea {line}: {error_message}. La carga es atomica y no se "
+                        "inserto ninguna fila",
+                        line=line,
+                    )
+                report.fail(line, error_message)
+        except BaseException:
+            if transaction is not None:
+                transaction.rollback()
+            raise
+        else:
+            if transaction is not None:
+                transaction.commit()
+        finally:
+            if transaction is None:
+                self._lock_manager.release(table_name, self._autocommit_owner)
+        return report
+
+    def _load_row(
+        self,
+        table_name: str,
+        fields: list[str],
+        mapping: tuple[int, ...],
+        schema: BoundSchema,
+        header: CsvHeader,
+        index_metadata: list[Any],
+        transaction: Transaction | None,
+    ) -> str | None:
+        """Inserta una fila del CSV; devuelve por que no entro, o ``None``."""
+
+        try:
+            row = convert_row(
+                fields,
+                mapping,
+                schema,
+                len(header.fields),
+                decimal_comma=header.delimiter == ";",
+            )
+            values = to_native_values(tuple(row), self._native)
+        except ValueError as error:
+            return str(error)
+        try:
+            rid = insert_with_indexes(
+                self._database, table_name, values, schema.key_column, index_metadata
+            )
+        except self._domain_errors as error:
+            return f"no se pudo insertar: {error}"
+        if transaction is not None:
+            transaction.record_insert(table_name, values, rid, schema.key_column, index_metadata)
+        return None
 
     def _begin_transaction(self) -> QueryResult:
         if self._transaction is not None:
