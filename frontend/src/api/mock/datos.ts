@@ -185,7 +185,21 @@ const profesores: TablaFalsa = {
 
 export const TABLAS: TablaFalsa[] = [alumnos, cursos, matriculas, profesores];
 
-export const MOCK_TABLES: TableInfo[] = TABLAS.map((t) => t.info);
+/**
+ * El catalogo, leido en el momento.
+ *
+ * Es una funcion y no una constante porque `CREATE TABLE` agrega tablas
+ * durante la sesion: una copia fija dejaria el Panel de Archivos mostrando el
+ * catalogo de cuando cargo la pagina.
+ */
+export function catalogo(): TableInfo[] {
+  return TABLAS.map((t) => t.info);
+}
+
+/** Registra una tabla nueva. El llamador ya comprobo que el nombre es libre. */
+export function agregarTabla(tabla: TablaFalsa): void {
+  TABLAS.push(tabla);
+}
 
 export function buscarTabla(nombre: string): TablaFalsa | undefined {
   return TABLAS.find((t) => t.info.name === nombre.toLowerCase());
