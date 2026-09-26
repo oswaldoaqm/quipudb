@@ -10,6 +10,8 @@ interface ResultsPanelProps {
   /** El detalle del error vive en el panel de consultas, junto al editor. */
   hayError: boolean;
   ejecutando: boolean;
+  /** Nombre de la tabla si la consulta la creó; null en cualquier otro caso. */
+  tablaCreada: string | null;
 }
 
 const ALTO_FILA = 26;
@@ -110,6 +112,7 @@ export function ResultsPanel({
   resultado,
   hayError,
   ejecutando,
+  tablaCreada,
 }: ResultsPanelProps) {
   // El tiempo lo mide el planner de parsear a devolver (ADR 0002), asi que es
   // el que el usuario percibe y el que corresponde mostrar aqui.
@@ -134,6 +137,12 @@ export function ResultsPanel({
       ) : !resultado ? (
         <p className="p-3 text-xs text-muted-foreground">
           Ejecuta una consulta para ver resultados.
+        </p>
+      ) : tablaCreada ? (
+        // En verde y no en gris: el criterio 2 del issue #111 pide que una
+        // confirmacion no se lea igual que un error ni que un resultado vacio.
+        <p className="p-3 text-xs text-emerald-700 dark:text-emerald-400">
+          Tabla <span className="font-mono">{tablaCreada}</span> creada.
         </p>
       ) : resultado.columns.length === 0 ? (
         <p className="p-3 text-xs text-muted-foreground">
