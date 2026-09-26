@@ -2,6 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useRef } from "react";
 
 import { Panel } from "@/components/Panel";
+import type { Efecto } from "@/api/sentencia";
 import type { CellValue, QueryResult } from "@/api/types";
 import { cn } from "@/lib/utils";
 
@@ -10,8 +11,8 @@ interface ResultsPanelProps {
   /** El detalle del error vive en el panel de consultas, junto al editor. */
   hayError: boolean;
   ejecutando: boolean;
-  /** Nombre de la tabla si la consulta la creó; null en cualquier otro caso. */
-  tablaCreada: string | null;
+  /** Qué hizo la sentencia, deducido del SQL. Decide el texto de la confirmación. */
+  efecto: Efecto;
 }
 
 const ALTO_FILA = 26;
@@ -112,14 +113,18 @@ export function ResultsPanel({
   resultado,
   hayError,
   ejecutando,
-  tablaCreada,
+  efecto,
 }: ResultsPanelProps) {
   // El tiempo lo mide el planner de parsear a devolver (ADR 0002), asi que es
   // el que el usuario percibe y el que corresponde mostrar aqui.
+  // Sin columnas no hay filas que contar: un INSERT mostraria "0 filas" junto
+  // a "1 fila insertada", que se contradicen.
   const nota =
-    resultado && !hayError
+    resultado && !hayError && resultado.columns.length > 0
       ? [
-          `${resultado.rows.length.toLocaleString("es-PE")} filas`,
+          `${resultado.rows.length.toLocaleString("es-PE")} ${
+            resultado.rows.length === 1 ? "fila" : "filas"
+          }`,
           resultado.plan && `${resultado.plan.time_ms} ms`,
         ]
           .filter(Boolean)
@@ -138,11 +143,19 @@ export function ResultsPanel({
         <p className="p-3 text-xs text-muted-foreground">
           Ejecuta una consulta para ver resultados.
         </p>
-      ) : tablaCreada ? (
+      ) : efecto.clase === "creacion" ? (
         // En verde y no en gris: el criterio 2 del issue #111 pide que una
         // confirmacion no se lea igual que un error ni que un resultado vacio.
         <p className="p-3 text-xs text-emerald-700 dark:text-emerald-400">
-          Tabla <span className="font-mono">{tablaCreada}</span> creada.
+          Tabla <span className="font-mono">{efecto.tabla}</span> creada.
+        </p>
+      ) : efecto.clase === "insercion" ? (
+        // El conteo sale de `affected_rows`, no de contar la sentencia:
+        // criterio 2 del issue #112.
+        <p className="p-3 text-xs text-emerald-700 dark:text-emerald-400">
+          {resultado.affected_rows === 1
+            ? "1 fila insertada."
+            : `${resultado.affected_rows.toLocaleString("es-PE")} filas insertadas.`}
         </p>
       ) : resultado.columns.length === 0 ? (
         <p className="p-3 text-xs text-muted-foreground">
