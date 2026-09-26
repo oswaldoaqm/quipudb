@@ -8,29 +8,16 @@
 
 import { MotorError } from "@/api/errors";
 import { ejecutar, leerConsulta } from "@/api/mock/consulta";
-import { buscarTabla, MOCK_TABLES } from "@/api/mock/datos";
+import { buscarTabla, catalogo } from "@/api/mock/datos";
+import { ejecutarCreateTable, esCreateTable } from "@/api/mock/ddl";
+import { ubicarEn } from "@/api/mock/ubicacion";
 import type { QueryError, QueryResult, TableInfo } from "@/api/types";
-
-export { MOCK_TABLES };
 
 /** La consulta que el panel ejecuta al abrir, para probar el camino completo. */
 export const CONSULTA_DE_PRUEBA =
   "SELECT * FROM alumnos WHERE promedio BETWEEN 15 AND 17";
 
 const LATENCIA_MS = 150;
-
-type Ubicacion = Pick<
-  QueryError,
-  "line" | "column" | "end_line" | "end_column"
->;
-
-/** Ubicacion 1-based de un tramo, con la convencion de `Span` del parser. */
-function ubicarEn(sql: string, indice: number, largo: number): Ubicacion {
-  const lineas = sql.slice(0, Math.max(0, indice)).split(/\r\n|\r|\n/);
-  const line = lineas.length;
-  const column = (lineas[lineas.length - 1]?.length ?? 0) + 1;
-  return { line, column, end_line: line, end_column: column + largo };
-}
 
 /**
  * Palabras que el parser reconoce pero rechaza.
@@ -63,6 +50,11 @@ const TABLA_DEL_FROM = /\b(?:FROM|INTO|TABLE)\s+([a-zA-Z_][a-zA-Z0-9_]*)/i;
  */
 export function detectarError(sql: string): QueryError | null {
   if (sql.trim() === "") return null;
+
+  // Un CREATE TABLE nombra una tabla que todavia no existe, asi que las
+  // comprobaciones de abajo —pensadas para consultas sobre tablas existentes—
+  // lo rechazarian. Sus propios errores los reporta `ddl.ts` al ejecutarlo.
+  if (esCreateTable(sql)) return null;
 
   // Lo que va entre comillas es dato, no sintaxis: se blanquea conservando las
   // posiciones para que una arroba dentro de un literal no se reporte como
@@ -196,6 +188,19 @@ export async function mockExecuteQuery(sql: string): Promise<QueryResult> {
   const fallo = detectarError(sql);
   if (fallo) throw new MotorError(fallo);
 
+  // El CREATE TABLE registra la tabla y no devuelve filas; lanza su propio
+  // MotorError si el nombre ya existe o el esquema esta mal.
+  if (esCreateTable(sql)) {
+    ejecutarCreateTable(sql);
+    return {
+      columns: [],
+      column_types: [],
+      rows: [],
+      affected_rows: 0,
+      plan: null,
+    };
+  }
+
   const consulta = leerConsulta(sql);
   const tabla = consulta ? buscarTabla(consulta.tabla) : undefined;
 
@@ -217,5 +222,5 @@ export async function mockExecuteQuery(sql: string): Promise<QueryResult> {
 
 export async function mockListTables(): Promise<TableInfo[]> {
   await new Promise((listo) => setTimeout(listo, LATENCIA_MS));
-  return MOCK_TABLES;
+  return catalogo();
 }
