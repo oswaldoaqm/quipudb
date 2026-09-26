@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { executeQuery, listTables, USA_DATOS_FALSOS } from "@/api/client";
 import { MotorError } from "@/api/errors";
 import { CONSULTA_DE_PRUEBA } from "@/api/mock";
-import { tablaCreadaPor } from "@/api/sentencia";
+import { efectoDe, type Efecto } from "@/api/sentencia";
 import type { QueryResult, TableInfo } from "@/api/types";
 import { FilesPanel } from "@/panels/FilesPanel";
 import { PlanPanel } from "@/panels/PlanPanel";
@@ -18,7 +18,7 @@ export default function App() {
   const [resultado, setResultado] = useState<QueryResult | null>(null);
   const [error, setError] = useState<MotorError | null>(null);
   const [ejecutando, setEjecutando] = useState(false);
-  const [tablaCreada, setTablaCreada] = useState<string | null>(null);
+  const [efecto, setEfecto] = useState<Efecto>({ clase: "otra" });
 
   const recargarCatalogo = useCallback(
     () => listTables().then(setTablas).catch(() => setTablas([])),
@@ -31,11 +31,12 @@ export default function App() {
       setError(null);
       try {
         setResultado(await executeQuery(sentencia));
-        const creada = tablaCreadaPor(sentencia);
-        setTablaCreada(creada);
-        // Criterio 3 del #111: la tabla nueva tiene que aparecer en el Panel
-        // de Archivos sin que haya que recargar la pagina.
-        if (creada) await recargarCatalogo();
+        const efectoNuevo = efectoDe(sentencia);
+        setEfecto(efectoNuevo);
+        // Una tabla nueva o filas nuevas cambian lo que muestra el Panel de
+        // Archivos, y tiene que verse sin recargar la pagina (criterio 3
+        // del #111).
+        if (efectoNuevo.clase !== "otra") await recargarCatalogo();
       } catch (fallo) {
         setError(
           fallo instanceof MotorError
@@ -45,7 +46,7 @@ export default function App() {
               ),
         );
         setResultado(null);
-        setTablaCreada(null);
+        setEfecto({ clase: "otra" });
       } finally {
         setEjecutando(false);
       }
@@ -90,7 +91,7 @@ export default function App() {
               resultado={resultado}
               hayError={error !== null}
               ejecutando={ejecutando}
-              tablaCreada={tablaCreada}
+              efecto={efecto}
             />
             <PlanPanel plan={resultado?.plan ?? null} />
           </div>
