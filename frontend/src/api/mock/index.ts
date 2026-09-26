@@ -10,6 +10,7 @@ import { MotorError } from "@/api/errors";
 import { ejecutar, leerConsulta } from "@/api/mock/consulta";
 import { buscarTabla, catalogo } from "@/api/mock/datos";
 import { ejecutarCreateTable, esCreateTable } from "@/api/mock/ddl";
+import { ejecutarInsert, esInsert } from "@/api/mock/dml";
 import { ubicarEn } from "@/api/mock/ubicacion";
 import type { QueryError, QueryResult, TableInfo } from "@/api/types";
 
@@ -197,6 +198,18 @@ export async function mockExecuteQuery(sql: string): Promise<QueryResult> {
       column_types: [],
       rows: [],
       affected_rows: 0,
+      plan: null,
+    };
+  }
+
+  // El INSERT comunica su efecto con `affected_rows` y sin plan, igual que el
+  // motor: el plan de las escrituras sigue pendiente (ADR 0002).
+  if (esInsert(sql)) {
+    return {
+      columns: [],
+      column_types: [],
+      rows: [],
+      affected_rows: ejecutarInsert(sql),
       plan: null,
     };
   }
