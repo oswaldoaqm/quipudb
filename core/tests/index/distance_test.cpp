@@ -20,9 +20,11 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <numbers>
+#include <vector>
 
 #include "quipudb/error.hpp"
 
@@ -388,6 +390,124 @@ TEST(BoundingBoxTest, EntradaInvalidaEsInvalidRecord) {
                                   Metric::kEuclidean),
                InvalidRecord);
   EXPECT_THROW((void)bounding_box({0.0, 90.5}, 100.0, Metric::kHaversine), InvalidRecord);
+}
+
+// ---------------------------------------------------------------------------
+// La distancia de un punto a un rectangulo (issue #121)
+// ---------------------------------------------------------------------------
+
+/// Comprueba la propiedad de la que depende la correccion del k-NN:
+/// `min_distance` no puede quedar POR ENCIMA de la distancia real a ningun
+/// punto de la region. Si lo hiciera, el k-NN podaria un subarbol que si
+/// tenia un vecino mas cercano.
+///
+/// Se hace por muestreo denso del rectangulo, que es un oraculo independiente
+/// de la formula que se esta probando.
+void exigir_que_sea_cota_inferior(Point p, const Rect& region, Metric metrica) {
+  const double cota = min_distance(p, region, metrica);
+  constexpr int kPasos = 40;
+
+  double menor = std::numeric_limits<double>::infinity();
+  for (int i = 0; i <= kPasos; ++i) {
+    for (int j = 0; j <= kPasos; ++j) {
+      const Point dentro{region.min_x + (region.max_x - region.min_x) * i / kPasos,
+                         region.min_y + (region.max_y - region.min_y) * j / kPasos};
+      const double real = distance(p, dentro, metrica);
+      menor = std::min(menor, real);
+      // La holgura absorbe el redondeo de dos rutas de calculo distintas.
+      EXPECT_LE(cota, real * (1.0 + 1e-9) + 1e-6)
+          << "la cota " << cota << " supera la distancia real " << real << " a ("
+          << dentro.x << ", " << dentro.y << ")";
+    }
+  }
+
+  // Y ademas tiene que ser ajustada: el muestreo pasa cerca del punto mas
+  // cercano, asi que el menor muestreado no puede alejarse mucho de la cota.
+  EXPECT_LE(menor - cota, menor * 0.05 + 1.0)
+      << "la cota " << cota << " es mucho mas floja que el minimo muestreado " << menor;
+}
+
+TEST(MinDistanceTest, DentroDeLaRegionEsCero) {
+  const Rect caja{-77.2, -12.3, -76.8, -11.8};
+  for (const Metric metrica : {Metric::kEuclidean, Metric::kHaversine}) {
+    EXPECT_DOUBLE_EQ(min_distance(kLima, caja, metrica), 0.0) << name_of(metrica);
+    EXPECT_DOUBLE_EQ(min_distance({-77.2, -12.3}, caja, metrica), 0.0) << name_of(metrica);
+    EXPECT_DOUBLE_EQ(min_distance({-76.8, -11.8}, caja, metrica), 0.0) << name_of(metrica);
+  }
+}
+
+TEST(MinDistanceTest, EuclidianaRecortaCadaCoordenada) {
+  const Rect caja{0.0, 0.0, 10.0, 10.0};
+  EXPECT_DOUBLE_EQ(min_distance({5.0, 15.0}, caja, Metric::kEuclidean), 5.0);   // encima
+  EXPECT_DOUBLE_EQ(min_distance({-3.0, 5.0}, caja, Metric::kEuclidean), 3.0);   // al lado
+  EXPECT_DOUBLE_EQ(min_distance({13.0, 14.0}, caja, Metric::kEuclidean), 5.0);  // en diagonal
+}
+
+TEST(MinDistanceTest, EsCotaInferiorEnMuchasPosiciones) {
+  const Rect caja{-77.2, -12.3, -76.8, -11.8};
+  const std::vector<Point> desde = {
+      {-78.0, -12.0},   // al oeste
+      {-76.0, -12.0},   // al este
+      {-77.0, -13.5},   // al sur
+      {-77.0, -10.0},   // al norte
+      {-79.0, -14.0},   // en diagonal
+      {-70.0, -12.05},  // lejos, a la misma latitud
+      {-77.0, -12.0},   // dentro
+  };
+  for (const Point p : desde) {
+    exigir_que_sea_cota_inferior(p, caja, Metric::kHaversine);
+    exigir_que_sea_cota_inferior(p, caja, Metric::kEuclidean);
+  }
+}
+
+TEST(MinDistanceTest, EsCotaInferiorEnRegionesGrandesYLejosDelEcuador) {
+  // Aqui es donde recortar la latitud a secas dejaria de valer: sobre la
+  // esfera el punto mas cercano de un meridiano no esta a la latitud del
+  // que consulta.
+  const std::vector<Rect> regiones = {
+      {-10.0, 50.0, 10.0, 70.0},     // franja ancha al norte
+      {170.0, -5.0, 179.0, 5.0},     // pegada al antimeridiano
+      {-30.0, -80.0, 30.0, -70.0},   // casi en el polo sur
+      {-1.0, -1.0, 1.0, 1.0},        // chiquita en el ecuador
+  };
+  const std::vector<Point> desde = {
+      {0.0, 0.0}, {0.0, 85.0}, {-179.0, 0.0}, {45.0, 60.0}, {-90.0, -75.0},
+  };
+  for (const Rect& region : regiones) {
+    for (const Point p : desde) exigir_que_sea_cota_inferior(p, region, Metric::kHaversine);
+  }
+}
+
+TEST(MinDistanceTest, UnMeridianoLejanoNoEsLaLatitudRecortada) {
+  // El caso que justifica la formula del pie de la perpendicular: con la
+  // region a 80 grados de longitud, recortar la latitud da un punto que NO
+  // es el mas cercano, y la diferencia es de cientos de kilometros.
+  const Rect region{80.0, 10.0, 85.0, 70.0};
+  const Point p{0.0, 60.0};
+
+  const double exacta = min_distance(p, region, Metric::kHaversine);
+  const double recortando = haversine(p, {80.0, 60.0});  // la latitud de `p`, sin mas
+
+  EXPECT_LT(exacta, recortando);
+  EXPECT_GT(recortando - exacta, 1'000.0) << "el atajo se desvia menos de lo esperado";
+  exigir_que_sea_cota_inferior(p, region, Metric::kHaversine);
+}
+
+TEST(MinDistanceTest, RegionInvertidaEsInfinito) {
+  const Rect vacia{1.0, 1.0, -1.0, -1.0};
+  for (const Metric metrica : {Metric::kEuclidean, Metric::kHaversine}) {
+    EXPECT_TRUE(std::isinf(min_distance(kLima, vacia, metrica))) << name_of(metrica);
+  }
+}
+
+TEST(MinDistanceTest, EntradaInvalidaEsInvalidRecord) {
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const Rect caja{0.0, 0.0, 1.0, 1.0};
+  EXPECT_THROW((void)min_distance({nan, 0.0}, caja, Metric::kEuclidean), InvalidRecord);
+  EXPECT_THROW((void)min_distance(kLima, Rect{0.0, 0.0, nan, 1.0}, Metric::kHaversine),
+               InvalidRecord);
+  EXPECT_THROW((void)min_distance({0.0, 95.0}, Rect{10.0, 0.0, 20.0, 1.0}, Metric::kHaversine),
+               InvalidRecord);
 }
 
 }  // namespace
