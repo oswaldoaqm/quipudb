@@ -6,6 +6,7 @@
 #include <cstring>
 #include <limits>
 #include <optional>
+#include <queue>
 #include <stdexcept>
 #include <utility>
 
@@ -661,6 +662,67 @@ std::vector<RTreeLeafEntry> RTree::search_radius(Point center, double radius, Me
   // radio siguen contando como examinados, pero no como devueltos.
   stats_.records_returned -= descartados;
   return candidatos;
+}
+
+namespace {
+
+/// Lo que espera en la cola del k-NN: un subarbol por visitar o un punto ya
+/// medido. Los dos con su distancia a la consulta, que es lo que los ordena.
+struct Pendiente {
+  double distancia = 0.0;
+  bool es_punto = false;
+  PageId pagina = kInvalidPage;
+  RTreeLeafEntry punto{};
+};
+
+/// Ordena de menor a mayor. `priority_queue` saca el "mayor" segun el
+/// comparador, asi que con `>` saca el mas cercano.
+struct MasLejos {
+  bool operator()(const Pendiente& a, const Pendiente& b) const noexcept {
+    return a.distancia > b.distancia;
+  }
+};
+
+}  // namespace
+
+std::vector<RTreeLeafEntry> RTree::k_nearest(Point p, std::size_t k, Metric metric) {
+  std::vector<RTreeLeafEntry> out;
+  if (k == 0 || root_ == kInvalidPage) return out;
+  // Valida el punto antes de leer nada, como hace `search`.
+  (void)min_distance(p, Rect::of(p), metric);
+
+  std::priority_queue<Pendiente, std::vector<Pendiente>, MasLejos> cola;
+  cola.push({0.0, false, root_, {}});
+  out.reserve(k);
+
+  // Invariante: la cola siempre tiene lo que falta por mirar, ordenado por
+  // que tan cerca PODRIA estar. Si lo primero de la cola es un punto, no hay
+  // nada sin visitar que pueda estar mas cerca, asi que es el siguiente
+  // vecino y sale ya ordenado.
+  while (!cola.empty() && out.size() < k) {
+    const Pendiente actual = cola.top();
+    cola.pop();
+
+    if (actual.es_punto) {
+      out.push_back(actual.punto);
+      continue;
+    }
+
+    const RTreeNode nodo = read_node(actual.pagina);
+    if (nodo.leaf) {
+      stats_.records_examined += nodo.points.size();
+      for (const auto& e : nodo.points) {
+        cola.push({distance(p, e.point, metric), true, kInvalidPage, e});
+      }
+    } else {
+      for (const auto& b : nodo.children) {
+        cola.push({min_distance(p, b.mbr, metric), false, b.child, {}});
+      }
+    }
+  }
+
+  stats_.records_returned += out.size();
+  return out;
 }
 
 void RTree::search_node(PageId id, const Rect& region, std::vector<RTreeLeafEntry>& out) {
