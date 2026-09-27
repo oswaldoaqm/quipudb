@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <string>
 
@@ -122,6 +123,90 @@ Rect franja_completa(double lat_min, double lat_max) {
 }
 
 }  // namespace
+
+namespace {
+
+double acotar(double v, double bajo, double alto) noexcept {
+  return v < bajo ? bajo : (v > alto ? alto : v);
+}
+
+double grados(double rad) noexcept { return rad * 180.0 / std::numbers::pi_v<double>; }
+
+/// La diferencia de longitud por el lado corto, en [-180, 180].
+double diferencia_de_longitud(double desde, double hasta) noexcept {
+  double d = std::fmod(hasta - desde, 360.0);
+  if (d > 180.0) d -= 360.0;
+  if (d < -180.0) d += 360.0;
+  return d;
+}
+
+/// La distancia de `p` al borde meridiano de `region` en la longitud `lon`.
+///
+/// Sobre ese borde, el coseno de la distancia angular vale
+/// sen(lat_p) sen(lat) + cos(lat_p) cos(lat) cos(dlon), que es una sola
+/// sinusoide en `lat`: tiene como mucho un punto critico. De ahi que baste
+/// con mirar tres latitudes y quedarse con la mejor.
+///
+/// El punto critico es el pie de la perpendicular al circulo maximo,
+/// atan2(sen lat_p, cos lat_p cos dlon), y SOLO existe dentro de esta mitad
+/// del circulo cuando cos(lat_p) cos(dlon) > 0. Cuando no, la distancia es
+/// monotona sobre el borde y el minimo cae en un extremo del rango.
+///
+/// Los extremos se prueban siempre: agregar candidatos nunca puede dejar el
+/// resultado por debajo del minimo real -- todos son puntos de la region --,
+/// y olvidarse de uno si podria dejarlo por encima, que es lo que romperia
+/// la poda del k-NN.
+double minimo_en_el_meridiano(Point p, double lon, const Rect& region) {
+  double mejor = std::min(haversine(p, {lon, region.min_y}), haversine(p, {lon, region.max_y}));
+
+  const double dlon = radianes(diferencia_de_longitud(lon, p.x));
+  const double hacia_el_meridiano = std::cos(radianes(p.y)) * std::cos(dlon);
+  if (hacia_el_meridiano > 0.0) {
+    const double pie = grados(std::atan2(std::sin(radianes(p.y)), hacia_el_meridiano));
+    if (pie > region.min_y && pie < region.max_y) {
+      mejor = std::min(mejor, haversine(p, {lon, pie}));
+    }
+  }
+  return mejor;
+}
+
+}  // namespace
+
+double min_distance(Point p, const Rect& region, Metric metric) {
+  exigir_finitos(p, p, "min_distance");
+  if (!std::isfinite(region.min_x) || !std::isfinite(region.min_y) ||
+      !std::isfinite(region.max_x) || !std::isfinite(region.max_y)) {
+    throw InvalidRecord("region con coordenadas no finitas en min_distance");
+  }
+  // Una region invertida no contiene ningun punto: nada puede acercarsele.
+  if (region.min_x > region.max_x || region.min_y > region.max_y) {
+    return std::numeric_limits<double>::infinity();
+  }
+  if (region.contains(p)) return 0.0;
+
+  if (metric == Metric::kEuclidean) {
+    const Point cerca{acotar(p.x, region.min_x, region.max_x),
+                      acotar(p.y, region.min_y, region.max_y)};
+    return euclidean(p, cerca);
+  }
+
+  exigir_latitud(p);
+
+  // Con la longitud dentro del rango, el punto mas cercano esta justo al
+  // norte o al sur, sobre el mismo meridiano que `p`.
+  if (region.min_x <= p.x && p.x <= region.max_x) {
+    return haversine(p, {p.x, acotar(p.y, region.min_y, region.max_y)});
+  }
+
+  // Fuera del rango hay que mirar los dos bordes meridianos y quedarse con
+  // el mejor: cual de los dos gana depende de por donde se de la vuelta.
+  //
+  // Los bordes en paralelo no se miran: sobre un paralelo la distancia crece
+  // con |dlon|, asi que su minimo cae siempre en una esquina, y las cuatro
+  // esquinas ya son extremos de los meridianos.
+  return std::min(minimo_en_el_meridiano(p, region.min_x, region),
+                  minimo_en_el_meridiano(p, region.max_x, region));
+}
 
 Rect bounding_box(Point center, double radius, Metric metric) {
   exigir_finitos(center, center, "bounding_box");
