@@ -53,14 +53,33 @@ export interface ConsultaLeida {
   orden: { columna: string; descendente: boolean } | null;
 }
 
+/**
+ * Una referencia a columna, con el `tabla.` opcional que admite el parser.
+ *
+ * `Parser._column_reference()` acepta el calificador en cualquier posicion
+ * donde quepa una columna, no solo en el ON de un JOIN, asi que va en todos
+ * los patrones de abajo.
+ */
+export const REFERENCIA = "[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)?";
+
 const SELECT_FROM = /\bSELECT\s+(.+?)\s+FROM\s+([a-zA-Z_][a-zA-Z0-9_]*)/is;
-const AGREGADO = /^(COUNT|SUM|MIN|MAX|AVG)\s*\(\s*(\*|[a-zA-Z_][a-zA-Z0-9_]*)\s*\)$/i;
-const AGRUPA = /\bGROUP\s+BY\s+([a-zA-Z_][a-zA-Z0-9_]*)/i;
-const COMPARACION =
-  /\bWHERE\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*(<=|>=|=|<|>)\s*('[^']*'|-?[\d.]+|true|false)/i;
-const ENTRE =
-  /\bWHERE\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+BETWEEN\s+('[^']*'|-?[\d.]+)\s+AND\s+('[^']*'|-?[\d.]+)/i;
-const ORDEN = /\bORDER\s+BY\s+([a-zA-Z_][a-zA-Z0-9_]*)(?:\s+(ASC|DESC))?/i;
+const AGREGADO = new RegExp(
+  `^(COUNT|SUM|MIN|MAX|AVG)\\s*\\(\\s*(\\*|${REFERENCIA})\\s*\\)$`,
+  "i",
+);
+const AGRUPA = new RegExp(`\\bGROUP\\s+BY\\s+(${REFERENCIA})`, "i");
+const COMPARACION = new RegExp(
+  `\\bWHERE\\s+(${REFERENCIA})\\s*(<=|>=|=|<|>)\\s*('[^']*'|-?[\\d.]+|true|false)`,
+  "i",
+);
+const ENTRE = new RegExp(
+  `\\bWHERE\\s+(${REFERENCIA})\\s+BETWEEN\\s+('[^']*'|-?[\\d.]+)\\s+AND\\s+('[^']*'|-?[\\d.]+)`,
+  "i",
+);
+const ORDEN = new RegExp(
+  `\\bORDER\\s+BY\\s+(${REFERENCIA})(?:\\s+(ASC|DESC))?`,
+  "i",
+);
 
 function valorDe(texto: string): CellValue {
   if (texto.startsWith("'")) return texto.slice(1, -1);
@@ -69,14 +88,37 @@ function valorDe(texto: string): CellValue {
   return Number(texto);
 }
 
+/** La condicion del WHERE, la use un SELECT o un DELETE. */
+export function leerCondicion(sql: string): Condicion | null {
+  const entre = ENTRE.exec(sql);
+  if (entre) {
+    return {
+      tipo: "between",
+      columna: entre[1].toLowerCase(),
+      desde: valorDe(entre[2]),
+      hasta: valorDe(entre[3]),
+    };
+  }
+
+  const comparacion = COMPARACION.exec(sql);
+  if (comparacion) {
+    return {
+      tipo: "comparacion",
+      columna: comparacion[1].toLowerCase(),
+      operador: comparacion[2] as Operador,
+      valor: valorDe(comparacion[3]),
+    };
+  }
+
+  return null;
+}
+
 /** Lee la consulta con expresiones regulares; no pretende ser un parser. */
 export function leerConsulta(sql: string): ConsultaLeida | null {
   const cabeza = SELECT_FROM.exec(sql);
   if (!cabeza) return null;
 
   const lista = cabeza[1].trim();
-  const entre = ENTRE.exec(sql);
-  const comparacion = entre ? null : COMPARACION.exec(sql);
   const orden = ORDEN.exec(sql);
   const agrupa = AGRUPA.exec(sql);
 
@@ -107,21 +149,7 @@ export function leerConsulta(sql: string): ConsultaLeida | null {
     agregados,
     agrupa: agrupa ? agrupa[1].toLowerCase() : null,
     tabla: cabeza[2].toLowerCase(),
-    where: entre
-      ? {
-          tipo: "between",
-          columna: entre[1].toLowerCase(),
-          desde: valorDe(entre[2]),
-          hasta: valorDe(entre[3]),
-        }
-      : comparacion
-        ? {
-            tipo: "comparacion",
-            columna: comparacion[1].toLowerCase(),
-            operador: comparacion[2] as Operador,
-            valor: valorDe(comparacion[3]),
-          }
-        : null,
+    where: leerCondicion(sql),
     orden: orden
       ? {
           columna: orden[1].toLowerCase(),
@@ -140,7 +168,7 @@ function comparar(a: CellValue, b: CellValue): number {
   return String(a).localeCompare(String(b));
 }
 
-function cumple(valor: CellValue, condicion: Condicion): boolean {
+export function cumple(valor: CellValue, condicion: Condicion): boolean {
   if (condicion.tipo === "between") {
     return (
       comparar(valor, condicion.desde) >= 0 &&
@@ -222,7 +250,7 @@ function describir(condicion: Condicion): string {
  * cae sobre ella, indice secundario aplicable si lo hay, y `scan` + `filter`
  * cuando ninguna estructura resuelve el predicado.
  */
-function rutaDeAcceso(
+export function rutaDeAcceso(
   tabla: TablaFalsa,
   where: Condicion | null,
   coincidencias: number,
@@ -422,21 +450,29 @@ function agrupar(
   };
 }
 
-/** Ejecuta la consulta sobre las filas de la tabla y arma su plan. */
+/**
+ * Ejecuta la consulta sobre las filas de la tabla y arma su plan.
+ *
+ * `base` la pasa un JOIN: la tabla es entonces sintetica, el WHERE ya bajo a
+ * la hoja que le corresponde y la raiz del plan es el nodo del join con sus
+ * dos ramas, no un acceso a una tabla del catalogo.
+ */
 export function ejecutar(
   sql: string,
   tabla: TablaFalsa,
   consulta: ConsultaLeida,
+  base?: Step,
 ): Ejecucion {
   const nombres = tabla.info.columns.map((c) => c.name);
 
   let filas = tabla.filas;
-  if (consulta.where) {
+  if (consulta.where && !base) {
     const indice = nombres.indexOf(consulta.where.columna);
     filas = filas.filter((fila) => cumple(fila[indice], consulta.where!));
   }
 
-  let raiz = rutaDeAcceso(tabla, consulta.where, filas.length);
+  let raiz = base ?? rutaDeAcceso(tabla, consulta.where, filas.length);
+  if (base) raiz.stats.records_returned = filas.length;
 
   // GROUP BY se resuelve antes del orden: lo que se ordena son los grupos ya
   // formados, no las filas de origen.
