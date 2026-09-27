@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { executeQuery, listTables, USA_DATOS_FALSOS } from "@/api/client";
+import {
+  executeQuery,
+  listTables,
+  loadCsv,
+  USA_DATOS_FALSOS,
+} from "@/api/client";
 import { MotorError } from "@/api/errors";
 import { CONSULTA_DE_PRUEBA } from "@/api/mock";
 import { efectoDe, type Efecto } from "@/api/sentencia";
@@ -59,6 +64,17 @@ export default function App() {
     [recargarCatalogo],
   );
 
+  const cargarCsv = useCallback(
+    async (tabla: string, archivo: File) => {
+      const informe = await loadCsv(tabla, archivo);
+      // El conteo de registros de la tabla cambio, y el Panel de Archivos lo
+      // muestra: hay que releerlo aunque la carga haya fallado a medias.
+      await recargarCatalogo();
+      return informe;
+    },
+    [recargarCatalogo],
+  );
+
   useEffect(() => {
     void recargarCatalogo().finally(() => setCargandoTablas(false));
 
@@ -80,7 +96,11 @@ export default function App() {
       </header>
 
       <main className="grid min-h-0 flex-1 grid-cols-[280px_1fr] gap-2">
-        <FilesPanel tablas={tablas} cargando={cargandoTablas} />
+        <FilesPanel
+          tablas={tablas}
+          cargando={cargandoTablas}
+          onCargarCsv={cargarCsv}
+        />
 
         <div className="grid min-h-0 min-w-0 grid-rows-[minmax(140px,32%)_1fr] gap-2">
           <QueryPanel
