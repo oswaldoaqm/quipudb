@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "quipudb/error.hpp"
+#include "quipudb/index/distance.hpp"
 
 namespace quipudb {
 
@@ -641,6 +642,25 @@ std::vector<RTreeLeafEntry> RTree::search(const Rect& region) {
   search_node(root_, region, out);
   stats_.records_returned += out.size();
   return out;
+}
+
+std::vector<RTreeLeafEntry> RTree::search_radius(Point center, double radius, Metric metric) {
+  // `bounding_box` valida el centro y el radio, y devuelve un rectangulo
+  // invertido si el radio es negativo; `search` ya trata ese caso como vacio.
+  const Rect caja = bounding_box(center, radius, metric);
+  std::vector<RTreeLeafEntry> candidatos = search(caja);
+
+  // Segundo filtro: la esquina del rectangulo esta mas lejos que el radio.
+  const auto fuera = std::remove_if(candidatos.begin(), candidatos.end(), [&](const auto& e) {
+    return distance(center, e.point, metric) > radius;
+  });
+  const auto descartados = static_cast<std::uint64_t>(std::distance(fuera, candidatos.end()));
+  candidatos.erase(fuera, candidatos.end());
+
+  // `search` ya conto los candidatos como devueltos; los que no pasaron el
+  // radio siguen contando como examinados, pero no como devueltos.
+  stats_.records_returned -= descartados;
+  return candidatos;
 }
 
 void RTree::search_node(PageId id, const Rect& region, std::vector<RTreeLeafEntry>& out) {
