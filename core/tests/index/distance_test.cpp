@@ -249,5 +249,146 @@ TEST(DistanceTest, LongitudFueraDeRangoNoEsError) {
   EXPECT_NEAR(haversine({190.0, 0.0}, {0.0, 0.0}), haversine({-170.0, 0.0}, {0.0, 0.0}), 1e-6);
 }
 
+// ---------------------------------------------------------------------------
+// La caja que circunscribe el circulo (issue #120)
+// ---------------------------------------------------------------------------
+
+/// Que la caja CONTENGA el circulo es lo unico que no puede fallar: si se
+/// queda corta, la poda pierde puntos y el resultado sale mal.
+void exigir_que_contenga_el_circulo(Point centro, double radio, Metric metrica) {
+  const Rect caja = bounding_box(centro, radio, metrica);
+  // Se camina el borde del circulo y se comprueba que cada punto cae dentro.
+  for (int grado = 0; grado < 360; ++grado) {
+    const double angulo = grado * std::numbers::pi_v<double> / 180.0;
+    Point borde{};
+    if (metrica == Metric::kEuclidean) {
+      borde = {centro.x + radio * std::cos(angulo), centro.y + radio * std::sin(angulo)};
+    } else {
+      // Punto a distancia `radio` y rumbo `angulo` sobre la esfera.
+      const double d = radio / kEarthRadiusMeters;
+      const double lat1 = centro.y * std::numbers::pi_v<double> / 180.0;
+      const double lon1 = centro.x * std::numbers::pi_v<double> / 180.0;
+      const double lat2 =
+          std::asin(std::sin(lat1) * std::cos(d) +
+                    std::cos(lat1) * std::sin(d) * std::cos(angulo));
+      const double lon2 =
+          lon1 + std::atan2(std::sin(angulo) * std::sin(d) * std::cos(lat1),
+                            std::cos(d) - std::sin(lat1) * std::sin(lat2));
+      borde = {lon2 * 180.0 / std::numbers::pi_v<double>,
+               lat2 * 180.0 / std::numbers::pi_v<double>};
+    }
+    EXPECT_TRUE(caja.contains(borde))
+        << "rumbo " << grado << " grados: el punto (" << borde.x << ", " << borde.y
+        << ") esta en el borde del circulo y la caja lo deja fuera";
+  }
+}
+
+TEST(BoundingBoxTest, EuclidianaEsElCuadradoDeLadoDobleDelRadio) {
+  const Rect caja = bounding_box({10.0, 20.0}, 3.0, Metric::kEuclidean);
+  EXPECT_NEAR(caja.min_x, 7.0, 1e-9);
+  EXPECT_NEAR(caja.max_x, 13.0, 1e-9);
+  EXPECT_NEAR(caja.min_y, 17.0, 1e-9);
+  EXPECT_NEAR(caja.max_y, 23.0, 1e-9);
+}
+
+TEST(BoundingBoxTest, ContieneElCirculoEntero) {
+  for (const double radio : {100.0, 1'000.0, 5'000.0, 10'000.0, 100'000.0, 1'000'000.0}) {
+    exigir_que_contenga_el_circulo(kLima, radio, Metric::kHaversine);
+    exigir_que_contenga_el_circulo(kMadrid, radio, Metric::kHaversine);
+    exigir_que_contenga_el_circulo({0.0, 0.0}, radio, Metric::kHaversine);
+    exigir_que_contenga_el_circulo({0.0, 70.0}, radio, Metric::kHaversine);
+  }
+  for (const double radio : {0.5, 3.0}) {
+    exigir_que_contenga_el_circulo(kLima, radio, Metric::kEuclidean);
+  }
+}
+
+TEST(BoundingBoxTest, LaAlturaNoDependeDeLaLatitudPeroElAnchoSi) {
+  constexpr double kRadio = 50'000.0;
+  const Rect ecuador = bounding_box({0.0, 0.0}, kRadio, Metric::kHaversine);
+  const Rect lima = bounding_box({0.0, -12.0}, kRadio, Metric::kHaversine);
+  const Rect norte = bounding_box({0.0, 60.0}, kRadio, Metric::kHaversine);
+
+  const auto alto = [](const Rect& r) { return r.max_y - r.min_y; };
+  const auto ancho = [](const Rect& r) { return r.max_x - r.min_x; };
+
+  EXPECT_NEAR(alto(ecuador), alto(lima), 1e-9);
+  EXPECT_NEAR(alto(ecuador), alto(norte), 1e-9);
+
+  // El mismo circulo abarca mas grados de longitud cuanto mas lejos del
+  // ecuador: es la misma distorsion que hace que las dos metricas no sean
+  // intercambiables.
+  EXPECT_GT(ancho(lima), ancho(ecuador));
+  EXPECT_GT(ancho(norte), ancho(lima));
+  EXPECT_NEAR(ancho(norte), ancho(ecuador) / std::cos(60.0 * std::numbers::pi_v<double> / 180.0),
+              ancho(ecuador) * 0.01);
+}
+
+TEST(BoundingBoxTest, ElAproximadoIngenuoSeQuedaCorto) {
+  // d / cos(lat) en vez de asin(sen d / cos lat): la diferencia es chica pero
+  // siempre del lado malo, el que pierde puntos. Con un radio grande y lejos
+  // del ecuador se ve.
+  constexpr double kRadio = 500'000.0;
+  constexpr double kLat = 60.0;
+  const Rect exacta = bounding_box({0.0, kLat}, kRadio, Metric::kHaversine);
+
+  const double d = kRadio / kEarthRadiusMeters;
+  const double ingenuo = d / std::cos(kLat * std::numbers::pi_v<double> / 180.0) * 180.0 /
+                         std::numbers::pi_v<double>;
+  EXPECT_GT(exacta.max_x, ingenuo) << "la caja exacta tiene que ser mas ancha que la ingenua";
+}
+
+TEST(BoundingBoxTest, TocarUnPoloAbreLaLongitudEntera) {
+  // A 200 km del polo norte, todas las longitudes estan a esa distancia o
+  // menos: acotar el ancho perderia puntos.
+  // Se comprueba que CUBRE el rango entero, no que valga -180 exacto: la
+  // caja lleva una holgura deliberada y puede pasarse por unos picometros.
+  const Rect caja = bounding_box({0.0, 89.0}, 200'000.0, Metric::kHaversine);
+  EXPECT_LE(caja.min_x, -180.0);
+  EXPECT_GE(caja.max_x, 180.0);
+  EXPECT_LE(caja.max_y, 90.0);
+}
+
+TEST(BoundingBoxTest, CruzarElAntimeridianoAbreLaLongitudEntera) {
+  // Un Rect no se puede envolver, asi que se abre entero: sigue conteniendo
+  // el circulo, solo poda menos.
+  const Rect caja = bounding_box({179.99, 0.0}, 50'000.0, Metric::kHaversine);
+  EXPECT_LE(caja.min_x, -180.0);
+  EXPECT_GE(caja.max_x, 180.0);
+}
+
+TEST(BoundingBoxTest, LasLatitudesNuncaSalenDelRango) {
+  for (const double radio : {1'000'000.0, 10'000'000.0, 30'000'000.0}) {
+    const Rect caja = bounding_box({0.0, 80.0}, radio, Metric::kHaversine);
+    EXPECT_GE(caja.min_y, -90.0) << "radio " << radio;
+    EXPECT_LE(caja.max_y, 90.0) << "radio " << radio;
+  }
+}
+
+TEST(BoundingBoxTest, RadioNegativoDaUnRectanguloVacio) {
+  for (const Metric metrica : {Metric::kEuclidean, Metric::kHaversine}) {
+    const Rect caja = bounding_box(kLima, -1.0, metrica);
+    EXPECT_GT(caja.min_x, caja.max_x) << name_of(metrica);
+    EXPECT_FALSE(caja.contains(kLima)) << name_of(metrica);
+  }
+}
+
+TEST(BoundingBoxTest, RadioCeroDaUnPunto) {
+  const Rect caja = bounding_box(kLima, 0.0, Metric::kHaversine);
+  EXPECT_TRUE(caja.contains(kLima));
+  EXPECT_LT(caja.max_x - caja.min_x, 1e-9);
+  EXPECT_LT(caja.max_y - caja.min_y, 1e-9);
+}
+
+TEST(BoundingBoxTest, EntradaInvalidaEsInvalidRecord) {
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_THROW((void)bounding_box({nan, 0.0}, 100.0, Metric::kHaversine), InvalidRecord);
+  EXPECT_THROW((void)bounding_box(kLima, nan, Metric::kHaversine), InvalidRecord);
+  EXPECT_THROW((void)bounding_box(kLima, std::numeric_limits<double>::infinity(),
+                                  Metric::kEuclidean),
+               InvalidRecord);
+  EXPECT_THROW((void)bounding_box({0.0, 90.5}, 100.0, Metric::kHaversine), InvalidRecord);
+}
+
 }  // namespace
 }  // namespace quipudb
