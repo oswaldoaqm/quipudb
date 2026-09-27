@@ -27,6 +27,11 @@ export default function App() {
 
   const ejecutar = useCallback(
     async (sentencia: string) => {
+      // Tambien por el atajo: el boton ya esta deshabilitado, pero Ctrl+Enter
+      // lo saltaria y el motor respondería "0 filas afectadas", que no
+      // significa nada.
+      if (sentencia.trim() === "") return;
+
       setEjecutando(true);
       setError(null);
       try {
