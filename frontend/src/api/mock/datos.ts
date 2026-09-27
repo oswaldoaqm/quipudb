@@ -201,6 +201,16 @@ export function agregarTabla(tabla: TablaFalsa): void {
   TABLAS.push(tabla);
 }
 
+/** Quita una tabla del catalogo. Devuelve false si no estaba. */
+export function eliminarTabla(nombre: string): boolean {
+  const posicion = TABLAS.findIndex(
+    (t) => t.info.name === nombre.toLowerCase(),
+  );
+  if (posicion < 0) return false;
+  TABLAS.splice(posicion, 1);
+  return true;
+}
+
 export function buscarTabla(nombre: string): TablaFalsa | undefined {
   return TABLAS.find((t) => t.info.name === nombre.toLowerCase());
 }
