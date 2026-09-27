@@ -84,7 +84,7 @@ insert               = "INSERT", "INTO", identifier, "VALUES", "(",
 
 select               = "SELECT", projection_list, "FROM", identifier,
                        [ where_clause ], [ group_by_clause ],
-                       [ order_by_clause ] ;
+                       [ order_by_clause ], [ limit_clause ] ;
 projection_list      = "*" | projection, { ",", projection } ;
 projection           = identifier | aggregate ;
 aggregate            = "COUNT", "(", "*", ")"
@@ -99,6 +99,7 @@ comparison_operator  = "=" | "<" | "<=" | ">" | ">=" ;
 group_by_clause      = "GROUP", "BY", identifier ;
 order_by_clause      = "ORDER", "BY", identifier,
                        [ "ASC" | "DESC" ] ;
+limit_clause         = "LIMIT", unsigned_integer ;
 
 delete               = "DELETE", "FROM", identifier, where_clause ;
 drop_table           = "DROP", "TABLE", identifier ;
@@ -186,6 +187,9 @@ analisis semantico aplicara estas reglas antes de tocar disco:
 - `ORDER BY` admite una sola columna. La direccion omitida equivale a `ASC`;
   `DESC` invierte el orden. En una consulta agrupada, la columna de orden debe
   ser la columna de agrupacion, pues no hay aliases para nombrar agregados.
+- `LIMIT n` exige un entero no negativo y corta el resultado final. Por eso se
+  aplica despues de agrupar, ordenar y proyectar; un limite mayor que la
+  cantidad disponible devuelve todas las filas.
 - `EXPLAIN` solo envuelve `SELECT`. Sin `ANALYZE` describe el IR fisico sin
   ejecutar operadores; con `ANALYZE` ejecuta e instrumenta la consulta.
 
@@ -304,6 +308,12 @@ codec recupera exactamente ambos valores. Los B+ y hash existentes rechazan
 este tipo de forma explicita: la traduccion `(latitud, longitud)` a las
 coordenadas `(x, y)` del R-Tree pertenece al adaptador espacial posterior.
 
+El issue #127 incorpora `LIMIT n` como ultima clausula de `SELECT`. El AST
+conserva el valor y su ubicacion, el operador medido corta la salida final en
+memoria y el plan lo representa con `op: "limit"` y `structure: "memory"`.
+`EXPLAIN` muestra el mismo nodo sin ejecutar y `EXPLAIN ANALYZE` conserva sus
+medidas reales.
+
 ### Limites explicitos
 
 Quedan fuera de este subconjunto:
@@ -312,8 +322,7 @@ Quedan fuera de este subconjunto:
 - `NULL` y la logica de tres valores;
 - operadores `!=` y `<>`, condiciones generales con `AND`, `OR` o `NOT`;
 - subconsultas, expresiones aritmeticas y funciones escalares;
-- aliases, `HAVING`, `LIMIT` y listas de varias columnas en `GROUP BY` u
-  `ORDER BY`;
+- aliases, `HAVING` y listas de varias columnas en `GROUP BY` u `ORDER BY`;
 - listas de columnas en `INSERT` e identificadores delimitados;
 - `COMMIT` y `ROLLBACK` como sentencias SQL;
 - operadores espaciales, R-Tree desde SQL, consultas textuales o multimedia.

@@ -10,7 +10,7 @@ from typing import Any
 
 from engine.executor.instrumentation import copy_stats, measure_memory, measure_native
 from engine.executor.native import from_native_record, from_native_schema, to_native_schema
-from engine.executor.operators import SelectExecution, execute_source
+from engine.executor.operators import SelectExecution, apply_limit, execute_source
 from engine.executor.predicates import equality_key, matches, range_values
 from engine.parser.ast import AggregateFunction, OrderDirection
 from engine.parser.bound_ast import (
@@ -104,10 +104,12 @@ def execute_external_select(
     pipeline = _candidate_pipeline(database, native, plan, source, options)
     try:
         if statement.group_by is not None:
-            return _execute_grouped(native, statement.schema, plan, pipeline, options)
-        if statement.order_by is None:
-            raise ValueError("el pipeline externo necesita ORDER BY o GROUP BY")
-        return _execute_ordered(native, statement.schema, plan, pipeline, options)
+            execution = _execute_grouped(native, statement.schema, plan, pipeline, options)
+        else:
+            if statement.order_by is None:
+                raise ValueError("el pipeline externo necesita ORDER BY o GROUP BY")
+            execution = _execute_ordered(native, statement.schema, plan, pipeline, options)
+        return apply_limit(execution, statement.limit, statement.schema.table_name)
     finally:
         pipeline.finalize()
 

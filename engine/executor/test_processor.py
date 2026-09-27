@@ -828,6 +828,33 @@ def test_select_pasa_por_semantica_planner_ejecutor(
     assert result.plan.time_ms >= result.plan.root.subtree_time_ms()
 
 
+@pytest.mark.parametrize(
+    ("limit", "expected"),
+    [
+        (0, ()),
+        (2, ((1, "Ada"), (2, "Grace"))),
+        (20, ((1, "Ada"), (2, "Grace"), (3, "Edsger"))),
+    ],
+)
+def test_limit_corta_la_salida_y_admite_un_maximo_mayor_que_las_filas(
+    processor: QueryProcessor,
+    limit: int,
+    expected: tuple[tuple[object, ...], ...],
+) -> None:
+    processor.execute("CREATE TABLE datos (id INT PRIMARY KEY, nombre VARCHAR(20)) USING HEAP")
+    processor.execute("INSERT INTO datos VALUES (1, 'Ada')")
+    processor.execute("INSERT INTO datos VALUES (2, 'Grace')")
+    processor.execute("INSERT INTO datos VALUES (3, 'Edsger')")
+
+    result = processor.execute(f"SELECT * FROM datos LIMIT {limit}")
+
+    assert result.rows == expected
+    assert result.plan is not None
+    assert [step.op.value for step in result.plan.root.walk()] == ["scan", "limit"]
+    assert result.plan.root.structure.value == "memory"
+    assert result.plan.root.stats.records_returned == len(expected)
+
+
 def test_select_por_indice_secundario_hace_search_y_fetch(
     database: _FakeDatabase,
     processor: QueryProcessor,

@@ -136,6 +136,23 @@ def test_order_by_pequeno_se_resuelve_en_memoria_sin_escrituras(tmp_path) -> Non
     _assert_temp_dir_is_clean(temp_dir)
 
 
+def test_limit_corta_despues_de_order_by(tmp_path) -> None:
+    database = quipudb.Database(tmp_path / "catalogo.txt")
+    temp_dir = tmp_path / "external"
+    processor, inserted = _create_order_data(database, temp_dir)
+
+    result = processor.execute(
+        "SELECT id, prioridad FROM ordenes ORDER BY prioridad DESC LIMIT 3"
+    )
+
+    assert result.rows == tuple(sorted(inserted, key=lambda row: row[1], reverse=True)[:3])
+    assert _ops(result) == ["scan", "sort", "project", "limit"]
+    limit = _step(result, "limit")
+    assert limit.structure.value == "memory"
+    assert limit.stats.records_returned == 3
+    _assert_temp_dir_is_clean(temp_dir)
+
+
 def test_group_by_calcula_todos_los_agregados_y_reordena_proyecciones(
     tmp_path,
 ) -> None:
@@ -193,6 +210,25 @@ def test_group_by_se_puede_ordenar_por_su_clave_en_descendente(tmp_path) -> None
     assert sort.structure.value == "external_sort"
     assert sort.column == "region"
     assert "desc" in sort.detail.lower()
+    _assert_temp_dir_is_clean(temp_dir)
+
+
+def test_limit_corta_despues_de_agrupar_y_ordenar(tmp_path) -> None:
+    database = quipudb.Database(tmp_path / "catalogo.txt")
+    temp_dir = tmp_path / "external"
+    processor = _create_sales_data(database, temp_dir)
+
+    result = processor.execute(
+        "SELECT region, COUNT(*) FROM ventas "
+        "GROUP BY region ORDER BY region LIMIT 2"
+    )
+
+    assert result.rows == (("este", 1), ("norte", 3))
+    assert _ops(result) == ["scan", "group", "sort", "project", "limit"]
+    limit = _step(result, "limit")
+    assert limit.structure.value == "memory"
+    assert limit.stats.records_examined == 2
+    assert limit.stats.records_returned == 2
     _assert_temp_dir_is_clean(temp_dir)
 
 

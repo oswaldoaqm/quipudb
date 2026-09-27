@@ -219,6 +219,8 @@ Reglas mínimas:
 - `WHERE` admite una condición simple: `=`, `<`, `<=`, `>`, `>=` o `BETWEEN` inclusivo.
 - `DELETE` exige `WHERE`; no se habilitará borrado total implícito.
 - `ORDER BY` admite una sola columna y `ASC` o `DESC`.
+- `LIMIT n` corta la salida final despues de `ORDER BY`; desde #127 exige un
+  entero no negativo.
 - `GROUP BY` admite una sola columna y `COUNT(*)`, `SUM`, `MIN`, `MAX` y `AVG`.
 - `CREATE INDEX nombre ON tabla (columna) USING BPLUS|HASH` crea indices secundarios.
 - `EXPLAIN [ANALYZE] SELECT` devuelve la ruta prevista o sus medidas reales.
@@ -251,6 +253,7 @@ adicional requiere actualizar primero este plan y el ADR.
 > issues #107 y #108 agregaron `CREATE INDEX` y `EXPLAIN [ANALYZE] SELECT`.
 > El issue #126 agrego el tipo `POINT` y su literal de coordenadas; la
 > indexacion y los operadores espaciales siguen en su fase propia.
+> El issue #127 agrego `LIMIT n` y su paso `limit` en memoria al plan.
 
 ## Issues verificados y orden de entrega
 

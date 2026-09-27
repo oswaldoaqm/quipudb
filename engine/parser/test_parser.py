@@ -306,6 +306,50 @@ def test_order_by_admite_direccion_opcional(
     assert statement.order_by.direction is direction
 
 
+def test_limit_se_parsea_despues_de_order_by_y_extiende_el_span() -> None:
+    sql = "SELECT id FROM alumnos ORDER BY promedio DESC LIMIT 25"
+
+    statement = parse_sql(sql)
+
+    assert isinstance(statement, SelectStatement)
+    assert statement.order_by is not None
+    assert statement.limit is not None
+    assert statement.limit.value == 25
+    assert sql[statement.limit.span.start : statement.limit.span.end] == "LIMIT 25"
+    assert statement.span.end == len(sql)
+
+
+@pytest.mark.parametrize(
+    ("sql", "fragment", "message"),
+    [
+        ("SELECT * FROM alumnos LIMIT -1", "-1", "no admite valores negativos"),
+        ("SELECT * FROM alumnos LIMIT 1.5", "1.5", "entero no negativo"),
+        ("SELECT * FROM alumnos LIMIT muchos", "muchos", "entero no negativo"),
+        ("SELECT * FROM alumnos LIMIT", "", "entero no negativo"),
+    ],
+)
+def test_limit_invalido_reporta_el_valor_exacto(
+    sql: str,
+    fragment: str,
+    message: str,
+) -> None:
+    with pytest.raises(SQLParseError, match=message) as caught:
+        parse_sql(sql)
+
+    assert sql[caught.value.span.start : caught.value.span.end] == fragment
+
+
+def test_limit_invalido_conserva_linea_y_columna() -> None:
+    sql = "SELECT * FROM alumnos\nLIMIT 1.5"
+
+    with pytest.raises(SQLParseError, match="entero no negativo") as caught:
+        parse_sql(sql)
+
+    assert caught.value.line == 2
+    assert caught.value.column == 7
+    assert sql[caught.value.span.start : caught.value.span.end] == "1.5"
+
+
 def test_delete_exige_y_parsea_where() -> None:
     statement = parse_sql("DELETE FROM alumnos WHERE codigo = 7;")
 
@@ -538,7 +582,6 @@ def test_script_vacio_se_rechaza_con_span_en_eof() -> None:
         ("UPDATE alumnos SET nombre = 'Ana'", "UPDATE"),
         ("SELECT * FROM alumnos WHERE id = 1 AND activo = TRUE", "AND"),
         ("INSERT INTO alumnos VALUES (NULL)", "NULL"),
-        ("SELECT * FROM alumnos LIMIT 1", "LIMIT"),
         ("SELECT update FROM alumnos", "UPDATE"),
         ("CREATE TABLE null (id INT)", "NULL"),
         ("SELECT * FROM alumnos WHERE or = 1", "OR"),

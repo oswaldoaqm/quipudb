@@ -45,6 +45,7 @@ class TokenKind(StrEnum):
     BY = "BY"
     ASC = "ASC"
     DESC = "DESC"
+    LIMIT = "LIMIT"
     GROUP = "GROUP"
     COUNT = "COUNT"
     SUM = "SUM"

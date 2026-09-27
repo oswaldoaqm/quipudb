@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest
 
-from engine.parser import SelectStatement, Wildcard, parse_sql
+from engine.parser import Limit, SelectStatement, Wildcard, parse_sql
 from engine.parser.ast import AggregateFunction, ComparisonOperator, OrderDirection, SqlTypeName
 from engine.parser.bound_ast import (
     BoundAggregateCall,
@@ -272,6 +272,25 @@ def test_bind_select_resuelve_order_by_sin_exigir_que_se_proyecte() -> None:
     assert bound.order_by.direction is OrderDirection.DESC
     assert bound.order_by.span == statement.order_by.span  # type: ignore[union-attr]
     assert bound.group_by is None
+
+
+def test_bind_select_conserva_limit_como_entero_no_negativo() -> None:
+    statement = _select("SELECT nombre FROM datos LIMIT 0")
+
+    bound = bind_select(statement, _schema())
+
+    assert bound.limit == 0
+
+
+def test_bind_select_defiende_limit_negativo_en_ast_manual() -> None:
+    statement = _select("SELECT * FROM datos LIMIT 1")
+    assert statement.limit is not None
+    invalid = replace(statement, limit=Limit(-1, statement.limit.span))
+
+    with pytest.raises(SQLSemanticError, match="entero no negativo") as caught:
+        bind_select(invalid, _schema())
+
+    assert caught.value.span == statement.limit.span
 
 
 def test_bind_select_agrupado_conserva_orden_sql_y_resuelve_todos_los_agregados() -> None:
