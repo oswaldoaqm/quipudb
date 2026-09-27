@@ -260,6 +260,7 @@ TEST(Tipos, CompareOrdenaCadaTipo) {
   EXPECT_LT(compare(Value{std::string{"ana"}}, Value{std::string{"beto"}}), 0);
   EXPECT_LT(compare(Value{false}, Value{true}), 0);
   EXPECT_LT(compare(Value{Date{1}}, Value{Date{2}}), 0);
+  EXPECT_LT(compare(Value{GeoPoint{-12.1, -77.0}}, Value{GeoPoint{-12.0, -77.0}}), 0);
 }
 
 TEST(Tipos, CompareRechazaTiposDistintos) {
@@ -275,6 +276,7 @@ TEST(Tipos, TypeOfCoincideConDataType) {
   EXPECT_EQ(type_of(Value{"literal"}), DataType::Varchar);  // no cae en bool (C++20)
   EXPECT_EQ(type_of(Value{true}), DataType::Bool);
   EXPECT_EQ(type_of(Value{Date{}}), DataType::Date);
+  EXPECT_EQ(type_of(Value{GeoPoint{}}), DataType::Point);
 }
 
 TEST(Esquema, TamanoDeRegistroEsFijo) {
@@ -320,6 +322,16 @@ TEST(Esquema, RechazaUnNaNComoValor) {
   EXPECT_NO_THROW(s.validate(Record{1, std::numeric_limits<double>::infinity()}))
       << "el infinito si tiene lugar en el orden";
   EXPECT_THROW(s.validate(Record{1, std::nan("")}), InvalidRecord);
+}
+
+TEST(Esquema, ValidaElDominioGeograficoDePoint) {
+  const Schema s{.table_name = "lugares",
+                 .columns = {{"id", DataType::Int}, {"ubicacion", DataType::Point}},
+                 .key_column = 0};
+  EXPECT_NO_THROW(s.validate(Record{1, GeoPoint{-12.0464, -77.0428}}));
+  EXPECT_THROW(s.validate(Record{1, GeoPoint{-90.01, 0.0}}), InvalidRecord);
+  EXPECT_THROW(s.validate(Record{1, GeoPoint{0.0, 180.01}}), InvalidRecord);
+  EXPECT_THROW(s.validate(Record{1, GeoPoint{std::nan(""), 0.0}}), InvalidRecord);
 }
 
 TEST(Esquema, RechazaUnTextoConByteNuloAdentro) {

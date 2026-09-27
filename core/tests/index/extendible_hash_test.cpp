@@ -278,6 +278,22 @@ TEST_F(HashTest, CeroYMenosCeroSonLaMismaClaveYVanAlMismoBucket) {
   EXPECT_EQ(h.size(), 0u);
 }
 
+TEST_F(HashTest, PointNormalizaCeroYMenosCeroEnSusDosCoordenadas) {
+  const Column ubicacion{"ubicacion", DataType::Point};
+  const Value positivo{GeoPoint{0.0, -77.0}};
+  const Value negativo{GeoPoint{-0.0, -77.0}};
+
+  EXPECT_EQ(compare(positivo, negativo), 0);
+  EXPECT_EQ(ExtendibleHash::hash_of(ubicacion, positivo),
+            ExtendibleHash::hash_of(ubicacion, negativo));
+
+  ExtendibleHash h(dir_ / "ubicacion.hash", ubicacion, kPayload, 256, 4);
+  h.insert(positivo, carga(1));
+  h.insert(negativo, carga(2));
+  EXPECT_EQ(h.find(positivo).size(), 2u);
+  EXPECT_EQ(h.find(negativo).size(), 2u);
+}
+
 TEST_F(HashTest, IndexaTambienUnaColumnaDeTexto) {
   const Column carrera{"carrera", DataType::Varchar, 12};
   ExtendibleHash h(dir_ / "carrera.hash", carrera, kPayload, 512, 4);

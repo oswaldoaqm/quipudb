@@ -30,6 +30,7 @@ from engine.parser.ast import (
     IntegerLiteral,
     OrderBy,
     OrderDirection,
+    PointLiteral,
     SelectStatement,
     SqlType,
     SqlTypeName,
@@ -142,6 +143,7 @@ def test_ast_representa_literales_agregados_rangos_y_agrupacion() -> None:
         StringLiteral("O'Brien", span(0, 10)),
         BooleanLiteral(True, span(0, 4)),
         DateLiteral(date(2026, 9, 13), span(0, 17)),
+        PointLiteral(-12.0464, -77.0428, span(6, 14), span(16, 24), span(0, 25)),
     )
     aggregate = AggregateCall(AggregateFunction.AVG, column, span(3, 16, 4))
     between = BetweenCondition(column, literals[0], literals[1], span(7, 33, 8))
@@ -150,3 +152,4 @@ def test_ast_representa_literales_agregados_rangos_y_agrupacion() -> None:
     assert aggregate.argument == column
     assert between.lower.value == -2
     assert group.column.name.name == "promedio"
+    assert literals[-1].latitude == -12.0464

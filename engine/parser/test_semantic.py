@@ -11,6 +11,7 @@ from engine.parser.ast import (
     DoubleLiteral,
     Identifier,
     InsertStatement,
+    PointLiteral,
     SqlType,
     SqlTypeName,
     StorageKind,
@@ -20,6 +21,7 @@ from engine.parser.bound_ast import (
     BoundCreateTable,
     BoundInsertStatement,
     BoundSchema,
+    PointValue,
 )
 from engine.parser.errors import SQLSemanticError
 from engine.parser.semantic import bind_create_table, bind_insert
@@ -52,6 +54,7 @@ def _one_column_schema(
         (SqlTypeName.VARCHAR, 17, 17),
         (SqlTypeName.BOOL, None, 1),
         (SqlTypeName.DATE, None, 4),
+        (SqlTypeName.POINT, None, 16),
     ],
 )
 def test_bound_column_refleja_tamano_del_core(
@@ -394,6 +397,7 @@ def test_varchar_rechaza_texto_que_no_se_puede_codificar_como_utf8() -> None:
         (SqlTypeName.VARCHAR, 8, "1", "INT"),
         (SqlTypeName.BOOL, None, "1", "INT"),
         (SqlTypeName.DATE, None, "'2026-09-13'", "VARCHAR"),
+        (SqlTypeName.POINT, None, "'Lima'", "VARCHAR"),
     ],
 )
 def test_bind_insert_rechaza_tipo_incompatible_y_senala_literal(
@@ -427,3 +431,26 @@ def test_error_semantico_conserva_source_y_marca_literal_multilinea() -> None:
 def test_bound_column_varchar_incompleto_falla_de_forma_explicita() -> None:
     with pytest.raises(ValueError, match="longitud"):
         _ = BoundColumn("texto", SqlTypeName.VARCHAR, None).byte_size
+
+
+def test_bind_insert_convierte_point_al_valor_semantico() -> None:
+    statement = _insert("INSERT INTO datos VALUES (POINT(-12.0464, -77.0428))")
+
+    bound = bind_insert(statement, _one_column_schema(SqlTypeName.POINT))
+
+    assert bound.values == (PointValue(-12.0464, -77.0428),)
+
+
+def test_bind_insert_defiende_point_fuera_de_rango_en_ast_manual() -> None:
+    statement = _insert("INSERT INTO datos VALUES (POINT(0, 0))")
+    point = statement.values[0]
+    assert isinstance(point, PointLiteral)
+    invalid = replace(point, latitude=91.0)
+
+    with pytest.raises(SQLSemanticError, match="latitud") as caught:
+        bind_insert(
+            replace(statement, values=(invalid,)),
+            _one_column_schema(SqlTypeName.POINT),
+        )
+
+    assert caught.value.span == point.latitude_span

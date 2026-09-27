@@ -91,6 +91,28 @@ def test_los_cinco_tipos_vuelven_como_llegaron(db):
     assert fila[4].days == 19000
 
 
+def test_point_cruza_el_binding_y_persiste(db):
+    schema = quipudb.Schema(
+        "lugares",
+        [
+            quipudb.Column("id", quipudb.DataType.INT),
+            quipudb.Column("ubicacion", quipudb.DataType.POINT),
+        ],
+        0,
+    )
+    table = db.create_table(schema, quipudb.kind.HEAP)
+    point = quipudb.GeoPoint(-12.0464, -77.0428)
+
+    table.insert([1, point])
+
+    (row,) = table.search(1)
+    assert row[1] == point
+    assert row[1].latitude == pytest.approx(-12.0464)
+    assert row[1].longitude == pytest.approx(-77.0428)
+    with pytest.raises(quipudb.InvalidRecord, match="latitud"):
+        table.insert([2, quipudb.GeoPoint(91.0, 0.0)])
+
+
 def test_un_entero_que_no_entra_en_int32_se_denuncia(db):
     """Truncar en silencio dejaria dos claves distintas colapsadas en una."""
     t = db.create_table(esquema_alumnos(), quipudb.kind.HEAP)

@@ -7,7 +7,7 @@ import pytest
 from engine.api.service import describe_table, to_error, to_response
 from engine.executor.result import QueryResult
 from engine.parser.ast import SqlTypeName
-from engine.parser.bound_ast import BoundColumn, BoundSchema
+from engine.parser.bound_ast import BoundColumn, BoundSchema, PointValue
 from engine.parser.errors import (
     SQLLexError,
     SQLParseError,
@@ -138,6 +138,20 @@ def test_las_filas_viajan_como_listas_en_el_orden_de_columns() -> None:
     assert cuerpo.column_types == [SqlTypeName.VARCHAR, SqlTypeName.DOUBLE]
     assert cuerpo.rows == [["ana", 15.6], ["bruno", 16.2]]
     assert cuerpo.plan is None
+
+
+def test_un_point_se_serializa_con_coordenadas_nominales() -> None:
+    resultado = QueryResult(
+        columns=("ubicacion",),
+        column_types=(SqlTypeName.POINT,),
+        rows=((PointValue(-12.0464, -77.0428),),),
+    )
+
+    cuerpo = to_response(resultado)
+
+    assert cuerpo.model_dump(mode="json")["rows"] == [
+        [{"latitude": -12.0464, "longitude": -77.0428}]
+    ]
 
 
 def test_una_sentencia_sin_filas_informa_en_affected_rows() -> None:

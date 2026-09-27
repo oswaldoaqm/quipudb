@@ -60,6 +60,24 @@ def test_bind_create_index_rechaza_columna_inexistente() -> None:
     assert caught.value.span == statement.column.span
 
 
+def test_bind_create_index_rechaza_point_hasta_disponer_de_rtree_sql() -> None:
+    source = "CREATE INDEX por_ubicacion ON lugares (ubicacion) USING BPLUS"
+    statement = _create_index(source)
+    schema = BoundSchema(
+        "lugares",
+        (
+            BoundColumn("id", SqlTypeName.INT, None),
+            BoundColumn("ubicacion", SqlTypeName.POINT, None),
+        ),
+        0,
+    )
+
+    with pytest.raises(SQLSemanticError, match="requiere un indice R-Tree") as caught:
+        bind_create_index(statement, schema, source)
+
+    assert caught.value.span == statement.column.span
+
+
 @pytest.mark.parametrize(
     "source",
     [

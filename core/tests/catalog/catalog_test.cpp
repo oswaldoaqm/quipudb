@@ -126,6 +126,25 @@ TEST_F(CatalogTest, PersisteYSeRecargaIgual) {
   EXPECT_TRUE(k.indexes.empty());
 }
 
+TEST_F(CatalogTest, PersisteUnaColumnaPoint) {
+  const Schema lugares{
+      .table_name = "lugares",
+      .columns = {{"id", DataType::Int}, {"ubicacion", DataType::Point}},
+      .key_column = 0,
+  };
+  {
+    Catalog c(path_);
+    c.create_table(lugares, kind::kHeap);
+  }
+
+  Catalog reabierto(path_);
+  const auto& schema = reabierto.table("lugares").schema;
+  ASSERT_EQ(schema.columns.size(), 2u);
+  EXPECT_EQ(schema.columns[1].type, DataType::Point);
+  EXPECT_EQ(schema.columns[1].byte_size(), 16u);
+  EXPECT_EQ(schema.record_size(), 20u);
+}
+
 TEST_F(CatalogTest, ElArchivoEsLegible) {
   Catalog c(path_);
   c.create_table(cursos(), kind::kHeap);
@@ -170,6 +189,16 @@ TEST_F(CatalogTest, RechazaLoQueNoDebeEntrar) {
                SchemaError);
   c.create_index("alumnos", "ix", "promedio", kind::kBPlusUnclustered);
   EXPECT_THROW(c.create_index("alumnos", "ix", "nombre", kind::kBPlusUnclustered), SchemaError);
+
+  const Schema lugares{
+      .table_name = "lugares",
+      .columns = {{"id", DataType::Int}, {"ubicacion", DataType::Point}},
+      .key_column = 0,
+  };
+  c.create_table(lugares, kind::kHeap);
+  EXPECT_THROW(c.create_index("lugares", "ix_point", "ubicacion", kind::kExtendibleHash),
+               SchemaError);
+  EXPECT_TRUE(c.table("lugares").indexes.empty());
 }
 
 TEST_F(CatalogTest, ValidaElEsquema) {

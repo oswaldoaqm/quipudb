@@ -12,7 +12,7 @@ from engine.executor.native import (
     to_native_value,
 )
 from engine.parser.ast import SqlTypeName
-from engine.parser.bound_ast import BoundColumn, BoundSchema
+from engine.parser.bound_ast import BoundColumn, BoundSchema, PointValue
 
 
 @dataclass(frozen=True)
@@ -20,8 +20,15 @@ class _Date:
     days: int
 
 
+@dataclass(frozen=True)
+class _GeoPoint:
+    latitude: float
+    longitude: float
+
+
 class _Native:
     Date = _Date
+    GeoPoint = _GeoPoint
 
 
 def _column(data_type: SqlTypeName, length: int | None = None) -> BoundColumn:
@@ -54,6 +61,15 @@ def test_copia_los_otros_tipos_sin_confundir_bool_con_int() -> None:
     assert row == (7, 1.5, "Ada", True)
     assert type(row[0]) is int
     assert type(row[3]) is bool
+
+
+def test_convierte_point_en_ambas_direcciones() -> None:
+    value = PointValue(-12.0464, -77.0428)
+    native_value = to_native_value(value, _Native)
+    schema = BoundSchema("lugares", (_column(SqlTypeName.POINT),), 0)
+
+    assert native_value == _GeoPoint(-12.0464, -77.0428)
+    assert from_native_record([native_value], schema) == (value,)
 
 
 def test_rechaza_registro_nativo_con_ancho_incoherente() -> None:
@@ -106,3 +122,10 @@ def test_limites_date_usan_el_tipo_nativo_y_evitan_overflow() -> None:
 
     assert lower == _Date(-(2**31))
     assert upper == _Date(2**31 - 1)
+
+
+def test_limites_point_respetan_latitud_y_longitud() -> None:
+    lower, upper = native_range_bounds(_column(SqlTypeName.POINT), _Native)
+
+    assert lower == _GeoPoint(-90.0, -180.0)
+    assert upper == _GeoPoint(90.0, 180.0)
