@@ -89,7 +89,41 @@ def execute_select(
             children=[root],
         )
 
-    return SelectExecution(columns, tipos, rows, root)
+    return apply_limit(
+        SelectExecution(columns, tipos, rows, root),
+        statement.limit,
+        table_name,
+    )
+
+
+def apply_limit(
+    execution: SelectExecution,
+    limit: int | None,
+    table_name: str,
+) -> SelectExecution:
+    """Corta el resultado final y agrega el paso ``limit`` medido al plan."""
+
+    if limit is None:
+        return execution
+    measured = measure_memory(
+        lambda: execution.rows[:limit],
+        records_examined=min(limit, len(execution.rows)),
+        records_returned=len,
+    )
+    return SelectExecution(
+        execution.columns,
+        execution.column_types,
+        measured.value,
+        Step(
+            op=Op.LIMIT,
+            structure=Structure.MEMORY,
+            table=table_name,
+            detail=f"maximo {limit} filas",
+            stats=measured.stats,
+            time_ms=measured.time_ms,
+            children=[execution.root],
+        ),
+    )
 
 
 def execute_source(
@@ -409,4 +443,4 @@ def _condition_text(condition: BoundCondition, source: str) -> str:
     return source[condition.span.start : condition.span.end]
 
 
-__all__ = ["SelectExecution", "execute_select", "execute_source"]
+__all__ = ["SelectExecution", "apply_limit", "execute_select", "execute_source"]

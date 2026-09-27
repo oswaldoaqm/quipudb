@@ -84,6 +84,15 @@ def explain_select(
             children=[root],
         )
 
+    if statement.limit is not None:
+        root = Step(
+            op=Op.LIMIT,
+            structure=Structure.MEMORY,
+            table=statement.schema.table_name,
+            detail=f"maximo {statement.limit} filas",
+            children=[root],
+        )
+
     return Plan(query=query, root=root, time_ms=planning_ms)
 
 

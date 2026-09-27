@@ -402,6 +402,15 @@ def bind_select(
         )
 
     where = _bind_condition(statement.where, scope, source)
+    limit = None
+    if statement.limit is not None:
+        if (
+            not isinstance(statement.limit.value, int)
+            or isinstance(statement.limit.value, bool)
+            or statement.limit.value < 0
+        ):
+            _fail("LIMIT requiere un entero no negativo", statement.limit.span, source)
+        limit = statement.limit.value
     return BoundSelectStatement(
         source=bound_source,
         projections=projections,
@@ -409,6 +418,7 @@ def bind_select(
         where=where,
         group_by=group_by,
         order_by=order_by,
+        limit=limit,
         span=statement.span,
     )
 

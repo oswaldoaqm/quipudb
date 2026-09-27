@@ -231,6 +231,7 @@ class BoundSelectStatement:
     span: Span
     group_by: BoundGroupBy | None = None
     order_by: BoundOrderBy | None = None
+    limit: int | None = None
 
     @property
     def schema(self) -> BoundSchema:
