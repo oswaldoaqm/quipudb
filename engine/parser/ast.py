@@ -171,6 +171,12 @@ class OrderBy:
 
 
 @dataclass(frozen=True, slots=True)
+class Limit:
+    value: int
+    span: Span
+
+
+@dataclass(frozen=True, slots=True)
 class GroupBy:
     column: ColumnReference
     span: Span
@@ -236,6 +242,7 @@ class SelectStatement:
     group_by: GroupBy | None
     order_by: OrderBy | None
     span: Span
+    limit: Limit | None = None
 
 
 @dataclass(frozen=True, slots=True)

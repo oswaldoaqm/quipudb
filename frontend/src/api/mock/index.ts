@@ -63,7 +63,7 @@ const LATENCIA_MS = 150;
  */
 const FUERA_DEL_SUBCONJUNTO = [
   "ALTER", "AS", "COMMIT", "DISTINCT", "EXCEPT", "HAVING", "IN", "INTERSECT",
-  "IS", "LIKE", "LIMIT", "NOT", "NULL", "OFFSET", "OR", "ROLLBACK", "UNION",
+  "IS", "LIKE", "NOT", "NULL", "OFFSET", "OR", "ROLLBACK", "UNION",
   "UPDATE", "VIEW",
 ];
 
@@ -141,6 +141,27 @@ export function detectarError(sql: string): QueryError | null {
       kind: "unsupported",
       ...ubicarEn(sql, reservada.index, reservada[0].length),
     };
+  }
+
+  const limit = /\bLIMIT\b/i.exec(fuera);
+  if (limit) {
+    let inicio = limit.index + limit[0].length;
+    while (/\s/.test(fuera[inicio] ?? "")) inicio += 1;
+    const token = /^[^\s;]+/.exec(fuera.slice(inicio))?.[0] ?? "";
+    if (/^-\d+$/.test(token)) {
+      return {
+        error: "LIMIT no admite valores negativos",
+        kind: "parse",
+        ...ubicarEn(sql, inicio, token.length),
+      };
+    }
+    if (!/^\d+$/.test(token)) {
+      return {
+        error: "LIMIT requiere un entero no negativo",
+        kind: "parse",
+        ...ubicarEn(sql, inicio, token.length),
+      };
+    }
   }
 
   const desde = TABLA_DEL_FROM.exec(fuera);

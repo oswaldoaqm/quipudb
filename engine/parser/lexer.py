@@ -39,6 +39,7 @@ _KEYWORDS = {
         TokenKind.BY,
         TokenKind.ASC,
         TokenKind.DESC,
+        TokenKind.LIMIT,
         TokenKind.GROUP,
         TokenKind.COUNT,
         TokenKind.SUM,

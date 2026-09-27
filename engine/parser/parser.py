@@ -30,6 +30,7 @@ from engine.parser.ast import (
     InsertStatement,
     IntegerLiteral,
     JoinRef,
+    Limit,
     Literal,
     OrderBy,
     OrderDirection,
@@ -78,7 +79,6 @@ _UNSUPPORTED_WORDS = {
     "INTERSECT",
     "IS",
     "LIKE",
-    "LIMIT",
     "NOT",
     "NULL",
     "OFFSET",
@@ -326,6 +326,7 @@ class _Parser:
         where = None
         group_by = None
         order_by = None
+        limit = None
         end_span = from_source.span
 
         if self._match(TokenKind.WHERE):
@@ -337,6 +338,9 @@ class _Parser:
         if self._match(TokenKind.ORDER):
             order_by = self._order_by(self._previous())
             end_span = order_by.span
+        if self._match(TokenKind.LIMIT):
+            limit = self._limit(self._previous())
+            end_span = limit.span
 
         return SelectStatement(
             projections=tuple(projections),
@@ -345,6 +349,7 @@ class _Parser:
             group_by=group_by,
             order_by=order_by,
             span=combine_spans(start.span, end_span),
+            limit=limit,
         )
 
     def _explain(self, start: Token) -> ExplainStatement:
@@ -463,6 +468,16 @@ class _Parser:
             direction = OrderDirection.DESC
             end_span = self._previous().span
         return OrderBy(column, direction, combine_spans(start.span, end_span))
+
+    def _limit(self, start: Token) -> Limit:
+        value = self._peek()
+        if value.kind is not TokenKind.INTEGER:
+            raise self._error(value, "LIMIT requiere un entero no negativo")
+        self._advance()
+        parsed = int(value.value)
+        if parsed < 0:
+            raise self._error(value, "LIMIT no admite valores negativos")
+        return Limit(parsed, combine_spans(start.span, value.span))
 
     def _delete(self, start: Token) -> DeleteStatement:
         self._expect(TokenKind.FROM, "se esperaba FROM despues de DELETE")

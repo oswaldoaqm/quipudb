@@ -52,6 +52,7 @@ export interface ConsultaLeida {
   tabla: string;
   where: Condicion | null;
   orden: { columna: string; descendente: boolean } | null;
+  limit: number | null;
 }
 
 /**
@@ -84,6 +85,7 @@ const ORDEN = new RegExp(
   `\\bORDER\\s+BY\\s+(${REFERENCIA})(?:\\s+(ASC|DESC))?`,
   "i",
 );
+const LIMITE = /\bLIMIT\s+(\d+)\b/i;
 
 function valorDe(texto: string): CellValue {
   if (texto.startsWith("'")) return texto.slice(1, -1);
@@ -131,6 +133,7 @@ export function leerConsulta(sql: string): ConsultaLeida | null {
   const lista = cabeza[1].trim();
   const orden = ORDEN.exec(sql);
   const agrupa = AGRUPA.exec(sql);
+  const limite = LIMITE.exec(sql);
 
   const items = lista === "*"
     ? []
@@ -166,6 +169,7 @@ export function leerConsulta(sql: string): ConsultaLeida | null {
           descendente: /desc/i.test(orden[2] ?? ""),
         }
       : null,
+    limit: limite ? Number(limite[1]) : null,
   };
 }
 
@@ -367,6 +371,28 @@ function armarPlan(sql: string, raiz: Step): Plan {
   };
 }
 
+function aplicarLimit(
+  filas: CellValue[][],
+  limit: number | null,
+  raiz: Step,
+  tabla: string,
+): { filas: CellValue[][]; raiz: Step } {
+  if (limit === null) return { filas, raiz };
+  const limitadas = filas.slice(0, limit);
+  return {
+    filas: limitadas,
+    raiz: paso(
+      "limit",
+      "memory",
+      tabla,
+      null,
+      `maximo ${limit} filas`,
+      stats(0, Math.min(limit, filas.length), limitadas.length),
+      [raiz],
+    ),
+  };
+}
+
 /**
  * Suma compensada de Neumaier, la misma que usa `ExternalGroupBy` del core.
  *
@@ -537,6 +563,13 @@ export function ejecutar(
       );
     }
 
+    ({ filas, raiz } = aplicarLimit(
+      filas,
+      consulta.limit,
+      raiz,
+      tabla.info.name,
+    ));
+
     return {
       columns: agrupacion.columns,
       column_types: agrupacion.tipos,
@@ -587,6 +620,13 @@ export function ejecutar(
       [raiz],
     );
   }
+
+  ({ filas, raiz } = aplicarLimit(
+    filas,
+    consulta.limit,
+    raiz,
+    tabla.info.name,
+  ));
 
   return {
     columns,
