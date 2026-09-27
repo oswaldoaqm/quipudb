@@ -8,7 +8,9 @@
  */
 
 import { MotorError } from "@/api/errors";
+import { cumple, leerCondicion } from "@/api/mock/consulta";
 import { buscarTabla, type TablaFalsa } from "@/api/mock/datos";
+import { abortarTransaccion, registrarDeshacer } from "@/api/mock/transaccion";
 import { ubicarEn } from "@/api/mock/ubicacion";
 import type { CellValue, ColumnInfo } from "@/api/types";
 
@@ -19,7 +21,85 @@ const INT32_MIN = -2_147_483_648;
 const INT32_MAX = 2_147_483_647;
 
 export function esInsert(sql: string): boolean {
-  return /^\s*INSERT\s+INTO\b/i.test(sql);
+  return /^\s*INSERT\b/i.test(sql);
+}
+
+export function esDelete(sql: string): boolean {
+  return /^\s*DELETE\b/i.test(sql);
+}
+
+const DELETE_FROM = /^\s*DELETE\s+FROM\s+([a-zA-Z_]\w*)/i;
+
+/** Borra las filas que cumplen la condicion y devuelve cuantas quito. */
+export function ejecutarDelete(sql: string): number {
+  const partes = DELETE_FROM.exec(sql);
+  if (!partes) {
+    throw new MotorError({
+      error: "se esperaba FROM despues de DELETE",
+      kind: "parse",
+      ...ubicarEn(sql, 0, 6),
+    });
+  }
+
+  const nombre = partes[1];
+  const posicionTabla = sql.toLowerCase().indexOf(nombre.toLowerCase());
+  const tabla = buscarTabla(nombre);
+
+  if (!tabla) {
+    throw new MotorError({
+      error: `la tabla '${nombre}' no existe`,
+      kind: "semantic",
+      ...ubicarEn(sql, posicionTabla, nombre.length),
+    });
+  }
+
+  // El parser lo exige: un DELETE sin condicion vaciaria la tabla entera.
+  const condicion = leerCondicion(sql);
+  if (!condicion) {
+    throw new MotorError({
+      error: "DELETE requiere una clausula WHERE",
+      kind: "parse",
+      ...ubicarEn(sql, 0, sql.trim().length),
+    });
+  }
+
+  const posicionColumna = tabla.info.columns.findIndex(
+    (c) => c.name === condicion.columna,
+  );
+  if (posicionColumna < 0) {
+    throw new MotorError({
+      // "en la consulta sobre" y no "en la tabla": el DELETE resuelve su
+      // WHERE con el mismo `_resolve_column` que un SELECT, y ese es el texto
+      // que usa cuando la referencia no lleva calificador.
+      error: `la columna '${condicion.columna}' no existe en la consulta sobre '${tabla.info.name}'`,
+      kind: "semantic",
+      ...ubicarEn(
+        sql,
+        sql.toLowerCase().indexOf(condicion.columna),
+        condicion.columna.length,
+      ),
+    });
+  }
+
+  const quedan = tabla.filas.filter(
+    (fila) => !cumple(fila[posicionColumna], condicion),
+  );
+  const borradas = tabla.filas.length - quedan.length;
+  const antes = [...tabla.filas];
+
+  tabla.filas.length = 0;
+  tabla.filas.push(...quedan);
+  tabla.info.record_count = tabla.filas.length;
+
+  // Guarda las filas de antes por si la transaccion se aborta. Es una copia
+  // del arreglo, no de cada fila: las filas no se modifican en su sitio.
+  registrarDeshacer(() => {
+    tabla.filas.length = 0;
+    tabla.filas.push(...antes);
+    tabla.info.record_count = tabla.filas.length;
+  });
+
+  return borradas;
 }
 
 /** Separa por comas sin partir las que van dentro de una cadena. */
@@ -71,7 +151,13 @@ function convertir(
     if (recibido !== "VARCHAR") {
       falla(`se esperaba VARCHAR y se recibio ${recibido}`);
     }
-    return texto.slice(1, -1);
+    const contenido = texto.slice(1, -1);
+    // El motor mide en bytes UTF-8, no en caracteres: una tilde ocupa dos.
+    const bytes = new TextEncoder().encode(contenido).length;
+    if (columna.size !== null && bytes > columna.size) {
+      falla(`el texto ocupa ${bytes} bytes y supera VARCHAR(${columna.size})`);
+    }
+    return contenido;
   }
 
   if (esperado === "BOOL") {
@@ -101,12 +187,20 @@ function convertir(
 
 /** Inserta la fila y devuelve cuántas entraron. */
 export function ejecutarInsert(sql: string): number {
+  if (!/^\s*INSERT\s+INTO\b/i.test(sql)) {
+    throw new MotorError({
+      error: "se esperaba INTO despues de INSERT",
+      kind: "parse",
+      ...ubicarEn(sql, 0, 6),
+    });
+  }
+
   const partes = INSERT.exec(sql);
   if (!partes) {
     throw new MotorError({
-      error: "se esperaba VALUES seguido de la lista de valores",
+      error: "se esperaba VALUES despues del nombre de la tabla",
       kind: "parse",
-      ...ubicarEn(sql, 0, 6),
+      ...ubicarEn(sql, 0, sql.trim().length),
     });
   }
 
@@ -144,6 +238,11 @@ export function ejecutarInsert(sql: string): number {
   if (posicionClave >= 0) {
     const clave = fila[posicionClave];
     if (tabla.filas.some((existente) => existente[posicionClave] === clave)) {
+      // El duplicado lo detecta el core al escribir, no el validador, y el
+      // motor deshace la transaccion antes de relanzarlo
+      // (`_fail_in_transaction` en `executor/processor.py`). Los errores de
+      // tipo de mas arriba se detectan antes de tocar el disco y la dejan viva.
+      abortarTransaccion();
       throw new MotorError({
         error: `la clave primaria ya existe en ${tabla.info.name}`,
         kind: "semantic",
@@ -154,5 +253,15 @@ export function ejecutarInsert(sql: string): number {
 
   tabla.filas.push(fila);
   tabla.info.record_count = tabla.filas.length;
+
+  // Se quita por identidad y no por posicion: una sentencia posterior de la
+  // misma transaccion pudo haber cambiado el largo del arreglo.
+  registrarDeshacer(() => {
+    const posicion = tabla.filas.indexOf(fila);
+    if (posicion < 0) return;
+    tabla.filas.splice(posicion, 1);
+    tabla.info.record_count = tabla.filas.length;
+  });
+
   return 1;
 }

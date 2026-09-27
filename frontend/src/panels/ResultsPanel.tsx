@@ -108,6 +108,40 @@ function Tabla({ resultado }: { resultado: QueryResult }) {
   );
 }
 
+/**
+ * El texto verde que confirma una sentencia sin filas, o null si no aplica.
+ *
+ * Va aparte porque el motor responde igual a todas —sin columnas y solo con
+ * `affected_rows`—, y cada una necesita anunciarse distinto. Devolver el texto
+ * en un solo sitio evita que el panel crezca un ternario por sentencia nueva.
+ */
+function confirmacion(efecto: Efecto, afectadas: number): string | null {
+  switch (efecto.clase) {
+    case "creacion":
+      return `Tabla ${efecto.tabla} creada.`;
+    case "borrado":
+      return `Tabla ${efecto.tabla} eliminada.`;
+    case "indice":
+      return `Indice ${efecto.nombre} creado sobre ${efecto.tabla}.`;
+    // El conteo sale de `affected_rows`, no de contar la sentencia:
+    // criterio 2 del issue #112.
+    case "insercion":
+      return afectadas === 1
+        ? "1 fila insertada."
+        : `${afectadas.toLocaleString("es-PE")} filas insertadas.`;
+    case "eliminacion":
+      return afectadas === 1
+        ? "1 fila eliminada."
+        : `${afectadas.toLocaleString("es-PE")} filas eliminadas.`;
+    case "inicio":
+      return "Transaccion iniciada. Las escrituras se confirman con END TRANSACTION.";
+    case "confirmacion":
+      return "Transaccion confirmada.";
+    default:
+      return null;
+  }
+}
+
 /** Panel de Resultados (2.1.5, issue #36): las filas que devolvio la consulta. */
 export function ResultsPanel({
   resultado,
@@ -131,6 +165,10 @@ export function ResultsPanel({
           .join(" · ")
       : undefined;
 
+  const anuncio = resultado
+    ? confirmacion(efecto, resultado.affected_rows)
+    : null;
+
   return (
     <Panel titulo="Resultados" nota={nota}>
       {hayError ? (
@@ -143,19 +181,11 @@ export function ResultsPanel({
         <p className="p-3 text-xs text-muted-foreground">
           Ejecuta una consulta para ver resultados.
         </p>
-      ) : efecto.clase === "creacion" ? (
+      ) : anuncio ? (
         // En verde y no en gris: el criterio 2 del issue #111 pide que una
         // confirmacion no se lea igual que un error ni que un resultado vacio.
         <p className="p-3 text-xs text-emerald-700 dark:text-emerald-400">
-          Tabla <span className="font-mono">{efecto.tabla}</span> creada.
-        </p>
-      ) : efecto.clase === "insercion" ? (
-        // El conteo sale de `affected_rows`, no de contar la sentencia:
-        // criterio 2 del issue #112.
-        <p className="p-3 text-xs text-emerald-700 dark:text-emerald-400">
-          {resultado.affected_rows === 1
-            ? "1 fila insertada."
-            : `${resultado.affected_rows.toLocaleString("es-PE")} filas insertadas.`}
+          {anuncio}
         </p>
       ) : resultado.columns.length === 0 ? (
         <p className="p-3 text-xs text-muted-foreground">

@@ -125,7 +125,11 @@ export function QueryPanel({
         )}
 
         <div className="flex shrink-0 justify-end border-t px-3 py-2">
-          <Button size="sm" onClick={onEjecutar} disabled={ejecutando}>
+          <Button
+            size="sm"
+            onClick={onEjecutar}
+            disabled={ejecutando || sql.trim() === ""}
+          >
             {ejecutando ? "Ejecutando..." : "Ejecutar"}
           </Button>
         </div>
