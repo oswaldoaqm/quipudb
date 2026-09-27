@@ -149,10 +149,14 @@ print(planned.plan.to_dict())  # ruta elegida, sin leer filas: contadores en cer
 print(measured.plan.to_dict()) # misma consulta ejecutada, con medidas reales
 
 ordered = processor.execute("SELECT nombre, nota FROM cursos ORDER BY nota DESC")
+top_two = processor.execute(
+    "SELECT nombre, nota FROM cursos ORDER BY nota DESC LIMIT 2"
+)
 grouped = processor.execute(
     "SELECT nombre, COUNT(*), AVG(nota) FROM cursos GROUP BY nombre ORDER BY nombre"
 )
 print(ordered.rows)            # filas ordenadas mediante ExternalSort
+print(top_two.rows)            # las dos primeras despues de ordenar
 print(grouped.columns)         # ('nombre', 'COUNT_all', 'AVG_nota')
 
 deleted = processor.execute("DELETE FROM cursos WHERE nota < 11")
@@ -187,7 +191,8 @@ de escribir y mantiene cada índice secundario. `ORDER BY` admite `ASC` y `DESC`
 y usa external sorting; `GROUP BY` admite `COUNT(*)`, `SUM`, `MIN`, `MAX` y
 `AVG`, y usa external hashing con fallback seguro a sort. El plan explica la
 dirección, los runs, las pasadas, la estrategia y las particiones realmente
-utilizadas.
+utilizadas. `LIMIT n` acepta un entero no negativo, se aplica al final y añade
+un paso `limit` con estructura `memory` al plan.
 
 `CREATE INDEX nombre ON tabla (columna) USING BPLUS` crea un B+ secundario no
 agrupado; `USING HASH` crea un hash extensible. También se aceptan los nombres

@@ -42,13 +42,14 @@ no equivale a haber iniciado una modificación protegida por undo.
 | `EXPLAIN [ANALYZE] SELECT` | Plan físico sin ejecutar, o plan medido después de ejecutar el SELECT |
 | `WHERE` | Una comparación `=`, `<`, `<=`, `>`, `>=` o `BETWEEN` inclusivo |
 | `ORDER BY` | Una columna, ASC o DESC |
+| `LIMIT` | Un entero no negativo; se aplica al resultado final, despues de ordenar o agrupar |
 | `GROUP BY` | Una columna; agregados `COUNT(*)`, `SUM`, `MIN`, `MAX`, `AVG`, sujetos a validación semántica |
 | `DELETE FROM ... WHERE ...` | Requiere filtro; mantiene índices secundarios |
 | `DROP TABLE` | Elimina la tabla y sus índices asociados; fuera de transacciones explícitas |
 | `BEGIN TRANSACTION`, `END TRANSACTION` | Inicio y confirmación de transacción explícita |
 
 No se soportan SQL `UPDATE`, `ALTER`, `COMMIT`,
-`ROLLBACK`, `NULL`, subconsultas, alias, `HAVING`, `LIMIT` ni condiciones booleanas
+`ROLLBACK`, `NULL`, subconsultas, alias, `HAVING` ni condiciones booleanas
 generales con `AND`/`OR`/`NOT`. El `AND` de `BETWEEN` es parte de esa sintaxis,
 no soporte de conjunciones arbitrarias. Tampoco hay listas generales de columnas
 de agrupación u ordenamiento.
