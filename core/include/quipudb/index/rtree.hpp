@@ -64,6 +64,12 @@
 
 namespace quipudb {
 
+/// Declarada aqui y definida en `distance.hpp`, que incluye a este archivo:
+/// al revés seria un ciclo. Un enum con tipo subyacente fijo se puede
+/// declarar sin definir, y eso alcanza para `search_radius`, que solo lo pasa
+/// adelante.
+enum class Metric : std::uint8_t;
+
 /// Un punto del plano. `x` = longitud, `y` = latitud.
 struct Point {
   double x = 0.0;
@@ -205,6 +211,32 @@ class RTree {
   /// invertida (min > max) no contiene nada y devuelve vacio sin leer, igual
   /// que un BETWEEN con los limites al reves.
   [[nodiscard]] std::vector<RTreeLeafEntry> search(const Rect& region);
+
+  /// Los puntos a `radius` o menos de `center`, medido con `metric` (#120).
+  ///
+  /// Son dos filtros encadenados, y los dos hacen falta:
+  ///
+  ///   1. el rectangulo que circunscribe el circulo descarta subarboles
+  ///      enteros sin leerlos, que es para lo que existe el indice;
+  ///   2. cada candidato que sobrevive se mide contra el radio de verdad.
+  ///
+  /// Sin el segundo paso entrarian las esquinas del rectangulo, que quedan
+  /// fuera del circulo. Sin el primero habria que recorrer el arbol entero.
+  ///
+  /// `radius` va en la unidad de la metrica: metros con `kHaversine`, y las
+  /// unidades de las coordenadas con `kEuclidean`. La conversion a los grados
+  /// de los MBR la hace `bounding_box`.
+  ///
+  /// El borde entra: un punto a exactamente `radius` se devuelve, como en un
+  /// BETWEEN. Un radio negativo devuelve vacio sin leer nada; uno de 0 deja
+  /// solo los puntos que caen exactamente en el centro.
+  ///
+  /// En `stats()`, `records_examined` cuenta todas las entradas de hoja que
+  /// se miraron -- incluidas las que el rectangulo dejo pasar y el radio
+  /// descarto -- y `records_returned` solo las devueltas. La diferencia entre
+  /// las dos es lo que costo la poda aproximada.
+  [[nodiscard]] std::vector<RTreeLeafEntry> search_radius(Point center, double radius,
+                                                          Metric metric);
 
   /// Borra el punto con ese RID (#118). Tienen que coincidir los dos: varios
   /// registros pueden estar en el mismo lugar. Devuelve false si no estaba.
