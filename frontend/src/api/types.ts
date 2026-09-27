@@ -132,6 +132,31 @@ export interface TableInfo {
   record_count: number;
 }
 
+/** Una fila del CSV que no entro. Espejo de `LoadRowError` de la API. */
+export interface LoadRowError {
+  /** Linea del archivo donde empieza la fila, contando la cabecera como 1. */
+  line: number;
+  error: string;
+}
+
+/**
+ * Lo que responde `POST /tables/{tabla}/load`.
+ *
+ * Espejo de `LoadResponse` en `engine/api/schemas.py`. `failed` cuenta TODAS
+ * las filas que no entraron; `errors` detalla solo las primeras y
+ * `errors_truncated` avisa de que hay mas, para que un archivo con 100 000
+ * filas malas no devuelva 100 000 mensajes.
+ */
+export interface LoadResult {
+  table: string;
+  /** Con que se leyo el archivo. cp1252 es lo que escribe Excel en Windows. */
+  encoding: "utf-8" | "cp1252";
+  inserted: number;
+  failed: number;
+  errors: LoadRowError[];
+  errors_truncated: boolean;
+}
+
 /** Familia del error, como las separa `engine/parser/errors.py`. */
 export type ErrorKind = "lex" | "parse" | "semantic" | "unsupported";
 

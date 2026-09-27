@@ -7,8 +7,13 @@
  */
 
 import { MotorError } from "@/api/errors";
-import { mockExecuteQuery, mockListTables } from "@/api/mock";
-import type { QueryError, QueryResult, TableInfo } from "@/api/types";
+import { mockExecuteQuery, mockListTables, mockLoadCsv } from "@/api/mock";
+import type {
+  LoadResult,
+  QueryError,
+  QueryResult,
+  TableInfo,
+} from "@/api/types";
 
 const URL_API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
@@ -21,7 +26,13 @@ async function pedir<T>(ruta: string, init?: RequestInit): Promise<T> {
   let respuesta: Response;
   try {
     respuesta = await fetch(`${URL_API}${ruta}`, {
-      headers: { "Content-Type": "application/json" },
+      // Un cuerpo de FormData va sin cabecera propia a proposito: el navegador
+      // tiene que escribir el `multipart/form-data; boundary=...` el mismo, y
+      // ponerlo a mano deja la peticion sin boundary y el servidor la rechaza.
+      headers:
+        init?.body instanceof FormData
+          ? undefined
+          : { "Content-Type": "application/json" },
       ...init,
     });
   } catch {
@@ -48,6 +59,30 @@ export function executeQuery(sql: string): Promise<QueryResult> {
   return pedir<QueryResult>("/query", {
     method: "POST",
     body: JSON.stringify({ sql }),
+  });
+}
+
+/**
+ * Carga un CSV con cabecera en una tabla que ya existe.
+ *
+ * El archivo viaja tal cual: quien lo parsea es la API, que lo lee en
+ * streaming y no lo carga entero en memoria (issue #114). El frontend solo
+ * informa de lo que responde.
+ *
+ * Va sin `atomic`, asi que se queda con el valor por defecto de la API: las
+ * filas buenas entran aunque alguna falle. Es lo que pide el criterio 3, que
+ * quiere el conteo de las que entraron Y el de las que no.
+ */
+export function loadCsv(tabla: string, archivo: File): Promise<LoadResult> {
+  if (USA_DATOS_FALSOS) {
+    return mockLoadCsv(tabla, archivo);
+  }
+
+  const cuerpo = new FormData();
+  cuerpo.append("file", archivo);
+  return pedir<LoadResult>(`/tables/${encodeURIComponent(tabla)}/load`, {
+    method: "POST",
+    body: cuerpo,
   });
 }
 
