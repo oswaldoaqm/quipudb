@@ -103,4 +103,35 @@ enum class Metric : std::uint8_t {
 /// La metrica elegida, resuelta en tiempo de ejecucion.
 [[nodiscard]] double distance(Point a, Point b, Metric metric);
 
+/// El rectangulo mas chico que contiene el circulo de radio `radius` alrededor
+/// de `center`, en las coordenadas del indice (issue #120).
+///
+/// Es la pieza que traduce entre las dos unidades: el radio viene en la unidad
+/// de la metrica -- metros con `kHaversine` -- y los MBR del R-Tree estan en
+/// grados. Sin esta conversion no se pueden comparar.
+///
+/// Con `kEuclidean` es el cuadrado de lado 2r y no hay nada que convertir.
+///
+/// Con `kHaversine` la altura es constante -- un grado de latitud mide igual
+/// en todas partes -- pero el ancho NO: cuanto mas lejos del ecuador, mas
+/// grados de longitud abarca el mismo circulo. El semiancho exacto es
+/// asin(sen d / cos lat), con d el radio angular; la aproximacion d / cos lat
+/// se queda corta y perderia puntos del borde.
+///
+/// Dos casos degeneran al rango entero de longitud, [-180, 180]:
+///   - el circulo toca un polo, donde todas las longitudes se juntan;
+///   - el circulo cruza el antimeridiano, porque un `Rect` no sabe envolverse.
+/// En los dos el rectangulo sigue siendo correcto -- contiene el circulo --,
+/// solo poda menos.
+///
+/// El rectangulo se ensancha un pelo (1e-12 relativo) a proposito: su trabajo
+/// es PODAR, nunca decidir. Si el redondeo lo dejara un ulp corto, un punto
+/// que cae justo en el borde del circulo se perderia antes de que el filtro
+/// exacto llegara a mirarlo.
+///
+/// Un radio negativo devuelve un rectangulo invertido, que no contiene nada,
+/// igual que un BETWEEN con los limites al reves. Coordenadas o radio no
+/// finitos son InvalidRecord.
+[[nodiscard]] Rect bounding_box(Point center, double radius, Metric metric);
+
 }  // namespace quipudb
