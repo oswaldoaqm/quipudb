@@ -50,6 +50,7 @@ KEYWORDS = (
     ("varchar", TokenKind.VARCHAR),
     ("bool", TokenKind.BOOL),
     ("date", TokenKind.DATE),
+    ("point", TokenKind.POINT),
     ("true", TokenKind.TRUE),
     ("false", TokenKind.FALSE),
     ("begin", TokenKind.BEGIN),

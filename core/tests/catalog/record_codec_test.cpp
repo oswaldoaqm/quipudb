@@ -117,6 +117,21 @@ TEST(RecordCodec, ValorSueltoIdaYVuelta) {
   EXPECT_THROW(RecordCodec::encode_value(c, Value{std::string{"q"}}, chico), InvalidRecord);
 }
 
+TEST(RecordCodec, PointOcupaDieciseisBytesYVuelveSinPerderCoordenadas) {
+  const Schema schema{
+      .table_name = "lugares",
+      .columns = {{"id", DataType::Int}, {"ubicacion", DataType::Point}},
+      .key_column = 0,
+  };
+  const RecordCodec codec(schema);
+  const Record original{7, GeoPoint{-12.0464, -77.0428}};
+
+  EXPECT_EQ(codec.size(), 20u);
+  EXPECT_EQ(codec.decode(codec.encode(original)), original);
+  EXPECT_EQ(std::get<GeoPoint>(codec.decode_column(codec.encode(original), 1)),
+            (GeoPoint{-12.0464, -77.0428}));
+}
+
 TEST(RecordCodec, MilRegistrosIdaYVuelta) {
   const RecordCodec codec(alumnos());
   for (std::int32_t i = 0; i < 1000; ++i) {

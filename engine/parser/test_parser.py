@@ -27,6 +27,7 @@ from engine.parser.ast import (
     IntegerLiteral,
     JoinRef,
     OrderDirection,
+    PointLiteral,
     SelectStatement,
     SqlTypeName,
     StorageKind,
@@ -126,6 +127,54 @@ def test_parser_conserva_longitud_varchar_para_validacion_semantica_posterior() 
 
     assert isinstance(statement, CreateTableStatement)
     assert statement.columns[0].data_type.length == 0
+
+
+def test_point_se_parsea_como_tipo_y_literal_en_insert_y_where() -> None:
+    create = parse_sql("CREATE TABLE lugares (id INT PRIMARY KEY, ubicacion POINT)")
+    insert = parse_sql("INSERT INTO lugares VALUES (1, POINT(-12.0464, -77.0428))")
+    select = parse_sql("SELECT * FROM lugares WHERE ubicacion = POINT(-12.0464, -77.0428)")
+
+    assert isinstance(create, CreateTableStatement)
+    assert create.columns[1].data_type.name is SqlTypeName.POINT
+    assert isinstance(insert, InsertStatement)
+    point = insert.values[1]
+    assert isinstance(point, PointLiteral)
+    assert (point.latitude, point.longitude) == (-12.0464, -77.0428)
+    assert isinstance(select, SelectStatement)
+    assert isinstance(select.where, ComparisonCondition)
+    assert isinstance(select.where.value, PointLiteral)
+
+
+@pytest.mark.parametrize(
+    ("sql", "fragment", "message"),
+    [
+        ("INSERT INTO t VALUES (POINT(91, 0))", "91", "latitud"),
+        ("INSERT INTO t VALUES (POINT(0, -181))", "-181", "longitud"),
+        ("INSERT INTO t VALUES (POINT('sur', 0))", "'sur'", "latitud numerica"),
+        ("INSERT INTO t VALUES (POINT(0 1))", "1", "se esperaba ','"),
+        ("INSERT INTO t VALUES (POINT(0, 1)", "", "despues de los valores"),
+    ],
+)
+def test_point_invalido_reporta_el_fragmento_exacto(
+    sql: str,
+    fragment: str,
+    message: str,
+) -> None:
+    with pytest.raises(SQLParseError, match=message) as caught:
+        parse_sql(sql)
+
+    assert sql[caught.value.span.start : caught.value.span.end] == fragment
+
+
+def test_point_invalido_reporta_linea_y_columna_en_sql_multilinea() -> None:
+    sql = "INSERT INTO lugares VALUES (\n  1, POINT(-12.0464, 181)\n)"
+
+    with pytest.raises(SQLParseError, match="longitud") as caught:
+        parse_sql(sql)
+
+    assert caught.value.line == 2
+    assert caught.value.column == 22
+    assert sql[caught.value.span.start : caught.value.span.end] == "181"
 
 
 @pytest.mark.parametrize("primary_keys", [0, 2])

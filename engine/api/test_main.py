@@ -111,6 +111,27 @@ def test_un_resultado_vacio_conserva_los_tipos(cliente) -> None:
     assert cuerpo["column_types"] == ["VARCHAR"]
 
 
+def test_point_aparece_en_catalogo_y_resultados_http(cliente) -> None:
+    cliente.post(
+        "/query",
+        json={
+            "sql": (
+                "CREATE TABLE lugares (id INT PRIMARY KEY, ubicacion POINT);"
+                "INSERT INTO lugares VALUES (1, POINT(-12.0464, -77.0428))"
+            )
+        },
+    )
+
+    tabla = cliente.get("/tables").json()[0]
+    respuesta = cliente.post("/query", json={"sql": "SELECT ubicacion FROM lugares"})
+
+    assert tabla["columns"][1]["type"] == "POINT"
+    assert respuesta.status_code == 200
+    cuerpo = respuesta.json()
+    assert cuerpo["column_types"] == ["POINT"]
+    assert cuerpo["rows"] == [[{"latitude": -12.0464, "longitude": -77.0428}]]
+
+
 def test_una_sentencia_sin_filas_informa_en_affected_rows_y_manda_plan_null(cliente) -> None:
     _poblar(cliente)
 
