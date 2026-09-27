@@ -134,4 +134,30 @@ enum class Metric : std::uint8_t {
 /// finitos son InvalidRecord.
 [[nodiscard]] Rect bounding_box(Point center, double radius, Metric metric);
 
+/// Lo mas cerca que `p` puede estar de un punto de `region` (issue #121).
+///
+/// Es la cota con la que el k-NN decide por que rama bajar y cuando parar:
+/// un subarbol cuyo MBR esta a mas distancia que el k-esimo vecino ya
+/// encontrado no puede mejorarlo, y se descarta sin leerlo.
+///
+/// Por eso NO puede quedarse por encima del minimo real: si lo hiciera,
+/// podaria un subarbol que si tenia un vecino mas cercano y el resultado
+/// saldria mal. Quedarse por debajo solo cuesta leer paginas de mas. Esta
+/// devuelve el minimo exacto, que es lo que mas poda.
+///
+/// Con `p` dentro de `region` es 0. Con una region invertida es infinito:
+/// no contiene ningun punto, asi que nada puede estar cerca de ella.
+///
+/// Con `kEuclidean` el punto mas cercano se obtiene recortando cada
+/// coordenada al rango del rectangulo, y eso es exacto en el plano.
+///
+/// Con `kHaversine` no alcanza con recortar: sobre la esfera, el punto mas
+/// cercano de un borde meridiano no esta en general a la latitud recortada,
+/// porque un paralelo no es un circulo maximo. Se resuelve con la latitud del
+/// pie de la perpendicular al meridiano, atan2(sen lat, cos lat cos dlon),
+/// acotada al rango del rectangulo. Los bordes en paralelo no hace falta
+/// mirarlos: sobre un paralelo la distancia crece con |dlon|, asi que su
+/// minimo cae siempre en una esquina, que ya es parte de un meridiano.
+[[nodiscard]] double min_distance(Point p, const Rect& region, Metric metric);
+
 }  // namespace quipudb
