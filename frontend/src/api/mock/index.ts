@@ -442,6 +442,8 @@ function ejecutarJoin(sql: string, consultaCruda: ConsultaLeida): QueryResult {
   };
 }
 
+export { mockLoadCsv } from "@/api/mock/csv";
+
 export async function mockListTables(): Promise<TableInfo[]> {
   await new Promise((listo) => setTimeout(listo, LATENCIA_MS));
   return catalogo();
