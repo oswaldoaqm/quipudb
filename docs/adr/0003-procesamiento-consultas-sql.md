@@ -70,6 +70,7 @@ data_type            = "INT"
                      | "DOUBLE"
                      | "BOOL"
                      | "DATE"
+                     | "POINT"
                      | "VARCHAR", "(", unsigned_integer, ")" ;
 storage_kind         = "HEAP" | "SEQUENTIAL" ;
 
@@ -109,9 +110,12 @@ literal              = signed_double
                      | signed_integer
                      | string_literal
                      | boolean_literal
-                     | date_literal ;
+                     | date_literal
+                     | point_literal ;
 boolean_literal      = "TRUE" | "FALSE" ;
 date_literal         = "DATE", string_literal ;
+point_literal        = "POINT", "(", signed_number, ",", signed_number, ")" ;
+signed_number        = signed_integer | signed_double ;
 
 identifier           = identifier_start, { identifier_continue } ;
 identifier_start     = letter | "_" ;
@@ -137,6 +141,11 @@ invertida no introduce escapes. Una fecha usa exactamente
 comentarios se omiten antes del parser. Los identificadores delimitados por
 comillas no forman parte de la gramatica.
 
+`POINT(latitud, longitud)` usa grados decimales: la latitud debe estar entre
+`-90` y `90`, y la longitud entre `-180` y `180`. Cada coordenada conserva su
+propio `Span`, por lo que un valor o formato invalido señala exactamente el
+numero afectado incluso en una consulta multilinea.
+
 En `parse_sql` el punto y coma final es opcional y una segunda sentencia falla.
 `parse_sql_script` acepta varias sentencias separadas por `;`. `DELETE` exige
 `WHERE` sintacticamente para impedir un borrado total accidental. `BETWEEN` es
@@ -161,7 +170,8 @@ analisis semantico aplicara estas reglas antes de tocar disco:
   `USING SEQUENTIAL`.
 - `CREATE INDEX` exige una tabla y columna existentes. `BPLUS` representa un
   B+ secundario no agrupado y `HASH`, un hash extensible; solo se construyen
-  sobre tablas HEAP y quedan fuera de transacciones explicitas.
+  sobre tablas HEAP y quedan fuera de transacciones explicitas. Ninguno admite
+  columnas `POINT`: estas requieren el indice R-Tree de la fase espacial.
 - `INSERT` es posicional, sin lista de columnas, y debe aportar un valor por
   columna con un tipo compatible.
 - La tabla, las columnas proyectadas y las columnas de `WHERE`, `GROUP BY` y
@@ -286,6 +296,14 @@ el catálogo existente, que construye el índice sobre las filas actuales.
 `EXPLAIN ANALYZE` ejecuta el `SELECT` y conserva las estadísticas medidas. Los
 dos devuelven el plan sin las filas de la consulta explicada.
 
+El issue #126 añade el tipo de columna y el literal
+`POINT(latitud, longitud)`. El AST y la fase enlazada conservan las coordenadas
+por nombre; el binding las traduce al `GeoPoint` nativo, almacenado como dos
+`double` consecutivos (16 bytes). El catalogo persiste el nombre `POINT` y el
+codec recupera exactamente ambos valores. Los B+ y hash existentes rechazan
+este tipo de forma explicita: la traduccion `(latitud, longitud)` a las
+coordenadas `(x, y)` del R-Tree pertenece al adaptador espacial posterior.
+
 ### Limites explicitos
 
 Quedan fuera de este subconjunto:
@@ -297,8 +315,8 @@ Quedan fuera de este subconjunto:
 - aliases, `HAVING`, `LIMIT` y listas de varias columnas en `GROUP BY` u
   `ORDER BY`;
 - listas de columnas en `INSERT` e identificadores delimitados;
-- `COMMIT`, `ROLLBACK` como sentencias SQL, y SQL espacial, textual o
-  multimedia.
+- `COMMIT` y `ROLLBACK` como sentencias SQL;
+- operadores espaciales, R-Tree desde SQL, consultas textuales o multimedia.
 
 `BEGIN TRANSACTION` y `END TRANSACTION` (2.1.4) ya no estan fuera de alcance
 desde el ADR 0004: se parsean con el mismo `parse_sql` y se despachan desde el
