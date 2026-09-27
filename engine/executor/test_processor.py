@@ -40,6 +40,7 @@ class _DataType(StrEnum):
     VARCHAR = "VARCHAR"
     BOOL = "BOOL"
     DATE = "DATE"
+    POINT = "POINT"
 
 
 class _Kind:
@@ -52,6 +53,12 @@ class _Kind:
 @dataclass
 class _Date:
     days: int = 0
+
+
+@dataclass(order=True)
+class _GeoPoint:
+    latitude: float = 0.0
+    longitude: float = 0.0
 
 
 @dataclass
@@ -82,6 +89,7 @@ class _NativeModule:
     IoError = _IoError
     DataType = _DataType
     Date = _Date
+    GeoPoint = _GeoPoint
     RID = _RID
     Column = _Column
     Schema = _Schema

@@ -65,7 +65,8 @@ enum class DataType : std::uint8_t {
   Double,   // IEEE 754, 8 bytes
   Varchar,  // texto de hasta `length` bytes, relleno con '\0'
   Bool,     // 1 byte
-  Date      // dias desde 1970-01-01, int32, 4 bytes
+  Date,     // dias desde 1970-01-01, int32, 4 bytes
+  Point     // latitud y longitud, dos IEEE 754, 16 bytes
 };
 
 [[nodiscard]] constexpr std::string_view to_string(DataType t) noexcept {
@@ -75,6 +76,7 @@ enum class DataType : std::uint8_t {
     case DataType::Varchar: return "VARCHAR";
     case DataType::Bool: return "BOOL";
     case DataType::Date: return "DATE";
+    case DataType::Point: return "POINT";
   }
   return "?";
 }
@@ -86,9 +88,17 @@ struct Date {
   friend constexpr auto operator<=>(const Date&, const Date&) = default;
 };
 
+/// Coordenada geografica en el orden que expone SQL: latitud, longitud.
+/// El R-Tree usa Point{x=longitud, y=latitud}; la conversion es deliberada.
+struct GeoPoint {
+  double latitude = 0.0;
+  double longitude = 0.0;
+  friend constexpr auto operator<=>(const GeoPoint&, const GeoPoint&) = default;
+};
+
 /// Valor de una celda. El indice del variant coincide con `DataType`, y
 /// `type_of` lo hace explicito.
-using Value = std::variant<std::int32_t, double, std::string, bool, Date>;
+using Value = std::variant<std::int32_t, double, std::string, bool, Date, GeoPoint>;
 
 /// Clave de busqueda. Es un Value cualquiera; el esquema dice de que columna.
 using Key = Value;
@@ -119,10 +129,21 @@ using Record = std::vector<Value>;
   return std::visit(
       [&b](const auto& lhs) -> int {
         const auto& rhs = std::get<std::decay_t<decltype(lhs)>>(b);
+        const auto compare_double = [](double left, double right) {
+          const bool left_nan = std::isnan(left);
+          const bool right_nan = std::isnan(right);
+          if (left_nan || right_nan) {
+            return left_nan && right_nan ? 0 : (left_nan ? 1 : -1);
+          }
+          if (left < right) return -1;
+          if (right < left) return 1;
+          return 0;
+        };
         if constexpr (std::is_same_v<std::decay_t<decltype(lhs)>, double>) {
-          const bool na = std::isnan(lhs);
-          const bool nb = std::isnan(rhs);
-          if (na || nb) return na && nb ? 0 : (na ? 1 : -1);
+          return compare_double(lhs, rhs);
+        } else if constexpr (std::is_same_v<std::decay_t<decltype(lhs)>, GeoPoint>) {
+          const int latitude = compare_double(lhs.latitude, rhs.latitude);
+          return latitude != 0 ? latitude : compare_double(lhs.longitude, rhs.longitude);
         }
         if (lhs < rhs) return -1;
         if (rhs < lhs) return 1;
@@ -157,6 +178,7 @@ struct Column {
       case DataType::Varchar: return length;
       case DataType::Bool: return 1;
       case DataType::Date: return 4;
+      case DataType::Point: return 16;
     }
     return 0;
   }
@@ -219,6 +241,21 @@ struct Schema {
       // igual a cualquier clave y que remove borre el registro equivocado.
       if (columns[i].type == DataType::Double && std::isnan(std::get<double>(r[i]))) {
         throw InvalidRecord("columna " + columns[i].name + ": NaN no es un valor valido");
+      }
+      if (columns[i].type == DataType::Point) {
+        const auto& point = std::get<GeoPoint>(r[i]);
+        if (!std::isfinite(point.latitude) || !std::isfinite(point.longitude)) {
+          throw InvalidRecord("columna " + columns[i].name +
+                              ": POINT requiere coordenadas finitas");
+        }
+        if (point.latitude < -90.0 || point.latitude > 90.0) {
+          throw InvalidRecord("columna " + columns[i].name +
+                              ": la latitud debe estar entre -90 y 90");
+        }
+        if (point.longitude < -180.0 || point.longitude > 180.0) {
+          throw InvalidRecord("columna " + columns[i].name +
+                              ": la longitud debe estar entre -180 y 180");
+        }
       }
     }
   }

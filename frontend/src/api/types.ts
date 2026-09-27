@@ -68,7 +68,12 @@ export interface Plan {
   root: Step;
 }
 
-export type CellValue = string | number | boolean | null;
+export interface PointValue {
+  latitude: number;
+  longitude: number;
+}
+
+export type CellValue = string | number | boolean | PointValue | null;
 
 /**
  * Espejo de `QueryResult` de engine/executor/result.py, con un campo de mas.
@@ -90,7 +95,13 @@ export interface QueryResult {
   plan: Plan | null;
 }
 
-export type DataType = "INT" | "VARCHAR" | "DOUBLE" | "BOOL" | "DATE";
+export type DataType =
+  | "INT"
+  | "VARCHAR"
+  | "DOUBLE"
+  | "BOOL"
+  | "DATE"
+  | "POINT";
 
 export interface ColumnInfo {
   name: string;

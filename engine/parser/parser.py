@@ -33,6 +33,7 @@ from engine.parser.ast import (
     Literal,
     OrderBy,
     OrderDirection,
+    PointLiteral,
     Projection,
     SelectStatement,
     SqlType,
@@ -45,7 +46,7 @@ from engine.parser.ast import (
 )
 from engine.parser.errors import SQLParseError, SQLUnsupportedError
 from engine.parser.lexer import tokenize
-from engine.parser.span import combine_spans
+from engine.parser.span import Span, combine_spans
 from engine.parser.tokens import Token, TokenKind
 
 _DATE_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
@@ -270,6 +271,9 @@ class _Parser:
         if self._match(TokenKind.DATE):
             token = self._previous()
             return SqlType(SqlTypeName.DATE, None, token.span)
+        if self._match(TokenKind.POINT):
+            token = self._previous()
+            return SqlType(SqlTypeName.POINT, None, token.span)
         if self._match(TokenKind.VARCHAR):
             start = self._previous()
             self._expect(TokenKind.LPAREN, "se esperaba '(' despues de VARCHAR")
@@ -294,7 +298,7 @@ class _Parser:
             )
         raise self._error(
             self._peek(),
-            "se esperaba un tipo INT, DOUBLE, VARCHAR(n), BOOL o DATE",
+            "se esperaba un tipo INT, DOUBLE, VARCHAR(n), BOOL, DATE o POINT",
         )
 
     def _insert(self, start: Token) -> InsertStatement:
@@ -549,14 +553,43 @@ class _Parser:
             except ValueError as exc:
                 raise self._error(value_token, f"fecha DATE invalida: {value}") from exc
             return DateLiteral(parsed, combine_spans(start.span, value_token.span))
+        if self._match(TokenKind.POINT):
+            return self._point_literal(self._previous())
 
         token = self._peek()
         if self._word(token) == "NULL":
             self._raise_unsupported(token)
         raise self._error(
             token,
-            "se esperaba un literal entero, double, string, booleano o DATE",
+            "se esperaba un literal entero, double, string, booleano, DATE o POINT",
         )
+
+    def _point_literal(self, start: Token) -> PointLiteral:
+        self._expect(TokenKind.LPAREN, "se esperaba '(' despues de POINT")
+        latitude, latitude_span = self._coordinate("latitud", -90.0, 90.0)
+        self._expect(TokenKind.COMMA, "se esperaba ',' entre latitud y longitud")
+        longitude, longitude_span = self._coordinate("longitud", -180.0, 180.0)
+        end = self._expect(TokenKind.RPAREN, "se esperaba ')' despues de la longitud")
+        return PointLiteral(
+            latitude=latitude,
+            longitude=longitude,
+            latitude_span=latitude_span,
+            longitude_span=longitude_span,
+            span=combine_spans(start.span, end.span),
+        )
+
+    def _coordinate(self, role: str, lower: float, upper: float) -> tuple[float, Span]:
+        token = self._peek()
+        if token.kind not in {TokenKind.INTEGER, TokenKind.DOUBLE_LITERAL}:
+            raise self._error(token, f"se esperaba una {role} numerica en POINT")
+        self._advance()
+        value = float(token.value)
+        if not lower <= value <= upper:
+            raise self._error(
+                token,
+                f"la {role} de POINT debe estar entre {lower:g} y {upper:g}",
+            )
+        return value, token.span
 
     def _identifier(self, message: str) -> Identifier:
         token = self._peek()
