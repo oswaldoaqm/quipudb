@@ -238,6 +238,24 @@ class RTree {
   [[nodiscard]] std::vector<RTreeLeafEntry> search_radius(Point center, double radius,
                                                           Metric metric);
 
+  /// Los `k` puntos mas cercanos a `p`, de mas cerca a mas lejos (#121).
+  ///
+  /// Baja por el arbol con una cola de prioridad ordenada por la distancia
+  /// minima a cada MBR, y se detiene en cuanto tiene `k`. Un subarbol cuyo
+  /// MBR queda mas lejos que el k-esimo ya encontrado nunca llega a sacarse
+  /// de la cola, asi que no se lee: eso es lo que hace que el indice sirva.
+  ///
+  /// Recorrer todo y ordenar despues daria el mismo resultado, pero seria un
+  /// escaneo disfrazado de k-NN y el 2.2.4 estaria midiendo otra cosa.
+  ///
+  /// Con menos de `k` puntos en el arbol devuelve los que hay, sin fallar.
+  /// Con `k = 0` devuelve vacio sin leer nada.
+  ///
+  /// Con distancias empatadas, cual de los empatados entra es indistinto:
+  /// lo que se garantiza es que ningun punto de fuera del resultado esta mas
+  /// cerca que uno de dentro.
+  [[nodiscard]] std::vector<RTreeLeafEntry> k_nearest(Point p, std::size_t k, Metric metric);
+
   /// Borra el punto con ese RID (#118). Tienen que coincidir los dos: varios
   /// registros pueden estar en el mismo lugar. Devuelve false si no estaba.
   ///
