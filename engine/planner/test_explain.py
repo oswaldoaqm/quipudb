@@ -75,6 +75,29 @@ def test_explain_describe_filtro_y_ordenamiento_externo() -> None:
     assert "DESC" in plan.root.walk()[2].detail
 
 
+def test_explain_coloca_limit_despues_de_ordenar_y_proyectar() -> None:
+    source = "EXPLAIN SELECT nombre FROM alumnos ORDER BY nombre LIMIT 5"
+    statement = parse_sql(source)
+    assert isinstance(statement, ExplainStatement)
+    bound = bind_select(statement.statement, _SCHEMA, source)
+    physical = optimize_select(bound, TableMetadata("alumnos", Structure.HEAP, rows=100))
+
+    plan = explain_select(
+        physical,
+        source[statement.statement.span.start : statement.statement.span.end],
+        source,
+    )
+
+    assert [step.op for step in plan.root.walk()] == [
+        Op.SCAN,
+        Op.SORT,
+        Op.PROJECT,
+        Op.LIMIT,
+    ]
+    assert plan.root.structure is Structure.MEMORY
+    assert "5" in plan.root.detail
+
+
 def test_explain_describe_group_by_y_posible_reuso_del_orden() -> None:
     source = "EXPLAIN SELECT nombre, COUNT(*) FROM alumnos GROUP BY nombre ORDER BY nombre"
     statement = parse_sql(source)

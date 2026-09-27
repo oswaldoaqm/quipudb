@@ -37,6 +37,7 @@ KEYWORDS = (
     ("by", TokenKind.BY),
     ("asc", TokenKind.ASC),
     ("desc", TokenKind.DESC),
+    ("limit", TokenKind.LIMIT),
     ("group", TokenKind.GROUP),
     ("count", TokenKind.COUNT),
     ("sum", TokenKind.SUM),

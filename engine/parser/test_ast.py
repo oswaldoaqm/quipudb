@@ -28,6 +28,7 @@ from engine.parser.ast import (
     IndexKind,
     InsertStatement,
     IntegerLiteral,
+    Limit,
     OrderBy,
     OrderDirection,
     PointLiteral,
@@ -114,6 +115,7 @@ def test_ast_representa_todas_las_sentencias_del_alcance() -> None:
         None,
         OrderBy(column, OrderDirection.DESC, span(34, 54, 35)),
         span(0, 54),
+        Limit(10, span(55, 63, 56)),
     )
     delete = DeleteStatement(table, condition, span(0, 33))
     drop = DropTableStatement(table, span(0, 20))
@@ -126,6 +128,7 @@ def test_ast_representa_todas_las_sentencias_del_alcance() -> None:
     assert create_index.kind is IndexKind.BPLUS_UNCLUSTERED
     assert insert.values == (integer,)
     assert select.projections == (Wildcard(span(7, 8, 8)),)
+    assert select.limit == Limit(10, span(55, 63, 56))
     assert delete.where == condition
     assert drop.table == table
     assert begin.span == span(0, 18)
