@@ -124,6 +124,41 @@ struct Rect {
   friend constexpr bool operator==(const Rect&, const Rect&) = default;
 };
 
+/// El MBR de un poligono dado por sus vertices (issue #122).
+///
+/// Es con lo que se poda antes de comprobar punto a punto. Lanza
+/// InvalidRecord con menos de tres vertices o con alguna coordenada no
+/// finita.
+[[nodiscard]] Rect bounding_box_of(std::span<const Point> vertices);
+
+/// Si `p` cae dentro del poligono cerrado que describen `vertices` (#122).
+///
+/// Los vertices van en orden, y el ultimo se une con el primero solo: no hay
+/// que repetirlo. El sentido -- horario o antihorario -- da igual.
+///
+/// Funciona con poligonos NO convexos, que es lo que pide el criterio 3: usa
+/// el numero de cruces, que cuenta cuantas veces un rayo que sale del punto
+/// atraviesa el borde. Impar es dentro, par es fuera. Un poligono en forma
+/// de L o de C sale bien sin tratarlo aparte.
+///
+/// EL BORDE CUENTA COMO DENTRO. Es una decision, no un accidente: se
+/// comprueba explicitamente antes del conteo de cruces, porque ese conteo no
+/// es fiable justo sobre una arista -- puede dar dentro o fuera segun el
+/// redondeo, y dos puntos identicos consultados de formas distintas podrian
+/// no coincidir. Comprobar el borde primero hace que la respuesta sea la
+/// misma siempre, y "dentro" es lo que ya hacen `Rect::contains` y el
+/// BETWEEN del SQL.
+///
+/// La comparacion contra la arista usa una tolerancia relativa al tamano de
+/// las coordenadas, porque un producto cruzado en grados y uno en metros no
+/// tienen la misma escala.
+///
+/// Un poligono que se cruza a si mismo se resuelve por paridad: las zonas
+/// que el borde encierra un numero par de veces quedan fuera. Uno
+/// degenerado, con todos los vertices en una recta, no encierra nada, y solo
+/// los puntos sobre esa recta cuentan como dentro.
+[[nodiscard]] bool contains_point(std::span<const Point> vertices, Point p);
+
 /// Entrada de una hoja: el punto y donde vive su registro.
 struct RTreeLeafEntry {
   Point point;
@@ -255,6 +290,21 @@ class RTree {
   /// lo que se garantiza es que ningun punto de fuera del resultado esta mas
   /// cerca que uno de dentro.
   [[nodiscard]] std::vector<RTreeLeafEntry> k_nearest(Point p, std::size_t k, Metric metric);
+
+  /// Los puntos que caen dentro del poligono (#122).
+  ///
+  /// Mismo patron que el radio: el MBR del poligono descarta subarboles
+  /// enteros, y despues cada candidato se comprueba contra el poligono real.
+  /// Sin el segundo paso, un distrito con forma irregular devolveria puntos
+  /// de fuera -- los que caen en el hueco entre el poligono y su caja.
+  ///
+  /// El borde entra, y con los mismos criterios que `contains_point`, que es
+  /// donde esta documentado.
+  ///
+  /// En `stats()`, `records_examined` cuenta las entradas de hoja que el MBR
+  /// dejo pasar y `records_returned` las que ademas cayeron dentro del
+  /// poligono.
+  [[nodiscard]] std::vector<RTreeLeafEntry> search_polygon(std::span<const Point> vertices);
 
   /// Borra el punto con ese RID (#118). Tienen que coincidir los dos: varios
   /// registros pueden estar en el mismo lugar. Devuelve false si no estaba.
