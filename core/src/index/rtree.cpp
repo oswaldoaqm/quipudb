@@ -631,6 +631,41 @@ void RTree::shrink_root() {
 // Busqueda por rectangulo (#117)
 // ---------------------------------------------------------------------------
 
+namespace {
+
+void exigir_poligono(std::span<const Point> vertices) {
+  if (vertices.size() < 3) {
+    throw InvalidRecord("un poligono necesita al menos 3 vertices, y se dieron " +
+                        std::to_string(vertices.size()));
+  }
+  for (const Point v : vertices) {
+    if (!std::isfinite(v.x) || !std::isfinite(v.y)) {
+      throw InvalidRecord("vertice con coordenada no finita: (" + std::to_string(v.x) + ", " +
+                          std::to_string(v.y) + ")");
+    }
+  }
+}
+
+/// Si `p` cae sobre el segmento a-b, con tolerancia.
+///
+/// El producto cruzado tiene unidades de coordenada al cuadrado, asi que la
+/// tolerancia se escala con el cuadrado de la magnitud: la misma formula en
+/// grados y en metros no puede usar el mismo numero absoluto.
+bool sobre_el_segmento(Point a, Point b, Point p) {
+  const double escala =
+      std::max({std::abs(a.x), std::abs(a.y), std::abs(b.x), std::abs(b.y), std::abs(p.x),
+                std::abs(p.y), 1.0});
+  const double cruz = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+  if (std::abs(cruz) > escala * escala * 1e-12) return false;
+
+  // Colineal no alcanza: tiene que estar ENTRE los dos extremos.
+  const double holgura = escala * 1e-12;
+  return p.x >= std::min(a.x, b.x) - holgura && p.x <= std::max(a.x, b.x) + holgura &&
+         p.y >= std::min(a.y, b.y) - holgura && p.y <= std::max(a.y, b.y) + holgura;
+}
+
+}  // namespace
+
 std::vector<RTreeLeafEntry> RTree::search(const Rect& region) {
   if (!std::isfinite(region.min_x) || !std::isfinite(region.min_y) ||
       !std::isfinite(region.max_x) || !std::isfinite(region.max_y)) {
@@ -643,6 +678,57 @@ std::vector<RTreeLeafEntry> RTree::search(const Rect& region) {
   search_node(root_, region, out);
   stats_.records_returned += out.size();
   return out;
+}
+
+Rect bounding_box_of(std::span<const Point> vertices) {
+  exigir_poligono(vertices);
+  Rect caja = Rect::of(vertices[0]);
+  for (const Point v : vertices.subspan(1)) caja = caja.united(Rect::of(v));
+  return caja;
+}
+
+bool contains_point(std::span<const Point> vertices, Point p) {
+  exigir_poligono(vertices);
+  if (!std::isfinite(p.x) || !std::isfinite(p.y)) {
+    throw InvalidRecord("punto con coordenada no finita en contains_point");
+  }
+
+  // El borde primero, y aparte: el conteo de cruces no decide de forma
+  // estable justo sobre una arista. Ver la nota en rtree.hpp.
+  for (std::size_t i = 0, j = vertices.size() - 1; i < vertices.size(); j = i++) {
+    if (sobre_el_segmento(vertices[j], vertices[i], p)) return true;
+  }
+
+  // Numero de cruces: se lanza un rayo hacia -x y se cuenta cuantas aristas
+  // atraviesa. Impar es dentro. La asimetria de las comparaciones -- una
+  // estricta y la otra no -- es lo que hace que un vertice exactamente a la
+  // altura del rayo se cuente una sola vez y no dos.
+  bool dentro = false;
+  for (std::size_t i = 0, j = vertices.size() - 1; i < vertices.size(); j = i++) {
+    const Point a = vertices[i];
+    const Point b = vertices[j];
+    if ((a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x) {
+      dentro = !dentro;
+    }
+  }
+  return dentro;
+}
+
+std::vector<RTreeLeafEntry> RTree::search_polygon(std::span<const Point> vertices) {
+  // Valida los vertices antes de leer nada, y de paso da la caja de poda.
+  const Rect caja = bounding_box_of(vertices);
+
+  std::vector<RTreeLeafEntry> candidatos = search(caja);
+  const auto fuera =
+      std::remove_if(candidatos.begin(), candidatos.end(),
+                     [&](const auto& e) { return !contains_point(vertices, e.point); });
+  const auto descartados = static_cast<std::uint64_t>(std::distance(fuera, candidatos.end()));
+  candidatos.erase(fuera, candidatos.end());
+
+  // `search` ya conto los candidatos como devueltos; los que el poligono
+  // descarto siguen contando como examinados, pero no como devueltos.
+  stats_.records_returned -= descartados;
+  return candidatos;
 }
 
 std::vector<RTreeLeafEntry> RTree::search_radius(Point center, double radius, Metric metric) {
