@@ -21,7 +21,7 @@ const CREATE_TABLE =
   /^\s*CREATE\s+TABLE\s+([a-zA-Z_]\w*)\s*\(([\s\S]*)\)\s*(?:USING\s+([a-zA-Z_]\w*))?\s*;?\s*$/i;
 
 const COLUMNA =
-  /^([a-zA-Z_]\w*)\s+(INT|VARCHAR|DOUBLE|BOOL|DATE)(?:\s*\(\s*(\d+)\s*\))?(?:\s+PRIMARY\s+KEY)?$/i;
+  /^([a-zA-Z_]\w*)\s+(INT|VARCHAR|DOUBLE|BOOL|DATE|POINT)(?:\s*\(\s*(\d+)\s*\))?(?:\s+PRIMARY\s+KEY)?$/i;
 
 const ES_CLAVE = /\bPRIMARY\s+KEY\b/i;
 

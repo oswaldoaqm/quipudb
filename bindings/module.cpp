@@ -101,6 +101,10 @@ struct type_caster<Value> {
       value = src.cast<Date>();
       return true;
     }
+    if (py::isinstance<GeoPoint>(src)) {
+      value = src.cast<GeoPoint>();
+      return true;
+    }
     if (PyLong_Check(src.ptr())) {
       int desbordo = 0;
       const long long v = PyLong_AsLongLongAndOverflow(src.ptr(), &desbordo);
@@ -128,7 +132,7 @@ struct type_caster<Value> {
     return std::visit(
         [&](const auto& x) -> handle {
           using T = std::decay_t<decltype(x)>;
-          if constexpr (std::is_same_v<T, Date>) {
+          if constexpr (std::is_same_v<T, Date> || std::is_same_v<T, GeoPoint>) {
             return py::cast(x, politica, padre).release();
           } else {
             return py::cast(x).release();
@@ -245,7 +249,8 @@ PYBIND11_MODULE(quipudb_native, m) {
       .value("DOUBLE", DataType::Double)
       .value("VARCHAR", DataType::Varchar)
       .value("BOOL", DataType::Bool)
-      .value("DATE", DataType::Date);
+      .value("DATE", DataType::Date)
+      .value("POINT", DataType::Point);
 
   py::class_<Date>(m, "Date", "Dias desde 1970-01-01")
       .def(py::init<>())
@@ -254,6 +259,21 @@ PYBIND11_MODULE(quipudb_native, m) {
       .def(py::self == py::self)
       .def(py::self < py::self)
       .def("__repr__", [](const Date& d) { return "Date(" + std::to_string(d.days) + ")"; });
+
+  py::class_<GeoPoint>(m, "GeoPoint", "Coordenada geografica (latitud, longitud)")
+      .def(py::init<>())
+      .def(py::init([](double latitude, double longitude) {
+             return GeoPoint{latitude, longitude};
+           }),
+           py::arg("latitude"), py::arg("longitude"))
+      .def_readwrite("latitude", &GeoPoint::latitude)
+      .def_readwrite("longitude", &GeoPoint::longitude)
+      .def(py::self == py::self)
+      .def(py::self < py::self)
+      .def("__repr__", [](const GeoPoint& point) {
+        return "GeoPoint(" + std::to_string(point.latitude) + ", " +
+               std::to_string(point.longitude) + ")";
+      });
 
   py::class_<RID>(m, "RID", "Direccion fisica de un registro")
       .def(py::init<>())

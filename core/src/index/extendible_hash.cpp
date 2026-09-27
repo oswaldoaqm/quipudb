@@ -27,17 +27,20 @@ std::uint64_t ExtendibleHash::hash_of(const Column& column, const Key& key) {
                       column.name + " es " + std::string(to_string(column.type)));
   }
   Value normal = key;
+  const auto normalizar_double = [](double value) {
+    if (value == 0.0) return 0.0;
+    if (std::isnan(value)) return std::numeric_limits<double>::quiet_NaN();
+    return value;
+  };
   if (column.type == DataType::Double) {
     // Dos claves que `compare` considera iguales tienen que hashear igual, y
     // los bytes crudos no lo garantizan: 0.0 y -0.0 solo difieren en el bit de
     // signo, y dos NaN con carga distinta tienen bytes distintos aunque
     // `compare` los declare iguales.
-    const double d = std::get<double>(normal);
-    if (d == 0.0) {
-      normal = 0.0;
-    } else if (std::isnan(d)) {
-      normal = std::numeric_limits<double>::quiet_NaN();
-    }
+    normal = normalizar_double(std::get<double>(normal));
+  } else if (column.type == DataType::Point) {
+    const auto point = std::get<GeoPoint>(normal);
+    normal = GeoPoint{normalizar_double(point.latitude), normalizar_double(point.longitude)};
   }
   std::vector<std::byte> buf(column.byte_size());
   RecordCodec::encode_value(column, normal, buf);
@@ -613,6 +616,17 @@ bool ExtendibleHash::misma_clave(std::span<const std::byte> entrada,
     std::memcpy(&a, entrada.data(), sizeof a);
     std::memcpy(&b, buscada.data(), sizeof b);
     return a == b;
+  }
+  if (key_column_.type == DataType::Point) {
+    double a_latitude = 0.0;
+    double a_longitude = 0.0;
+    double b_latitude = 0.0;
+    double b_longitude = 0.0;
+    std::memcpy(&a_latitude, entrada.data(), sizeof(double));
+    std::memcpy(&a_longitude, entrada.data() + sizeof(double), sizeof(double));
+    std::memcpy(&b_latitude, buscada.data(), sizeof(double));
+    std::memcpy(&b_longitude, buscada.data() + sizeof(double), sizeof(double));
+    return a_latitude == b_latitude && a_longitude == b_longitude;
   }
   return std::equal(buscada.begin(), buscada.end(), entrada.begin());
 }

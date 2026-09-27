@@ -21,6 +21,7 @@ _FIXED_TYPE_SIZES = {
     SqlTypeName.DOUBLE: 8,
     SqlTypeName.BOOL: 1,
     SqlTypeName.DATE: 4,
+    SqlTypeName.POINT: 16,
 }
 
 
@@ -78,7 +79,15 @@ class BoundCreateIndexStatement:
     span: Span
 
 
-BoundValue: TypeAlias = int | float | str | bool | date
+@dataclass(frozen=True, slots=True, order=True)
+class PointValue:
+    """Coordenada geografica en el orden SQL: latitud, longitud."""
+
+    latitude: float
+    longitude: float
+
+
+BoundValue: TypeAlias = int | float | str | bool | date | PointValue
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,5 +283,6 @@ __all__ = [
     "BoundSource",
     "BoundTableRef",
     "BoundValue",
+    "PointValue",
     "join_output_schema",
 ]

@@ -58,6 +58,7 @@ class TokenKind(StrEnum):
     VARCHAR = "VARCHAR"
     BOOL = "BOOL"
     DATE = "DATE"
+    POINT = "POINT"
     TRUE = "TRUE"
     FALSE = "FALSE"
     BEGIN = "BEGIN"

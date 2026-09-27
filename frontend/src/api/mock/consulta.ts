@@ -18,6 +18,7 @@ import type {
   CellValue,
   DataType,
   Plan,
+  PointValue,
   Stats,
   Step,
   Structure,
@@ -68,12 +69,15 @@ const AGREGADO = new RegExp(
   "i",
 );
 const AGRUPA = new RegExp(`\\bGROUP\\s+BY\\s+(${REFERENCIA})`, "i");
+const NUMERO = "-?\\d+(?:\\.\\d+)?";
+const PUNTO = `POINT\\s*\\(\\s*${NUMERO}\\s*,\\s*${NUMERO}\\s*\\)`;
+const LITERAL = `(?:${PUNTO}|'[^']*'|${NUMERO}|true|false)`;
 const COMPARACION = new RegExp(
-  `\\bWHERE\\s+(${REFERENCIA})\\s*(<=|>=|=|<|>)\\s*('[^']*'|-?[\\d.]+|true|false)`,
+  `\\bWHERE\\s+(${REFERENCIA})\\s*(<=|>=|=|<|>)\\s*(${LITERAL})`,
   "i",
 );
 const ENTRE = new RegExp(
-  `\\bWHERE\\s+(${REFERENCIA})\\s+BETWEEN\\s+('[^']*'|-?[\\d.]+)\\s+AND\\s+('[^']*'|-?[\\d.]+)`,
+  `\\bWHERE\\s+(${REFERENCIA})\\s+BETWEEN\\s+(${LITERAL})\\s+AND\\s+(${LITERAL})`,
   "i",
 );
 const ORDEN = new RegExp(
@@ -85,6 +89,12 @@ function valorDe(texto: string): CellValue {
   if (texto.startsWith("'")) return texto.slice(1, -1);
   if (/^true$/i.test(texto)) return true;
   if (/^false$/i.test(texto)) return false;
+  const point = /^POINT\s*\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\)$/i.exec(
+    texto,
+  );
+  if (point) {
+    return { latitude: Number(point[1]), longitude: Number(point[2]) };
+  }
   return Number(texto);
 }
 
@@ -165,7 +175,14 @@ function comparar(a: CellValue, b: CellValue): number {
   if (typeof a === "number" && typeof b === "number") return a - b;
   if (typeof a === "boolean" && typeof b === "boolean")
     return Number(a) - Number(b);
+  if (esPoint(a) && esPoint(b)) {
+    return a.latitude - b.latitude || a.longitude - b.longitude;
+  }
   return String(a).localeCompare(String(b));
+}
+
+function esPoint(value: CellValue): value is PointValue {
+  return typeof value === "object" && value !== null;
 }
 
 export function cumple(valor: CellValue, condicion: Condicion): boolean {

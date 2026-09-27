@@ -102,15 +102,18 @@ export function ejecutarDelete(sql: string): number {
   return borradas;
 }
 
-/** Separa por comas sin partir las que van dentro de una cadena. */
+/** Separa por comas sin partir strings ni los dos argumentos de POINT. */
 function partirValores(lista: string): string[] {
   const partes: string[] = [];
   let actual = "";
   let enCadena = false;
+  let profundidad = 0;
 
   for (const caracter of lista) {
     if (caracter === "'") enCadena = !enCadena;
-    if (caracter === "," && !enCadena) {
+    if (!enCadena && caracter === "(") profundidad += 1;
+    if (!enCadena && caracter === ")") profundidad -= 1;
+    if (caracter === "," && !enCadena && profundidad === 0) {
       partes.push(actual.trim());
       actual = "";
     } else {
@@ -127,6 +130,7 @@ function tipoDelLiteral(texto: string): string {
   if (/^(true|false)$/i.test(texto)) return "BOOL";
   if (/^-?\d+$/.test(texto)) return "INT";
   if (/^-?\d*\.\d+$/.test(texto)) return "DOUBLE";
+  if (/^POINT\s*\(/i.test(texto)) return "POINT";
   return "desconocido";
 }
 
@@ -165,6 +169,25 @@ function convertir(
       falla(`se esperaba BOOL y se recibio ${recibido}`);
     }
     return /^true$/i.test(texto);
+  }
+
+  if (esperado === "POINT") {
+    if (recibido !== "POINT") {
+      falla(`se esperaba POINT y se recibio ${recibido}`);
+    }
+    const point = /^POINT\s*\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\)$/i.exec(
+      texto,
+    );
+    if (!point) return falla("POINT debe usar POINT(latitud, longitud)");
+    const latitude = Number(point[1]);
+    const longitude = Number(point[2]);
+    if (latitude < -90 || latitude > 90) {
+      falla("la latitud de POINT debe estar entre -90 y 90");
+    }
+    if (longitude < -180 || longitude > 180) {
+      falla("la longitud de POINT debe estar entre -180 y 180");
+    }
+    return { latitude, longitude };
   }
 
   if (esperado === "INT" || esperado === "DATE") {
