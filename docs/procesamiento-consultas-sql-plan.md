@@ -209,7 +209,8 @@ SELECT activo, AVG(promedio) FROM alumnos GROUP BY activo;
 
 Reglas mínimas:
 
-- `CREATE TABLE` admite los tipos `INT`, `DOUBLE`, `VARCHAR(n)`, `BOOL` y `DATE`.
+- `CREATE TABLE` admite los tipos `INT`, `DOUBLE`, `VARCHAR(n)`, `BOOL`, `DATE`
+  y, desde #126, `POINT`.
 - Se exigirá exactamente una columna `PRIMARY KEY`, porque `Schema` siempre necesita `key_column`.
 - `USING HEAP` y `USING SEQUENTIAL` eligen la organización. Se propondrá `HEAP` como valor por
   defecto si la cláusula se omite; esta sintaxis se fijará en el ADR antes de codificar.
@@ -236,7 +237,9 @@ Reglas mínimas:
 - `AND`, `OR`, `NOT`, subconsultas, expresiones aritméticas y funciones escalares.
 - `HAVING`, múltiples columnas de orden o agrupación y aliases.
 - Transacciones y concurrencia, que corresponden a 2.1.4.
-- SQL espacial, búsqueda de texto y similitud multimedia de las partes posteriores.
+- Operadores SQL espaciales e indices R-Tree desde SQL, búsqueda de texto y
+  similitud multimedia de las partes posteriores. El tipo y literal
+  `POINT(latitud, longitud)` se incorporaron en #126 como contrato previo.
 
 Si un criterio escrito de #24–#28 contradice esta lista, prevalece el issue. Cualquier ampliación
 adicional requiere actualizar primero este plan y el ADR.
@@ -246,6 +249,8 @@ adicional requiere actualizar primero este plan y el ADR.
 > `DELETE` en un contrato explícitamente probado. El issue #105 agregó lotes
 > de varias sentencias sin cambiar el contrato estricto de `parse_sql`. Los
 > issues #107 y #108 agregaron `CREATE INDEX` y `EXPLAIN [ANALYZE] SELECT`.
+> El issue #126 agrego el tipo `POINT` y su literal de coordenadas; la
+> indexacion y los operadores espaciales siguen en su fase propia.
 
 ## Issues verificados y orden de entrega
 

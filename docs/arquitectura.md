@@ -118,6 +118,17 @@ cero. `EXPLAIN ANALYZE SELECT` recorre la misma ruta instrumentada que un
 plan sin las filas de la consulta explicada, por lo que el contrato HTTP y el
 Panel de Plan existente no requieren campos nuevos.
 
+Desde #126, el contrato SQL incorpora columnas `POINT` y literales
+`POINT(latitud, longitud)`. Parser y semantica conservan nombres y spans
+separados para cada coordenada; latitud se limita a `[-90, 90]` y longitud a
+`[-180, 180]`. El core usa `GeoPoint {latitude, longitude}` y el codec reserva
+16 bytes fijos, con lo que el catalogo puede cerrar y reabrir el esquema y los
+registros sin perder el tipo. Python expone el valor enlazado como
+`PointValue`, y la API lo serializa como un objeto con `latitude` y
+`longitude`. B+ y hash lo rechazan deliberadamente: el adaptador espacial
+posterior sera responsable de convertir `(latitud, longitud)` en el `(x, y)`
+que usa el R-Tree.
+
 Desde #28, `ORDER BY` encadena la ruta de acceso y el filtro con
 `ExternalSort`; ordena la fila completa antes de proyectar y soporta `ASC` y
 `DESC` estables. `GROUP BY` traduce los agregados a `AggregateSpec` y usa

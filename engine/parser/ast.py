@@ -22,6 +22,7 @@ class SqlTypeName(StrEnum):
     VARCHAR = "VARCHAR"
     BOOL = "BOOL"
     DATE = "DATE"
+    POINT = "POINT"
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +80,18 @@ class DateLiteral:
     span: Span
 
 
-Literal: TypeAlias = IntegerLiteral | DoubleLiteral | StringLiteral | BooleanLiteral | DateLiteral
+@dataclass(frozen=True, slots=True)
+class PointLiteral:
+    latitude: float
+    longitude: float
+    latitude_span: Span
+    longitude_span: Span
+    span: Span
+
+
+Literal: TypeAlias = (
+    IntegerLiteral | DoubleLiteral | StringLiteral | BooleanLiteral | DateLiteral | PointLiteral
+)
 
 
 @dataclass(frozen=True, slots=True)

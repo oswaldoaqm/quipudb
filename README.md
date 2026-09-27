@@ -162,6 +162,24 @@ print(deleted.plan)            # None: el plan DML aún requiere acuerdo en ADR 
 processor.execute("DROP TABLE cursos")
 ```
 
+El tipo espacial básico se declara como `POINT` y recibe coordenadas en orden
+latitud, longitud. Ambos limites se validan antes de escribir en disco:
+
+```python
+processor.execute(
+    "CREATE TABLE lugares (id INT PRIMARY KEY, nombre VARCHAR(40), ubicacion POINT)"
+)
+processor.execute("INSERT INTO lugares VALUES (1, 'UTEC', POINT(-12.1354, -77.0227))")
+near_utec = processor.execute(
+    "SELECT nombre FROM lugares WHERE ubicacion = POINT(-12.1354, -77.0227)"
+)
+print(near_utec.rows)  # (('UTEC',),)
+```
+
+`POINT` ocupa 16 bytes (dos `double`) y también viaja por la API como
+`{"latitude": ..., "longitude": ...}`. Los índices B+ y hash no se pueden
+crear sobre esta columna; la indexación espacial corresponde al R-Tree.
+
 `WHERE` admite `=`, `<`, `<=`, `>`, `>=` y `BETWEEN` inclusivo. El planner usa
 la clave primaria o un índice secundario aplicable; si no existe uno, registra
 el `scan` y el filtro en memoria. `DELETE` materializa todos sus candidatos antes

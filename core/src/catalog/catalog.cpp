@@ -27,7 +27,7 @@ bool is_index_kind(std::string_view s) noexcept {
 
 std::optional<DataType> parse_type(std::string_view s) noexcept {
   for (const auto t : {DataType::Int, DataType::Double, DataType::Varchar, DataType::Bool,
-                       DataType::Date}) {
+                       DataType::Date, DataType::Point}) {
     if (to_string(t) == s) return t;
   }
   return std::nullopt;
@@ -186,6 +186,10 @@ IndexInfo Catalog::create_index(std::string_view table, std::string_view index_n
     throw SchemaError("'" + std::string(kind) + "' no es un indice secundario (" +
                       std::string(kind::kBPlusUnclustered) + ", " +
                       std::string(kind::kExtendibleHash) + ")");
+  }
+  if (info.schema.columns[*col].type == DataType::Point) {
+    throw SchemaError("la columna " + std::string(column) +
+                      " es POINT: requiere un indice R-Tree");
   }
   // Un indice secundario guarda RIDs y los resuelve con TableFile::read, asi
   // que solo sirve sobre una organizacion cuyos RIDs no se muevan. Hoy eso es

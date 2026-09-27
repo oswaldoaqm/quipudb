@@ -52,6 +52,7 @@ _KEYWORDS = {
         TokenKind.VARCHAR,
         TokenKind.BOOL,
         TokenKind.DATE,
+        TokenKind.POINT,
         TokenKind.TRUE,
         TokenKind.FALSE,
         TokenKind.BEGIN,

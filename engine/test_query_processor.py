@@ -5,7 +5,7 @@ from datetime import date
 import pytest
 
 from engine.executor import QueryProcessor, QueryResult
-from engine.parser import SQLSemanticError
+from engine.parser import SQLSemanticError, SqlTypeName
 from engine.transactions import TransactionError
 
 quipudb = pytest.importorskip(
@@ -72,6 +72,27 @@ def test_insert_escribe_y_permite_leer_los_cinco_tipos(db):
     (row,) = db.table("alumnos").search(7)
     assert row[:4] == [7, 18.5, "O'Brien", True]
     assert row[4] == quipudb.Date((date(2026, 9, 13) - date(1970, 1, 1)).days)
+
+
+def test_point_se_crea_inserta_filtra_y_recupera_por_sql(db):
+    processor = QueryProcessor(db)
+    processor.execute(
+        "CREATE TABLE lugares (id INT PRIMARY KEY, nombre VARCHAR(20), ubicacion POINT)"
+    )
+    processor.execute("INSERT INTO lugares VALUES (1, 'UTEC', POINT(-12.135, -77.022))")
+    processor.execute("INSERT INTO lugares VALUES (2, 'Centro', POINT(-12.0464, -77.0428))")
+
+    result = processor.execute(
+        "SELECT nombre, ubicacion FROM lugares "
+        "WHERE ubicacion = POINT(-12.0464, -77.0428)"
+    )
+
+    assert result.columns == ("nombre", "ubicacion")
+    assert result.column_types == (SqlTypeName.VARCHAR, SqlTypeName.POINT)
+    assert result.rows[0][0] == "Centro"
+    assert result.rows[0][1].latitude == pytest.approx(-12.0464)
+    assert result.rows[0][1].longitude == pytest.approx(-77.0428)
+    assert db.table_info("lugares").schema.columns[2].type == quipudb.DataType.POINT
 
 
 def test_lote_inserta_varias_filas_con_una_sola_llamada(db):

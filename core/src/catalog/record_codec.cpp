@@ -65,6 +65,12 @@ void RecordCodec::encode_value(const Column& col, const Value& v, std::span<std:
     case DataType::Date:
       put(out, std::get<Date>(v).days);
       break;
+    case DataType::Point: {
+      const auto& point = std::get<GeoPoint>(v);
+      put(out, point.latitude);
+      put(out.subspan(sizeof(double)), point.longitude);
+      break;
+    }
   }
 }
 
@@ -87,6 +93,8 @@ Value RecordCodec::decode_value(const Column& col, std::span<const std::byte> in
       return in[0] != std::byte{0};
     case DataType::Date:
       return Date{get<std::int32_t>(in)};
+    case DataType::Point:
+      return GeoPoint{get<double>(in), get<double>(in.subspan(sizeof(double)))};
   }
   throw InvalidRecord("columna " + col.name + ": tipo desconocido");
 }

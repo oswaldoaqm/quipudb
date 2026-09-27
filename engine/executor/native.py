@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import importlib
+import math
 from datetime import date, timedelta
 from types import ModuleType
 from typing import Any
 
 from engine.parser.ast import SqlTypeName
-from engine.parser.bound_ast import BoundColumn, BoundSchema, BoundValue
+from engine.parser.bound_ast import BoundColumn, BoundSchema, BoundValue, PointValue
 
 _EPOCH = date(1970, 1, 1)
 _INT32_MIN = -(2**31)
@@ -41,6 +42,7 @@ def to_native_schema(schema: BoundSchema, native: Any) -> Any:
         SqlTypeName.VARCHAR: native.DataType.VARCHAR,
         SqlTypeName.BOOL: native.DataType.BOOL,
         SqlTypeName.DATE: native.DataType.DATE,
+        SqlTypeName.POINT: native.DataType.POINT,
     }
     columns = [
         native.Column(column.name, data_types[column.data_type], column.length or 0)
@@ -58,6 +60,7 @@ def from_native_schema(schema: Any, native: Any) -> BoundSchema:
         (native.DataType.VARCHAR, SqlTypeName.VARCHAR),
         (native.DataType.BOOL, SqlTypeName.BOOL),
         (native.DataType.DATE, SqlTypeName.DATE),
+        (native.DataType.POINT, SqlTypeName.POINT),
     )
     columns: list[BoundColumn] = []
     for column in schema.columns:
@@ -88,6 +91,8 @@ def to_native_value(value: BoundValue, native: Any) -> object:
 
     if isinstance(value, date) and not isinstance(value, bool):
         return native.Date((value - _EPOCH).days)
+    if isinstance(value, PointValue):
+        return native.GeoPoint(value.latitude, value.longitude)
     return value
 
 
@@ -112,6 +117,25 @@ def from_native_record(record: Any, schema: BoundSchema) -> tuple[BoundValue, ..
                 raise RuntimeError(
                     f"el core devolvio una fecha invalida en la columna {column.name!r}"
                 ) from error
+            continue
+        if column.data_type is SqlTypeName.POINT:
+            try:
+                latitude = float(value.latitude)
+                longitude = float(value.longitude)
+            except (AttributeError, TypeError, ValueError) as error:
+                raise RuntimeError(
+                    f"el core devolvio un POINT invalido en la columna {column.name!r}"
+                ) from error
+            if (
+                not math.isfinite(latitude)
+                or not math.isfinite(longitude)
+                or not -90.0 <= latitude <= 90.0
+                or not -180.0 <= longitude <= 180.0
+            ):
+                raise RuntimeError(
+                    f"el core devolvio un POINT fuera de rango en la columna {column.name!r}"
+                )
+            converted.append(PointValue(latitude, longitude))
             continue
         converted.append(value)
     return tuple(converted)
@@ -143,6 +167,8 @@ def native_range_bounds(column: BoundColumn, native: Any) -> tuple[object, objec
         return False, True
     if column.data_type is SqlTypeName.DATE:
         return native.Date(_INT32_MIN), native.Date(_INT32_MAX)
+    if column.data_type is SqlTypeName.POINT:
+        return native.GeoPoint(-90.0, -180.0), native.GeoPoint(90.0, 180.0)
     raise AssertionError(f"tipo SQL desconocido: {column.data_type!r}")
 
 
