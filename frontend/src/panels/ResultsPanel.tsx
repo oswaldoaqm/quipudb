@@ -20,6 +20,9 @@ const ANCHO_COLUMNA = 110;
 
 function formatear(valor: CellValue): string {
   if (typeof valor === "boolean") return valor ? "true" : "false";
+  if (typeof valor === "object" && valor !== null) {
+    return `POINT(${valor.latitude}, ${valor.longitude})`;
+  }
   return String(valor);
 }
 

@@ -24,6 +24,7 @@ from engine.parser.ast import (
     InsertStatement,
     IntegerLiteral,
     Literal,
+    PointLiteral,
     SelectStatement,
     SqlTypeName,
     StorageKind,
@@ -52,6 +53,7 @@ from engine.parser.bound_ast import (
     BoundSource,
     BoundTableRef,
     BoundValue,
+    PointValue,
     join_output_schema,
 )
 from engine.parser.errors import SQLSemanticError
@@ -149,10 +151,20 @@ def bind_create_index(
             statement.table.span,
             source,
         )
-    if statement.column.name not in {column.name for column in schema.columns}:
+    indexed_column = next(
+        (column for column in schema.columns if column.name == statement.column.name),
+        None,
+    )
+    if indexed_column is None:
         _fail(
             f"la columna {statement.column.name!r} no existe en la tabla "
             f"{schema.table_name!r}",
+            statement.column.span,
+            source,
+        )
+    if indexed_column.data_type is SqlTypeName.POINT:
+        _fail(
+            f"la columna {statement.column.name!r} es POINT y requiere un indice R-Tree",
             statement.column.span,
             source,
         )
@@ -611,6 +623,8 @@ def _bind_value(literal: Literal, column: BoundColumn, source: str | None) -> Bo
         if not isinstance(literal, DateLiteral):
             _wrong_type(literal, column, source)
         return literal.value
+    if column.data_type is SqlTypeName.POINT:
+        return _bind_point(literal, column, source)
     raise AssertionError(f"tipo SQL desconocido: {column.data_type!r}")
 
 
@@ -694,6 +708,24 @@ def _bind_varchar(literal: Literal, column: BoundColumn, source: str | None) -> 
     return literal.value
 
 
+def _bind_point(literal: Literal, column: BoundColumn, source: str | None) -> PointValue:
+    if not isinstance(literal, PointLiteral):
+        _wrong_type(literal, column, source)
+    if not math.isfinite(literal.latitude) or not -90.0 <= literal.latitude <= 90.0:
+        _fail(
+            f"columna {column.name}: la latitud de POINT debe estar entre -90 y 90",
+            literal.latitude_span,
+            source,
+        )
+    if not math.isfinite(literal.longitude) or not -180.0 <= literal.longitude <= 180.0:
+        _fail(
+            f"columna {column.name}: la longitud de POINT debe estar entre -180 y 180",
+            literal.longitude_span,
+            source,
+        )
+    return PointValue(literal.latitude, literal.longitude)
+
+
 def _wrong_type(literal: Literal, column: BoundColumn, source: str | None) -> None:
     _fail(
         f"columna {column.name}: se esperaba {column.data_type.value} y se recibio "
@@ -714,6 +746,8 @@ def _literal_type(literal: Literal) -> str:
         return "BOOL"
     if isinstance(literal, DateLiteral):
         return "DATE"
+    if isinstance(literal, PointLiteral):
+        return "POINT"
     return type(literal).__name__
 
 
