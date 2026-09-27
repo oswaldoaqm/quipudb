@@ -129,6 +129,14 @@ registros sin perder el tipo. Python expone el valor enlazado como
 posterior sera responsable de convertir `(latitud, longitud)` en el `(x, y)`
 que usa el R-Tree.
 
+Desde #127, `SELECT` admite `LIMIT n` como ultima clausula. El parser exige un
+entero no negativo y conserva el span del valor; la fase enlazada transporta
+el limite sin depender del catalogo. Tras ejecutar acceso, filtro, agrupacion,
+orden y proyeccion, un operador en memoria corta las filas y envuelve el plan
+con `op: "limit"` y `structure: "memory"`. En particular, `ORDER BY ... LIMIT`
+ordena todo el conjunto antes del corte, y `EXPLAIN` reproduce ese mismo arbol
+sin ejecutar.
+
 Desde #28, `ORDER BY` encadena la ruta de acceso y el filtro con
 `ExternalSort`; ordena la fila completa antes de proyectar y soporta `ASC` y
 `DESC` estables. `GROUP BY` traduce los agregados a `AggregateSpec` y usa
