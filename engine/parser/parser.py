@@ -19,6 +19,8 @@ from engine.parser.ast import (
     CreateTableStatement,
     DateLiteral,
     DeleteStatement,
+    DistanceCondition,
+    DistanceMetric,
     DoubleLiteral,
     DropTableStatement,
     EndTransactionStatement,
@@ -229,10 +231,13 @@ class _Parser:
             kind = IndexKind.BPLUS_UNCLUSTERED
         elif self._match(TokenKind.HASH, TokenKind.EXTENDIBLE_HASH):
             kind = IndexKind.EXTENDIBLE_HASH
+        elif self._match(TokenKind.RTREE):
+            kind = IndexKind.RTREE
         else:
             raise self._error(
                 self._peek(),
-                "se esperaba BPLUS, BPLUS_UNCLUSTERED, HASH o EXTENDIBLE_HASH despues de USING",
+                "se esperaba BPLUS, BPLUS_UNCLUSTERED, HASH, EXTENDIBLE_HASH o RTREE "
+                "despues de USING",
             )
         return CreateIndexStatement(
             index=index,
@@ -506,7 +511,10 @@ class _Parser:
         end = self._expect(TokenKind.TRANSACTION, "se esperaba TRANSACTION despues de END")
         return EndTransactionStatement(span=combine_spans(start.span, end.span))
 
-    def _condition(self) -> ComparisonCondition | BetweenCondition:
+    def _condition(self) -> ComparisonCondition | BetweenCondition | DistanceCondition:
+        if self._match(TokenKind.DISTANCIA):
+            return self._distance_condition(self._previous())
+
         column = self._column_reference("se esperaba una columna en WHERE")
         if self._match(TokenKind.BETWEEN):
             lower = self._literal()
@@ -533,6 +541,49 @@ class _Parser:
             operator=operator,
             value=value,
             span=combine_spans(column.span, value.span),
+        )
+
+    def _distance_condition(self, start: Token) -> DistanceCondition:
+        self._expect(TokenKind.LPAREN, "se esperaba '(' despues de DISTANCIA")
+        column = self._column_reference("se esperaba una columna en DISTANCIA")
+        self._expect(TokenKind.COMMA, "se esperaba ',' despues de la columna de DISTANCIA")
+        point = self._expect(TokenKind.POINT, "se esperaba POINT como centro de DISTANCIA")
+        center = self._point_literal(point)
+
+        metric = DistanceMetric.HAVERSINE
+        if self._match(TokenKind.COMMA):
+            if self._match(TokenKind.HAVERSINE):
+                metric = DistanceMetric.HAVERSINE
+            elif self._match(TokenKind.EUCLIDEAN):
+                metric = DistanceMetric.EUCLIDEAN
+            else:
+                raise self._error(
+                    self._peek(),
+                    "se esperaba HAVERSINE o EUCLIDEAN como metrica de DISTANCIA",
+                )
+        self._expect(TokenKind.RPAREN, "se esperaba ')' despues de DISTANCIA")
+
+        operator_token = self._peek()
+        if operator_token.kind not in {TokenKind.LESS_THAN, TokenKind.LESS_THAN_OR_EQUAL}:
+            raise self._error(
+                operator_token,
+                "DISTANCIA solo admite < o <= para una busqueda por radio",
+            )
+        self._advance()
+        operator = _COMPARISONS[operator_token.kind]
+
+        radius_token = self._peek()
+        if radius_token.kind not in {TokenKind.INTEGER, TokenKind.DOUBLE_LITERAL}:
+            raise self._error(radius_token, "el radio de DISTANCIA debe ser numerico")
+        radius = self._literal()
+        assert isinstance(radius, (IntegerLiteral, DoubleLiteral))
+        return DistanceCondition(
+            column=column,
+            center=center,
+            operator=operator,
+            radius=radius,
+            metric=metric,
+            span=combine_spans(start.span, radius.span),
         )
 
     def _literal(self) -> Literal:

@@ -9,6 +9,7 @@ from typing import TypeAlias
 from engine.parser.ast import (
     AggregateFunction,
     ComparisonOperator,
+    DistanceMetric,
     IndexKind,
     OrderDirection,
     SqlTypeName,
@@ -157,7 +158,21 @@ class BoundBetweenCondition:
     span: Span
 
 
-BoundCondition: TypeAlias = BoundComparisonCondition | BoundBetweenCondition
+@dataclass(frozen=True, slots=True)
+class BoundDistanceCondition:
+    """Predicado espacial resuelto y listo para scan o busqueda por radio."""
+
+    column: BoundColumnReference
+    center: PointValue
+    operator: ComparisonOperator
+    radius: float
+    metric: DistanceMetric
+    span: Span
+
+
+BoundCondition: TypeAlias = (
+    BoundComparisonCondition | BoundBetweenCondition | BoundDistanceCondition
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,6 +288,7 @@ __all__ = [
     "BoundCreateIndexStatement",
     "BoundCreateTable",
     "BoundDeleteStatement",
+    "BoundDistanceCondition",
     "BoundDropTableStatement",
     "BoundGroupBy",
     "BoundInsertStatement",

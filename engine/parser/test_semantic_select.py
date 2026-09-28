@@ -6,13 +6,20 @@ from datetime import date
 import pytest
 
 from engine.parser import Limit, SelectStatement, Wildcard, parse_sql
-from engine.parser.ast import AggregateFunction, ComparisonOperator, OrderDirection, SqlTypeName
+from engine.parser.ast import (
+    AggregateFunction,
+    ComparisonOperator,
+    DistanceMetric,
+    OrderDirection,
+    SqlTypeName,
+)
 from engine.parser.bound_ast import (
     BoundAggregateCall,
     BoundBetweenCondition,
     BoundColumn,
     BoundColumnReference,
     BoundComparisonCondition,
+    BoundDistanceCondition,
     BoundGroupBy,
     BoundOrderBy,
     BoundSchema,
@@ -189,6 +196,69 @@ def test_bind_select_between_es_inclusivo_y_no_rechaza_limites_invertidos() -> N
     assert type(bound.where.lower) is float
     assert type(bound.where.upper) is float
     assert bound.where.span == statement.where.span  # type: ignore[union-attr]
+
+
+def test_bind_select_resuelve_distancia_sobre_point() -> None:
+    source = (
+        "SELECT * FROM lugares WHERE "
+        "distancia(ubicacion, POINT(-12.0464, -77.0428), EUCLIDEAN) <= 0.5"
+    )
+    schema = BoundSchema(
+        "lugares",
+        (
+            BoundColumn("id", SqlTypeName.INT, None),
+            BoundColumn("ubicacion", SqlTypeName.POINT, None),
+        ),
+        0,
+    )
+
+    bound = bind_select(_select(source), schema, source)
+
+    assert isinstance(bound.where, BoundDistanceCondition)
+    assert bound.where.column.index == 1
+    assert bound.where.center.latitude == -12.0464
+    assert bound.where.center.longitude == -77.0428
+    assert bound.where.radius == 0.5
+    assert bound.where.metric is DistanceMetric.EUCLIDEAN
+
+
+@pytest.mark.parametrize(
+    ("source", "message", "fragment"),
+    [
+        (
+            "SELECT * FROM datos WHERE distancia(promedio, POINT(0, 0)) < 1",
+            "requiere una columna POINT",
+            "promedio",
+        ),
+        (
+            "SELECT * FROM lugares WHERE distancia(ubicacion, POINT(0, 0)) < -1",
+            "finito y no negativo",
+            "-1",
+        ),
+    ],
+)
+def test_bind_select_rechaza_distancia_semanticamente_invalida(
+    source: str,
+    message: str,
+    fragment: str,
+) -> None:
+    schema = (
+        _schema()
+        if "FROM datos" in source
+        else BoundSchema(
+            "lugares",
+            (
+                BoundColumn("id", SqlTypeName.INT, None),
+                BoundColumn("ubicacion", SqlTypeName.POINT, None),
+            ),
+            0,
+        )
+    )
+
+    with pytest.raises(SQLSemanticError, match=message) as caught:
+        bind_select(_select(source), schema, source)
+
+    assert source[caught.value.span.start : caught.value.span.end] == fragment
 
 
 @pytest.mark.parametrize(
