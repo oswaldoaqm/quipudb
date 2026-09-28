@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from engine.parser.ast import SqlTypeName
 
 TableStructure = Literal["heap", "sequential", "bplus_clustered"]
-IndexStructure = Literal["bplus_unclustered", "extendible_hash"]
+IndexStructure = Literal["bplus_unclustered", "extendible_hash", "rtree"]
 ErrorKind = Literal["lex", "parse", "semantic", "unsupported"]
 
 
