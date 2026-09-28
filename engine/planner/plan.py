@@ -28,6 +28,7 @@ class Op(StrEnum):
     RANGE_SEARCH = "range_search"  # busqueda por rango de clave primaria en la tabla
     INDEX_SEARCH = "index_search"  # busqueda puntual en un indice secundario: devuelve RIDs
     INDEX_RANGE = "index_range"  # busqueda por rango en un indice secundario: devuelve RIDs
+    RADIUS_SEARCH = "radius_search"  # busqueda espacial por radio en R-Tree: devuelve RIDs
     FETCH = "fetch"  # lee de la tabla los registros de los RIDs que entrega el hijo
     FILTER = "filter"  # evalua en memoria un predicado que ninguna estructura resolvio
     PROJECT = "project"  # se queda con algunas columnas
@@ -48,6 +49,7 @@ class Structure(StrEnum):
     BPLUS_CLUSTERED = "bplus_clustered"
     BPLUS_UNCLUSTERED = "bplus_unclustered"
     EXTENDIBLE_HASH = "extendible_hash"
+    RTREE = "rtree"
     EXTERNAL_SORT = "external_sort"  # external/ del core: k-way merge
     EXTERNAL_HASH = "external_hash"  # external/ del core: particiones en disco
     MEMORY = "memory"  # el paso no toco disco (filter, project, limit)

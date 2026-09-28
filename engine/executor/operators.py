@@ -13,7 +13,7 @@ from engine.executor.native import (
     from_native_record,
     to_native_schema,
 )
-from engine.executor.predicates import equality_key, matches, range_values
+from engine.executor.predicates import equality_key, matches, range_values, spatial_search_args
 from engine.parser.ast import SqlTypeName
 from engine.parser.bound_ast import (
     BoundCondition,
@@ -375,6 +375,13 @@ def _read_candidates(
         lo, hi = range_values(condition, native)
         index_measurement = measure_native(index, lambda: index.range_search(lo, hi))
         index_op = Op.INDEX_RANGE
+    elif plan.route is AccessRoute.RTREE_RADIUS:
+        center, radius, metric = spatial_search_args(condition, native)
+        index_measurement = measure_native(
+            index,
+            lambda: index.search_radius(center, radius, metric),
+        )
+        index_op = Op.RADIUS_SEARCH
     else:
         raise ValueError(f"ruta de SELECT desconocida: {plan.route!r}")
 

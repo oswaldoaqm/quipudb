@@ -43,6 +43,14 @@ _SCHEMA = BoundSchema(
     ),
     key_column=0,
 )
+_SPATIAL_SCHEMA = BoundSchema(
+    "tiendas",
+    (
+        BoundColumn("id", SqlTypeName.INT, None),
+        BoundColumn("ubicacion", SqlTypeName.POINT, None),
+    ),
+    key_column=0,
+)
 
 
 def _column(index: int) -> BoundColumnReference:
@@ -81,6 +89,12 @@ def _select_sql(source: str) -> BoundSelectStatement:
     return bind_select(statement, _SCHEMA, source)
 
 
+def _spatial_select_sql(source: str) -> BoundSelectStatement:
+    statement = parse_sql(source)
+    assert isinstance(statement, SelectStatement)
+    return bind_select(statement, _SPATIAL_SCHEMA, source)
+
+
 def _index(
     name: str,
     structure: Structure,
@@ -110,6 +124,47 @@ def test_select_sin_where_hace_scan_sin_filtro_residual() -> None:
     assert plan.residual_filter is False
     assert plan.external_sort is False
     assert plan.group_strategy is None
+
+
+@pytest.mark.parametrize(
+    ("operator", "residual"),
+    [("<", True), ("<=", False)],
+)
+def test_distancia_elige_rtree_y_solo_filtra_el_limite_estricto(
+    operator: str,
+    residual: bool,
+) -> None:
+    source = (
+        "SELECT * FROM tiendas WHERE "
+        f"distancia(ubicacion, POINT(-12.0464, -77.0428)) {operator} 5000"
+    )
+    statement = _spatial_select_sql(source)
+    index = IndexMetadata("por_ubicacion", 1, Structure.RTREE, supports_range=False)
+
+    plan = optimize_select(
+        statement,
+        TableMetadata("tiendas", Structure.HEAP, (index,)),
+    )
+
+    assert plan.route is AccessRoute.RTREE_RADIUS
+    assert plan.index == index
+    assert plan.residual_filter is residual
+
+
+def test_distancia_sin_rtree_cae_a_scan_mas_filtro() -> None:
+    source = (
+        "SELECT * FROM tiendas WHERE "
+        "distancia(ubicacion, POINT(-12.0464, -77.0428)) < 5000"
+    )
+
+    plan = optimize_select(
+        _spatial_select_sql(source),
+        TableMetadata("tiendas", Structure.HEAP),
+    )
+
+    assert plan.route is AccessRoute.SCAN
+    assert plan.index is None
+    assert plan.residual_filter is True
 
 
 def test_order_by_agrega_external_sort_sin_cambiar_la_ruta_de_acceso() -> None:
@@ -463,6 +518,11 @@ def test_adaptador_copia_metadata_y_deriva_capacidad_por_kind() -> None:
                 column=1,
                 kind="extendible_hash",
             ),
+            SimpleNamespace(
+                name="por_ubicacion",
+                column=2,
+                kind="rtree",
+            ),
         ],
     )
 
@@ -471,9 +531,11 @@ def test_adaptador_copia_metadata_y_deriva_capacidad_por_kind() -> None:
     assert metadata == _table(
         _index("por_promedio_bplus", Structure.BPLUS_UNCLUSTERED),
         _index("por_promedio_hash", Structure.EXTENDIBLE_HASH),
+        _index("por_ubicacion", Structure.RTREE, column=2),
     )
     assert metadata.indexes[0].supports_range is True
     assert metadata.indexes[1].supports_range is False
+    assert metadata.indexes[2].supports_range is False
 
 
 @pytest.mark.parametrize(

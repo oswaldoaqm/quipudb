@@ -48,6 +48,7 @@ class _Kind:
     SEQUENTIAL: ClassVar[str] = "sequential"
     BPLUS_UNCLUSTERED: ClassVar[str] = "bplus_unclustered"
     EXTENDIBLE_HASH: ClassVar[str] = "extendible_hash"
+    RTREE: ClassVar[str] = "rtree"
 
 
 @dataclass

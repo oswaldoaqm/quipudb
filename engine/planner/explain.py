@@ -160,7 +160,11 @@ def _access_step(
     index = access.index
     if index is None:  # protegido por PhysicalTableAccess
         raise ValueError(f"la ruta {access.route.value} necesita un indice")
-    operation = Op.INDEX_SEARCH if access.route is AccessRoute.INDEX_SEARCH else Op.INDEX_RANGE
+    operation = {
+        AccessRoute.INDEX_SEARCH: Op.INDEX_SEARCH,
+        AccessRoute.INDEX_RANGE: Op.INDEX_RANGE,
+        AccessRoute.RTREE_RADIUS: Op.RADIUS_SEARCH,
+    }[access.route]
     index_step = Step(
         op=operation,
         structure=index.structure,

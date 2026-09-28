@@ -18,6 +18,7 @@ from engine.parser.bound_ast import (
     BoundComparisonCondition,
     BoundCondition,
     BoundDeleteStatement,
+    BoundDistanceCondition,
     BoundJoinRef,
     BoundSelectStatement,
     BoundSource,
@@ -34,6 +35,7 @@ class AccessRoute(StrEnum):
     TABLE_RANGE = "table_range"
     INDEX_SEARCH = "index_search"
     INDEX_RANGE = "index_range"
+    RTREE_RADIUS = "rtree_radius"
 
 
 class JoinStrategy(StrEnum):
@@ -73,6 +75,7 @@ class IndexMetadata:
         if self.structure not in {
             Structure.BPLUS_UNCLUSTERED,
             Structure.EXTENDIBLE_HASH,
+            Structure.RTREE,
         }:
             raise ValueError(f"estructura de indice secundario invalida: {self.structure.value}")
         expected_range = self.structure is Structure.BPLUS_UNCLUSTERED
@@ -121,7 +124,11 @@ class PhysicalTableAccess:
     residual_filter: bool = False
 
     def __post_init__(self) -> None:
-        index_route = self.route in {AccessRoute.INDEX_SEARCH, AccessRoute.INDEX_RANGE}
+        index_route = self.route in {
+            AccessRoute.INDEX_SEARCH,
+            AccessRoute.INDEX_RANGE,
+            AccessRoute.RTREE_RADIUS,
+        }
         if index_route != (self.index is not None):
             raise ValueError("las rutas de indice necesitan exactamente un indice")
         if self.index is None:
@@ -130,6 +137,11 @@ class PhysicalTableAccess:
             raise ValueError("el indice elegido no pertenece a la metadata de la tabla")
         if self.route is AccessRoute.INDEX_RANGE and not self.index.supports_range:
             raise ValueError("INDEX_RANGE necesita un indice que soporte rangos")
+        if self.route is AccessRoute.RTREE_RADIUS:
+            if self.index.structure is not Structure.RTREE:
+                raise ValueError("RTREE_RADIUS necesita un indice R-Tree")
+        elif self.index.structure is Structure.RTREE:
+            raise ValueError("un R-Tree solo se usa con RTREE_RADIUS")
 
 
 @dataclass(frozen=True, slots=True)
@@ -452,13 +464,16 @@ def optimize_delete(
     secundario exacto.
     """
 
-    choice = _choose_access(
-        statement.where,
-        statement.where.column.index,
-        statement.schema.key_column,
-        table,
-        primary_table_allowed=not table.indexes,
-    )
+    if isinstance(statement.where, BoundDistanceCondition):
+        choice = _AccessChoice(AccessRoute.SCAN, residual_filter=True)
+    else:
+        choice = _choose_access(
+            statement.where,
+            statement.where.column.index,
+            statement.schema.key_column,
+            table,
+            primary_table_allowed=not table.indexes,
+        )
     return PhysicalDeletePlan(
         statement,
         table,
@@ -484,6 +499,16 @@ def _choose_access(
 
     if where is None:
         return _AccessChoice(AccessRoute.SCAN)
+
+    if isinstance(where, BoundDistanceCondition):
+        index = _best_spatial_index(table, column)
+        if index is None:
+            return _AccessChoice(AccessRoute.SCAN, residual_filter=True)
+        return _AccessChoice(
+            AccessRoute.RTREE_RADIUS,
+            index=index,
+            residual_filter=where.operator is ComparisonOperator.LESS_THAN,
+        )
 
     is_primary_key = column == key_column
     if isinstance(where, BoundBetweenCondition):
@@ -588,7 +613,11 @@ def _validate_access(
     route: AccessRoute,
     index: IndexMetadata | None,
 ) -> None:
-    index_route = route in {AccessRoute.INDEX_SEARCH, AccessRoute.INDEX_RANGE}
+    index_route = route in {
+        AccessRoute.INDEX_SEARCH,
+        AccessRoute.INDEX_RANGE,
+        AccessRoute.RTREE_RADIUS,
+    }
     if index_route != (index is not None):
         raise ValueError("las rutas de indice necesitan exactamente un indice")
     if table.name != table_name:
@@ -612,7 +641,11 @@ def _best_index(
     for_range: bool,
     allow_hash: bool = True,
 ) -> IndexMetadata | None:
-    candidates = [index for index in table.indexes if index.column == column]
+    candidates = [
+        index
+        for index in table.indexes
+        if index.column == column and index.structure is not Structure.RTREE
+    ]
     if for_range:
         candidates = [index for index in candidates if index.supports_range]
         ranking = {Structure.BPLUS_UNCLUSTERED: 0}
@@ -626,6 +659,15 @@ def _best_index(
             Structure.BPLUS_UNCLUSTERED: 1,
         }
     return min(candidates, key=lambda index: (ranking[index.structure], index.name), default=None)
+
+
+def _best_spatial_index(table: TableMetadata, column: int) -> IndexMetadata | None:
+    candidates = [
+        index
+        for index in table.indexes
+        if index.column == column and index.structure is Structure.RTREE
+    ]
+    return min(candidates, key=lambda index: index.name, default=None)
 
 
 __all__ = [
