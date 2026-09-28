@@ -128,3 +128,14 @@
     @apply font-sans;
     }
 }
+
+/* Aisla los z-index de Leaflet dentro del panel y resalta los resultados. */
+.query-map {
+  isolation: isolate;
+  width: 100%;
+  min-height: 200px;
+}
+
+.query-map .query-marker {
+  filter: drop-shadow(0 0 3px #fff) drop-shadow(0 0 4px #2563eb);
+}
