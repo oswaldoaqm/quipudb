@@ -11,6 +11,7 @@ import { CONSULTA_DE_PRUEBA } from "@/api/mock";
 import { efectoDe, type Efecto } from "@/api/sentencia";
 import type { QueryResult, TableInfo } from "@/api/types";
 import { FilesPanel } from "@/panels/FilesPanel";
+import { MapPanel } from "@/panels/MapPanel";
 import { PlanPanel } from "@/panels/PlanPanel";
 import { QueryPanel } from "@/panels/QueryPanel";
 import { ResultsPanel } from "@/panels/ResultsPanel";
@@ -95,14 +96,14 @@ export default function App() {
         </span>
       </header>
 
-      <main className="grid min-h-0 flex-1 grid-cols-[280px_1fr] gap-2">
+      <main className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(130px,22%)_1fr] gap-2 lg:grid-cols-[240px_minmax(0,1fr)] lg:grid-rows-1">
         <FilesPanel
           tablas={tablas}
           cargando={cargandoTablas}
           onCargarCsv={cargarCsv}
         />
 
-        <div className="grid min-h-0 min-w-0 grid-rows-[minmax(140px,32%)_1fr] gap-2">
+        <div className="grid min-h-0 min-w-0 grid-rows-[minmax(160px,30%)_1fr] gap-2">
           <QueryPanel
             sql={sql}
             onSqlChange={setSql}
@@ -111,14 +112,21 @@ export default function App() {
             error={error}
           />
 
-          <div className="grid min-h-0 flex-1 grid-cols-2 gap-2">
+          <div className="grid min-h-0 auto-rows-[minmax(320px,1fr)] grid-cols-1 gap-2 overflow-auto xl:grid-cols-2">
             <ResultsPanel
               resultado={resultado}
               hayError={error !== null}
               ejecutando={ejecutando}
               efecto={efecto}
             />
-            <PlanPanel plan={resultado?.plan ?? null} />
+            <MapPanel
+              resultado={resultado}
+              hayError={error !== null}
+              ejecutando={ejecutando}
+            />
+            <div className="grid min-h-0 xl:col-span-2">
+              <PlanPanel plan={resultado?.plan ?? null} />
+            </div>
           </div>
         </div>
       </main>
