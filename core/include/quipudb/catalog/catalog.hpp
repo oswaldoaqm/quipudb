@@ -35,7 +35,7 @@ namespace quipudb {
 struct IndexInfo {
   std::string name;
   std::size_t column = 0;  // posicion en Schema::columns
-  std::string kind;        // kind::kBPlusUnclustered o kind::kExtendibleHash
+  std::string kind;        // B+ no agrupado, hash extensible o R-Tree
   std::string file;        // relativo al directorio del catalogo
 };
 

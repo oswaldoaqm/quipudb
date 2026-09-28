@@ -75,6 +75,7 @@ inline constexpr std::string_view kSequential = "sequential";
 inline constexpr std::string_view kBPlusClustered = "bplus_clustered";
 inline constexpr std::string_view kBPlusUnclustered = "bplus_unclustered";
 inline constexpr std::string_view kExtendibleHash = "extendible_hash";
+inline constexpr std::string_view kRTree = "rtree";
 }  // namespace kind
 
 // ---------------------------------------------------------------------------

@@ -66,6 +66,8 @@
 #include "quipudb/external/external_join.hpp"
 #include "quipudb/external/external_sort.hpp"
 #include "quipudb/index/bplus_clustered_table.hpp"
+#include "quipudb/index/distance.hpp"
+#include "quipudb/index/rtree_index.hpp"
 #include "quipudb/storage/heap_file.hpp"
 #include "quipudb/storage/sequential_file.hpp"
 #include "quipudb/version.hpp"
@@ -241,6 +243,7 @@ PYBIND11_MODULE(quipudb_native, m) {
   kinds.attr("BPLUS_CLUSTERED") = std::string(kind::kBPlusClustered);
   kinds.attr("BPLUS_UNCLUSTERED") = std::string(kind::kBPlusUnclustered);
   kinds.attr("EXTENDIBLE_HASH") = std::string(kind::kExtendibleHash);
+  kinds.attr("RTREE") = std::string(kind::kRTree);
 
   // --- tipos ----------------------------------------------------------------
 
@@ -440,6 +443,15 @@ PYBIND11_MODULE(quipudb_native, m) {
       .def("stats", &Index::stats, py::return_value_policy::copy)
       .def("reset_stats", &Index::reset_stats)
       .def("__len__", &Index::size);
+
+  py::enum_<Metric>(m, "Metric", "Metrica elegida por una consulta espacial")
+      .value("EUCLIDEAN", Metric::kEuclidean)
+      .value("HAVERSINE", Metric::kHaversine);
+
+  py::class_<RTreeIndex, Index>(m, "RTreeIndex",
+                                "Indice espacial secundario sobre una columna POINT")
+      .def("search_radius", &RTreeIndex::search_radius, py::arg("center"), py::arg("radius"),
+           py::arg("metric"), "RIDs a radio unidades del centro segun la metrica elegida");
 
   // --- Database -------------------------------------------------------------
 

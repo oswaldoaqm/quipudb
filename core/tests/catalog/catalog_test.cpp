@@ -199,6 +199,11 @@ TEST_F(CatalogTest, RechazaLoQueNoDebeEntrar) {
   EXPECT_THROW(c.create_index("lugares", "ix_point", "ubicacion", kind::kExtendibleHash),
                SchemaError);
   EXPECT_TRUE(c.table("lugares").indexes.empty());
+  EXPECT_THROW(c.create_index("alumnos", "rtree_escalar", "promedio", kind::kRTree),
+               SchemaError);
+  const auto espacial = c.create_index("lugares", "ix_point", "ubicacion", kind::kRTree);
+  EXPECT_EQ(espacial.kind, kind::kRTree);
+  EXPECT_EQ(espacial.column, 1u);
 }
 
 TEST_F(CatalogTest, ValidaElEsquema) {

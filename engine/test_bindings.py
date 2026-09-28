@@ -313,6 +313,7 @@ def test_las_constantes_de_kind_son_las_del_core():
     assert quipudb.kind.BPLUS_CLUSTERED == "bplus_clustered"
     assert quipudb.kind.BPLUS_UNCLUSTERED == "bplus_unclustered"
     assert quipudb.kind.EXTENDIBLE_HASH == "extendible_hash"
+    assert quipudb.kind.RTREE == "rtree"
 
 
 def test_las_medidas_del_2_1_6(db):
