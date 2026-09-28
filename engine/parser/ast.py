@@ -48,6 +48,7 @@ class StorageKind(StrEnum):
 class IndexKind(StrEnum):
     BPLUS_UNCLUSTERED = "BPLUS_UNCLUSTERED"
     EXTENDIBLE_HASH = "EXTENDIBLE_HASH"
+    RTREE = "RTREE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +140,11 @@ class ComparisonOperator(StrEnum):
     GREATER_THAN_OR_EQUAL = ">="
 
 
+class DistanceMetric(StrEnum):
+    HAVERSINE = "HAVERSINE"
+    EUCLIDEAN = "EUCLIDEAN"
+
+
 @dataclass(frozen=True, slots=True)
 class ComparisonCondition:
     column: ColumnReference
@@ -155,7 +161,17 @@ class BetweenCondition:
     span: Span
 
 
-Condition: TypeAlias = ComparisonCondition | BetweenCondition
+@dataclass(frozen=True, slots=True)
+class DistanceCondition:
+    column: ColumnReference
+    center: PointLiteral
+    operator: ComparisonOperator
+    radius: IntegerLiteral | DoubleLiteral
+    metric: DistanceMetric
+    span: Span
+
+
+Condition: TypeAlias = ComparisonCondition | BetweenCondition | DistanceCondition
 
 
 class OrderDirection(StrEnum):

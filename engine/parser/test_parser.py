@@ -18,6 +18,8 @@ from engine.parser.ast import (
     CreateTableStatement,
     DateLiteral,
     DeleteStatement,
+    DistanceCondition,
+    DistanceMetric,
     DoubleLiteral,
     DropTableStatement,
     EndTransactionStatement,
@@ -87,6 +89,7 @@ def test_create_table_usa_heap_por_defecto_y_keywords_son_case_insensitive() -> 
         ("BPLUS_UNCLUSTERED", IndexKind.BPLUS_UNCLUSTERED),
         ("HASH", IndexKind.EXTENDIBLE_HASH),
         ("EXTENDIBLE_HASH", IndexKind.EXTENDIBLE_HASH),
+        ("RTREE", IndexKind.RTREE),
     ],
 )
 def test_create_index_parsea_estructura_y_nombres(
@@ -348,6 +351,55 @@ def test_limit_invalido_conserva_linea_y_columna() -> None:
     assert caught.value.line == 2
     assert caught.value.column == 7
     assert sql[caught.value.span.start : caught.value.span.end] == "1.5"
+
+
+@pytest.mark.parametrize(
+    ("metric_text", "expected"),
+    [
+        ("", DistanceMetric.HAVERSINE),
+        (", HAVERSINE", DistanceMetric.HAVERSINE),
+        (", EUCLIDEAN", DistanceMetric.EUCLIDEAN),
+    ],
+)
+def test_distancia_parsea_centro_radio_y_metrica(
+    metric_text: str,
+    expected: DistanceMetric,
+) -> None:
+    sql = (
+        "SELECT * FROM tiendas WHERE "
+        f"distancia(ubicacion, POINT(-12.0464, -77.0428){metric_text}) < 5000"
+    )
+
+    statement = parse_sql(sql)
+
+    assert isinstance(statement, SelectStatement)
+    assert isinstance(statement.where, DistanceCondition)
+    assert statement.where.column.name.name == "ubicacion"
+    assert statement.where.center.latitude == -12.0464
+    assert statement.where.center.longitude == -77.0428
+    assert statement.where.operator is ComparisonOperator.LESS_THAN
+    assert statement.where.radius.value == 5000
+    assert statement.where.metric is expected
+    assert sql[statement.where.span.start : statement.where.span.end].startswith("distancia(")
+
+
+@pytest.mark.parametrize(
+    ("where", "message"),
+    [
+        ("distancia(ubicacion, POINT(0, 0)) = 1", "solo admite < o <="),
+        ("distancia(ubicacion, POINT(0, 0)) < cinco", "debe ser numerico"),
+        (
+            "distancia(ubicacion, POINT(0, 0), MANHATTAN) < 1",
+            "se esperaba HAVERSINE o EUCLIDEAN",
+        ),
+    ],
+)
+def test_distancia_rechaza_formas_que_no_son_busqueda_por_radio(
+    where: str,
+    message: str,
+) -> None:
+    with pytest.raises(SQLParseError, match=message):
+        parse_sql(f"SELECT * FROM tiendas WHERE {where}")
 
 
 def test_delete_exige_y_parsea_where() -> None:

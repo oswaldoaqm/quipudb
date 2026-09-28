@@ -239,9 +239,9 @@ Reglas mínimas:
 - `AND`, `OR`, `NOT`, subconsultas, expresiones aritméticas y funciones escalares.
 - `HAVING`, múltiples columnas de orden o agrupación y aliases.
 - Transacciones y concurrencia, que corresponden a 2.1.4.
-- Operadores SQL espaciales e indices R-Tree desde SQL, búsqueda de texto y
-  similitud multimedia de las partes posteriores. El tipo y literal
-  `POINT(latitud, longitud)` se incorporaron en #126 como contrato previo.
+- k-NN, polígonos y demás operadores SQL espaciales, búsqueda de texto y
+  similitud multimedia de las partes posteriores. La búsqueda por radio con
+  `DISTANCIA` y el índice R-Tree se incorporaron posteriormente en #128.
 
 Si un criterio escrito de #24–#28 contradice esta lista, prevalece el issue. Cualquier ampliación
 adicional requiere actualizar primero este plan y el ADR.
@@ -254,6 +254,9 @@ adicional requiere actualizar primero este plan y el ADR.
 > El issue #126 agrego el tipo `POINT` y su literal de coordenadas; la
 > indexacion y los operadores espaciales siguen en su fase propia.
 > El issue #127 agrego `LIMIT n` y su paso `limit` en memoria al plan.
+> El issue #128 agregó `DISTANCIA` en `WHERE`, selección de métrica,
+> `CREATE INDEX ... USING RTREE`, `radius_search/rtree` y fallback a scan más
+> filtro cuando no existe un índice espacial.
 
 ## Issues verificados y orden de entrega
 

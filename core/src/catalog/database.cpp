@@ -6,6 +6,7 @@
 #include "quipudb/index/bplus_clustered_table.hpp"
 #include "quipudb/index/bplus_unclustered_index.hpp"
 #include "quipudb/index/extendible_hash_index.hpp"
+#include "quipudb/index/rtree_index.hpp"
 #include "quipudb/storage/heap_file.hpp"
 #include "quipudb/storage/sequential_file.hpp"
 
@@ -103,6 +104,9 @@ std::unique_ptr<Index> Database::abrir_indice(const TableInfo& tabla, const Inde
   if (info.kind == kind::kExtendibleHash) {
     return std::make_unique<ExtendibleHashIndex>(ruta, col, datos, tabla.page_size);
   }
+  if (info.kind == kind::kRTree) {
+    return std::make_unique<RTreeIndex>(ruta, col, datos, tabla.page_size);
+  }
   throw Unsupported("el indice '" + info.name + "' de " + tabla.schema.table_name +
                     " es de tipo '" + info.kind + "', que no esta implementado");
 }
@@ -121,6 +125,8 @@ Index& Database::create_index(std::string_view table, std::string_view index_nam
     b->build();
   } else if (auto* h = dynamic_cast<ExtendibleHashIndex*>(handle.get())) {
     h->build();
+  } else if (auto* r = dynamic_cast<RTreeIndex*>(handle.get())) {
+    r->build();
   }
   auto [it, _] = indices_.emplace(clave_indice(table, index_name), std::move(handle));
   return *it->second;
@@ -201,6 +207,8 @@ void Database::flush() {
       b->flush();
     } else if (auto* h = dynamic_cast<ExtendibleHashIndex*>(handle.get())) {
       h->flush();
+    } else if (auto* r = dynamic_cast<RTreeIndex*>(handle.get())) {
+      r->flush();
     }
   }
   for (auto& [nombre, handle] : abiertas_) {

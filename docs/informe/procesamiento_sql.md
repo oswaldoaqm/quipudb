@@ -36,11 +36,11 @@ no equivale a haber iniciado una modificación protegida por undo.
 | Sentencia/capacidad | Alcance actual |
 |---|---|
 | `CREATE TABLE` | Columnas `INT`, `DOUBLE`, `VARCHAR(n)`, `BOOL`, `DATE`; una clave primaria; almacenamiento HEAP por defecto o SEQUENTIAL |
-| `CREATE INDEX` | Un índice secundario B+ no agrupado o hash extensible sobre una columna de una tabla HEAP |
+| `CREATE INDEX` | Un índice secundario B+ no agrupado, hash extensible o R-Tree sobre una columna de una tabla HEAP |
 | `INSERT INTO ... VALUES (...)` | Una tupla posicional por sentencia |
 | `SELECT` | `*` o proyección de columnas; filtro simple opcional |
 | `EXPLAIN [ANALYZE] SELECT` | Plan físico sin ejecutar, o plan medido después de ejecutar el SELECT |
-| `WHERE` | Una comparación `=`, `<`, `<=`, `>`, `>=` o `BETWEEN` inclusivo |
+| `WHERE` | Una comparación `=`, `<`, `<=`, `>`, `>=`, `BETWEEN` inclusivo o búsqueda por radio con `DISTANCIA` |
 | `ORDER BY` | Una columna, ASC o DESC |
 | `LIMIT` | Un entero no negativo; se aplica al resultado final, despues de ordenar o agrupar |
 | `GROUP BY` | Una columna; agregados `COUNT(*)`, `SUM`, `MIN`, `MAX`, `AVG`, sujetos a validación semántica |
@@ -85,6 +85,14 @@ después B+ entre los índices elegibles; los desempates son deterministas.
 Los rangos requieren un índice que los soporte: Hash no es candidato. Sin vía
 aplicable se recorre y filtra. Para límites estrictos `<` o `>`, una consulta
 nativa inclusiva puede complementarse con un filtro residual.
+
+`DISTANCIA(columna, POINT(latitud, longitud)) <|<= radio` usa Haversine por
+defecto y compara un radio expresado en metros. El tercer argumento opcional
+`EUCLIDEAN` cambia a distancia plana y conserva las unidades de las coordenadas.
+Si la columna `POINT` tiene un R-Tree, el plan usa `radius_search` con estructura
+`rtree` y recupera las filas por RID; de lo contrario hace scan y filtro. La
+forma estricta `<` conserva un filtro residual porque el operador nativo incluye
+el borde del radio.
 
 `ORDER BY` utiliza el ordenamiento externo; no se asume una optimización general
 que elimine ese paso por existir un índice ordenado. `GROUP BY` usa agrupación

@@ -77,7 +77,7 @@ storage_kind         = "HEAP" | "SEQUENTIAL" ;
 create_index         = "CREATE", "INDEX", identifier, "ON", identifier,
                        "(", identifier, ")", "USING", index_kind ;
 index_kind           = "BPLUS" | "BPLUS_UNCLUSTERED"
-                     | "HASH" | "EXTENDIBLE_HASH" ;
+                     | "HASH" | "EXTENDIBLE_HASH" | "RTREE" ;
 
 insert               = "INSERT", "INTO", identifier, "VALUES", "(",
                        literal, { ",", literal }, ")" ;
@@ -93,8 +93,13 @@ aggregate_name       = "SUM" | "MIN" | "MAX" | "AVG" ;
 
 where_clause         = "WHERE", condition ;
 condition            = identifier, comparison_operator, literal
-                     | identifier, "BETWEEN", literal, "AND", literal ;
+                     | identifier, "BETWEEN", literal, "AND", literal
+                     | distance_condition ;
 comparison_operator  = "=" | "<" | "<=" | ">" | ">=" ;
+distance_condition   = "DISTANCIA", "(", identifier, ",", point_literal,
+                       [ ",", distance_metric ], ")",
+                       ( "<" | "<=" ), signed_number ;
+distance_metric      = "HAVERSINE" | "EUCLIDEAN" ;
 
 group_by_clause      = "GROUP", "BY", identifier ;
 order_by_clause      = "ORDER", "BY", identifier,
@@ -147,6 +152,11 @@ comillas no forman parte de la gramatica.
 propio `Span`, por lo que un valor o formato invalido señala exactamente el
 numero afectado incluso en una consulta multilinea.
 
+`DISTANCIA(columna, POINT(...)) < radio` representa una búsqueda por radio y
+solo admite `<` o `<=`. `HAVERSINE` es la métrica por defecto y devuelve metros;
+`EUCLIDEAN` se puede indicar como tercer argumento y usa las unidades de las
+coordenadas. El radio debe ser finito y no negativo.
+
 En `parse_sql` el punto y coma final es opcional y una segunda sentencia falla.
 `parse_sql_script` acepta varias sentencias separadas por `;`. `DELETE` exige
 `WHERE` sintacticamente para impedir un borrado total accidental. `BETWEEN` es
@@ -170,15 +180,18 @@ analisis semantico aplicara estas reglas antes de tocar disco:
 - Si se omite `USING`, la organizacion es `HEAP`. La alternativa explicita es
   `USING SEQUENTIAL`.
 - `CREATE INDEX` exige una tabla y columna existentes. `BPLUS` representa un
-  B+ secundario no agrupado y `HASH`, un hash extensible; solo se construyen
-  sobre tablas HEAP y quedan fuera de transacciones explicitas. Ninguno admite
-  columnas `POINT`: estas requieren el indice R-Tree de la fase espacial.
+  B+ secundario no agrupado, `HASH` un hash extensible y `RTREE` un índice
+  espacial; solo se construyen sobre tablas HEAP y quedan fuera de transacciones
+  explicitas. El R-Tree exige una columna `POINT`, y B+ y hash la rechazan.
 - `INSERT` es posicional, sin lista de columnas, y debe aportar un valor por
   columna con un tipo compatible.
 - La tabla, las columnas proyectadas y las columnas de `WHERE`, `GROUP BY` y
   `ORDER BY` deben existir.
 - Los dos limites de `BETWEEN` y el literal de una comparacion deben ser
   compatibles con la columna izquierda.
+- `DISTANCIA` exige una columna `POINT`, un centro válido y un radio finito no
+  negativo. Si hay un R-Tree aplicable, el plan usa `radius_search` con
+  `structure: "rtree"`; si no, conserva la semántica con scan y filtro.
 - Sin `GROUP BY`, la proyeccion admitida es `*` o una lista de columnas. Con
   `GROUP BY` debe existir al menos un agregado y toda columna proyectada sin
   agregar debe ser la unica columna de agrupacion.
@@ -314,6 +327,14 @@ memoria y el plan lo representa con `op: "limit"` y `structure: "memory"`.
 `EXPLAIN` muestra el mismo nodo sin ejecutar y `EXPLAIN ANALYZE` conserva sus
 medidas reales.
 
+El issue #128 incorpora búsquedas por radio con `DISTANCIA`. La métrica se
+elige en cada consulta: Haversine mide en metros y es la predeterminada;
+Euclidean mide en las unidades de las coordenadas. Un `CREATE INDEX ... USING
+RTREE` construye el índice sobre filas existentes y lo mantiene con INSERT y
+DELETE. El optimizador emite `radius_search/rtree` y después recupera registros
+por RID; sin índice usa scan y filtro. Para `<`, el filtro residual conserva la
+estricta exclusión del borde que la búsqueda nativa inclusiva no puede expresar.
+
 ### Limites explicitos
 
 Quedan fuera de este subconjunto:
@@ -325,7 +346,8 @@ Quedan fuera de este subconjunto:
 - aliases, `HAVING` y listas de varias columnas en `GROUP BY` u `ORDER BY`;
 - listas de columnas en `INSERT` e identificadores delimitados;
 - `COMMIT` y `ROLLBACK` como sentencias SQL;
-- operadores espaciales, R-Tree desde SQL, consultas textuales o multimedia.
+- k-NN, polígonos y demás operadores espaciales, consultas textuales o
+  multimedia.
 
 `BEGIN TRANSACTION` y `END TRANSACTION` (2.1.4) ya no estan fuera de alcance
 desde el ADR 0004: se parsean con el mismo `parse_sql` y se despachan desde el

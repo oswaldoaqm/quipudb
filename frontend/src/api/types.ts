@@ -13,6 +13,7 @@ export type Op =
   | "range_search"
   | "index_search"
   | "index_range"
+  | "radius_search"
   | "fetch"
   | "filter"
   | "project"
@@ -31,6 +32,7 @@ export type Structure =
   | "bplus_clustered"
   | "bplus_unclustered"
   | "extendible_hash"
+  | "rtree"
   | "external_sort"
   | "external_hash"
   | "memory";
@@ -115,7 +117,10 @@ export interface IndexInfo {
   name: string;
   /** Nombre de la columna, no su posicion: ver la nota de `TableInfo`. */
   column: string;
-  structure: Extract<Structure, "bplus_unclustered" | "extendible_hash">;
+  structure: Extract<
+    Structure,
+    "bplus_unclustered" | "extendible_hash" | "rtree"
+  >;
   supports_range: boolean;
 }
 

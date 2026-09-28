@@ -15,6 +15,7 @@ _TABLE_STRUCTURES = {
 _INDEX_STRUCTURES = {
     Structure.BPLUS_UNCLUSTERED,
     Structure.EXTENDIBLE_HASH,
+    Structure.RTREE,
 }
 
 

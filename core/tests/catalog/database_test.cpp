@@ -7,6 +7,8 @@
 
 #include "quipudb/catalog/database.hpp"
 #include "quipudb/error.hpp"
+#include "quipudb/index/distance.hpp"
+#include "quipudb/index/rtree_index.hpp"
 
 namespace quipudb {
 namespace {
@@ -192,6 +194,14 @@ Record empleado(std::int32_t c) {
   return {c, kAreas[static_cast<std::size_t>(c) % kAreas.size()], 20 + (c % 15)};
 }
 
+Schema lugares() {
+  return Schema{
+      .table_name = "lugares",
+      .columns = {{"id", DataType::Int}, {"ubicacion", DataType::Point}},
+      .key_column = 0,
+  };
+}
+
 TEST_F(DatabaseTest, AbreCadaTipoDeIndiceSegunElCatalogo) {
   Database db(path_);
   TableFile& t = db.create_table(empleados(), kind::kHeap);
@@ -207,6 +217,29 @@ TEST_F(DatabaseTest, AbreCadaTipoDeIndiceSegunElCatalogo) {
   // Se construyeron sobre los datos que la tabla YA tenia.
   EXPECT_EQ(bp.size(), 200u);
   EXPECT_EQ(hs.size(), 200u);
+}
+
+TEST_F(DatabaseTest, RTreeSeConstruyeBuscaYPersisteDesdeElCatalogo) {
+  const GeoPoint lima{-12.0464, -77.0428};
+  {
+    Database db(path_);
+    TableFile& tabla = db.create_table(lugares(), kind::kHeap);
+    tabla.insert(Record{1, lima});
+    tabla.insert(Record{2, GeoPoint{-12.05, -77.04}});
+    tabla.insert(Record{3, GeoPoint{-16.3989, -71.5375}});
+
+    Index& base = db.create_index("lugares", "por_ubicacion", "ubicacion", kind::kRTree);
+    auto* indice = dynamic_cast<RTreeIndex*>(&base);
+    ASSERT_NE(indice, nullptr);
+    EXPECT_EQ(indice->size(), 3u);
+    EXPECT_EQ(indice->search_radius(lima, 5'000.0, Metric::kHaversine).size(), 2u);
+    db.flush();
+  }
+
+  Database reabierta(path_);
+  auto* indice = dynamic_cast<RTreeIndex*>(&reabierta.index("lugares", "por_ubicacion"));
+  ASSERT_NE(indice, nullptr);
+  EXPECT_EQ(indice->search_radius(lima, 5'000.0, Metric::kHaversine).size(), 2u);
 }
 
 TEST_F(DatabaseTest, DevuelveSiempreElMismoObjetoParaUnIndice) {

@@ -454,6 +454,7 @@ class QueryProcessor:
         kind = {
             "BPLUS_UNCLUSTERED": self._native.kind.BPLUS_UNCLUSTERED,
             "EXTENDIBLE_HASH": self._native.kind.EXTENDIBLE_HASH,
+            "RTREE": self._native.kind.RTREE,
         }[bound.kind.value]
 
         self._lock_or_abort(bound.table_name, LockMode.EXCLUSIVE)

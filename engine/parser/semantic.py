@@ -18,9 +18,11 @@ from engine.parser.ast import (
     CreateTableStatement,
     DateLiteral,
     DeleteStatement,
+    DistanceCondition,
     DoubleLiteral,
     DropTableStatement,
     FromSource,
+    IndexKind,
     InsertStatement,
     IntegerLiteral,
     Literal,
@@ -42,6 +44,7 @@ from engine.parser.bound_ast import (
     BoundCreateIndexStatement,
     BoundCreateTable,
     BoundDeleteStatement,
+    BoundDistanceCondition,
     BoundDropTableStatement,
     BoundGroupBy,
     BoundInsertStatement,
@@ -162,7 +165,13 @@ def bind_create_index(
             statement.column.span,
             source,
         )
-    if indexed_column.data_type is SqlTypeName.POINT:
+    if statement.kind is IndexKind.RTREE and indexed_column.data_type is not SqlTypeName.POINT:
+        _fail(
+            f"la columna {statement.column.name!r} no es POINT; RTREE requiere coordenadas",
+            statement.column.span,
+            source,
+        )
+    if statement.kind is not IndexKind.RTREE and indexed_column.data_type is SqlTypeName.POINT:
         _fail(
             f"la columna {statement.column.name!r} es POINT y requiere un indice R-Tree",
             statement.column.span,
@@ -484,7 +493,7 @@ def _bind_projection(
 
 
 def _bind_condition(
-    condition: ComparisonCondition | BetweenCondition | None,
+    condition: ComparisonCondition | BetweenCondition | DistanceCondition | None,
     scope: _Scope,
     source: str | None,
 ) -> BoundCondition | None:
@@ -492,6 +501,38 @@ def _bind_condition(
         return None
 
     column = _resolve_column(condition.column, scope, source)
+    if isinstance(condition, DistanceCondition):
+        if column.column.data_type is not SqlTypeName.POINT:
+            _fail(
+                f"DISTANCIA requiere una columna POINT; {column.column.name} es "
+                f"{column.column.data_type.value}",
+                condition.column.span,
+                source,
+            )
+        center_column = BoundColumn("centro", SqlTypeName.POINT, None)
+        center = _bind_point(condition.center, center_column, source)
+        try:
+            radius = float(condition.radius.value)
+        except (OverflowError, ValueError) as exc:
+            raise SQLSemanticError(
+                "el radio de DISTANCIA desborda DOUBLE",
+                condition.radius.span,
+                source,
+            ) from exc
+        if not math.isfinite(radius) or radius < 0:
+            _fail(
+                "el radio de DISTANCIA debe ser finito y no negativo",
+                condition.radius.span,
+                source,
+            )
+        return BoundDistanceCondition(
+            column,
+            center,
+            condition.operator,
+            radius,
+            condition.metric,
+            condition.span,
+        )
     if isinstance(condition, ComparisonCondition):
         value = _bind_predicate_value(condition.value, column.column, source)
         return BoundComparisonCondition(column, condition.operator, value, condition.span)

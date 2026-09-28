@@ -60,7 +60,7 @@ def test_bind_create_index_rechaza_columna_inexistente() -> None:
     assert caught.value.span == statement.column.span
 
 
-def test_bind_create_index_rechaza_point_hasta_disponer_de_rtree_sql() -> None:
+def test_bind_create_index_exige_rtree_para_point() -> None:
     source = "CREATE INDEX por_ubicacion ON lugares (ubicacion) USING BPLUS"
     statement = _create_index(source)
     schema = BoundSchema(
@@ -76,6 +76,28 @@ def test_bind_create_index_rechaza_point_hasta_disponer_de_rtree_sql() -> None:
         bind_create_index(statement, schema, source)
 
     assert caught.value.span == statement.column.span
+
+
+def test_bind_create_index_admite_rtree_solo_sobre_point() -> None:
+    point_source = "CREATE INDEX por_ubicacion ON lugares (ubicacion) USING RTREE"
+    point_statement = _create_index(point_source)
+    point_schema = BoundSchema(
+        "lugares",
+        (
+            BoundColumn("id", SqlTypeName.INT, None),
+            BoundColumn("ubicacion", SqlTypeName.POINT, None),
+        ),
+        0,
+    )
+
+    bound = bind_create_index(point_statement, point_schema, point_source)
+
+    assert bound.kind is IndexKind.RTREE
+    scalar_source = "CREATE INDEX por_nombre ON alumnos (nombre) USING RTREE"
+    scalar_statement = _create_index(scalar_source)
+    with pytest.raises(SQLSemanticError, match="RTREE requiere coordenadas") as caught:
+        bind_create_index(scalar_statement, _SCHEMA, scalar_source)
+    assert caught.value.span == scalar_statement.column.span
 
 
 @pytest.mark.parametrize(

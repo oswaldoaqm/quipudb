@@ -11,7 +11,7 @@ from typing import Any
 from engine.executor.instrumentation import copy_stats, measure_memory, measure_native
 from engine.executor.native import from_native_record, from_native_schema, to_native_schema
 from engine.executor.operators import SelectExecution, apply_limit, execute_source
-from engine.executor.predicates import equality_key, matches, range_values
+from engine.executor.predicates import equality_key, matches, range_values, spatial_search_args
 from engine.parser.ast import AggregateFunction, OrderDirection
 from engine.parser.bound_ast import (
     BoundColumnReference,
@@ -462,6 +462,13 @@ def _index_pipeline(
         lower, upper = range_values(condition, native)
         measured = measure_native(index, lambda: index.range_search(lower, upper))
         operation = Op.INDEX_RANGE
+    elif plan.route is AccessRoute.RTREE_RADIUS:
+        center, radius, metric = spatial_search_args(condition, native)
+        measured = measure_native(
+            index,
+            lambda: index.search_radius(center, radius, metric),
+        )
+        operation = Op.RADIUS_SEARCH
     else:
         raise ValueError(f"ruta externa desconocida: {plan.route!r}")
 

@@ -75,6 +75,35 @@ def test_explain_describe_filtro_y_ordenamiento_externo() -> None:
     assert "DESC" in plan.root.walk()[2].detail
 
 
+def test_explain_declara_busqueda_por_radio_en_rtree() -> None:
+    source = (
+        "EXPLAIN SELECT * FROM tiendas WHERE "
+        "distancia(ubicacion, POINT(-12.0464, -77.0428)) <= 5000"
+    )
+    statement = parse_sql(source)
+    assert isinstance(statement, ExplainStatement)
+    schema = BoundSchema(
+        "tiendas",
+        (
+            BoundColumn("id", SqlTypeName.INT, None),
+            BoundColumn("ubicacion", SqlTypeName.POINT, None),
+        ),
+        0,
+    )
+    bound = bind_select(statement.statement, schema, source)
+    index = IndexMetadata("por_ubicacion", 1, Structure.RTREE, supports_range=False)
+    physical = optimize_select(
+        bound,
+        TableMetadata("tiendas", Structure.HEAP, (index,), rows=100),
+    )
+
+    plan = explain_select(physical, source[8:], source)
+
+    assert [step.op for step in plan.root.walk()] == [Op.RADIUS_SEARCH, Op.FETCH]
+    assert plan.root.walk()[0].structure is Structure.RTREE
+    assert "por_ubicacion" in plan.root.walk()[0].detail
+
+
 def test_explain_coloca_limit_despues_de_ordenar_y_proyectar() -> None:
     source = "EXPLAIN SELECT nombre FROM alumnos ORDER BY nombre LIMIT 5"
     statement = parse_sql(source)
