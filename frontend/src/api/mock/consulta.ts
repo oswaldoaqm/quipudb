@@ -32,7 +32,15 @@ export type Operador = "=" | "<" | "<=" | ">" | ">=";
 
 export type Condicion =
   | { tipo: "comparacion"; columna: string; operador: Operador; valor: CellValue }
-  | { tipo: "between"; columna: string; desde: CellValue; hasta: CellValue };
+  | { tipo: "between"; columna: string; desde: CellValue; hasta: CellValue }
+  | {
+      tipo: "distancia";
+      columna: string;
+      centro: PointValue;
+      operador: "<" | "<=";
+      radio: number;
+      metrica: "HAVERSINE" | "EUCLIDEAN";
+    };
 
 export type Funcion = "COUNT" | "SUM" | "MIN" | "MAX" | "AVG";
 
@@ -81,6 +89,11 @@ const ENTRE = new RegExp(
   `\\bWHERE\\s+(${REFERENCIA})\\s+BETWEEN\\s+(${LITERAL})\\s+AND\\s+(${LITERAL})`,
   "i",
 );
+const DISTANCIA = new RegExp(
+  `\\bWHERE\\s+DISTANCIA\\s*\\(\\s*(${REFERENCIA})\\s*,\\s*(${PUNTO})` +
+    `(?:\\s*,\\s*(HAVERSINE|EUCLIDEAN))?\\s*\\)\\s*(<=|<)\\s*(${NUMERO})`,
+  "i",
+);
 const ORDEN = new RegExp(
   `\\bORDER\\s+BY\\s+(${REFERENCIA})(?:\\s+(ASC|DESC))?`,
   "i",
@@ -102,6 +115,23 @@ function valorDe(texto: string): CellValue {
 
 /** La condicion del WHERE, la use un SELECT o un DELETE. */
 export function leerCondicion(sql: string): Condicion | null {
+  const distancia = DISTANCIA.exec(sql);
+  if (distancia) {
+    const centro = valorDe(distancia[2]);
+    if (esPoint(centro)) {
+      return {
+        tipo: "distancia",
+        columna: distancia[1].toLowerCase(),
+        centro,
+        metrica: (distancia[3]?.toUpperCase() ?? "HAVERSINE") as
+          | "HAVERSINE"
+          | "EUCLIDEAN",
+        operador: distancia[4] as "<" | "<=",
+        radio: Number(distancia[5]),
+      };
+    }
+  }
+
   const entre = ENTRE.exec(sql);
   if (entre) {
     return {
@@ -190,6 +220,13 @@ function esPoint(value: CellValue): value is PointValue {
 }
 
 export function cumple(valor: CellValue, condicion: Condicion): boolean {
+  if (condicion.tipo === "distancia") {
+    if (!esPoint(valor)) return false;
+    const distancia = distanciaEntre(valor, condicion.centro, condicion.metrica);
+    return condicion.operador === "<"
+      ? distancia < condicion.radio
+      : distancia <= condicion.radio;
+  }
   if (condicion.tipo === "between") {
     return (
       comparar(valor, condicion.desde) >= 0 &&
@@ -209,6 +246,25 @@ export function cumple(valor: CellValue, condicion: Condicion): boolean {
     case ">=":
       return signo >= 0;
   }
+}
+
+function distanciaEntre(
+  a: PointValue,
+  b: PointValue,
+  metrica: "HAVERSINE" | "EUCLIDEAN",
+): number {
+  if (metrica === "EUCLIDEAN") {
+    return Math.hypot(a.longitude - b.longitude, a.latitude - b.latitude);
+  }
+  const radianes = Math.PI / 180;
+  const latitudA = a.latitude * radianes;
+  const latitudB = b.latitude * radianes;
+  const deltaLatitud = latitudB - latitudA;
+  const deltaLongitud = (b.longitude - a.longitude) * radianes;
+  const haversine =
+    Math.sin(deltaLatitud / 2) ** 2 +
+    Math.cos(latitudA) * Math.cos(latitudB) * Math.sin(deltaLongitud / 2) ** 2;
+  return 6_371_008.8 * 2 * Math.asin(Math.sqrt(Math.min(1, haversine)));
 }
 
 function paginas(filas: number): number {
@@ -261,9 +317,13 @@ function totales(step: Step): Stats {
 }
 
 function describir(condicion: Condicion): string {
-  return condicion.tipo === "between"
-    ? `${condicion.columna} en [${condicion.desde}, ${condicion.hasta}]`
-    : `${condicion.columna} ${condicion.operador} ${condicion.valor}`;
+  if (condicion.tipo === "between") {
+    return `${condicion.columna} en [${condicion.desde}, ${condicion.hasta}]`;
+  }
+  if (condicion.tipo === "distancia") {
+    return `DISTANCIA(${condicion.columna}, POINT(${condicion.centro.latitude}, ${condicion.centro.longitude}), ${condicion.metrica}) ${condicion.operador} ${condicion.radio}`;
+  }
+  return `${condicion.columna} ${condicion.operador} ${condicion.valor}`;
 }
 
 /**
@@ -288,6 +348,60 @@ export function rutaDeAcceso(
       null,
       "recorre la tabla entera",
       stats(paginasTabla, total, total),
+    );
+  }
+
+  if (where.tipo === "distancia") {
+    const indice = tabla.info.indexes.find(
+      (i) => i.column === where.columna && i.structure === "rtree",
+    );
+    if (indice) {
+      const busqueda = paso(
+        "radius_search",
+        "rtree",
+        nombre,
+        where.columna,
+        describir(where),
+        stats(Math.max(1, paginas(coincidencias)), coincidencias, coincidencias),
+      );
+      const fetch = paso(
+        "fetch",
+        tabla.info.storage,
+        nombre,
+        null,
+        `lee ${coincidencias} registros por RID`,
+        stats(coincidencias, coincidencias, coincidencias),
+        [busqueda],
+      );
+      return where.operador === "<"
+        ? paso(
+            "filter",
+            "memory",
+            nombre,
+            where.columna,
+            describir(where),
+            stats(0, coincidencias, coincidencias),
+            [fetch],
+          )
+        : fetch;
+    }
+
+    const recorrido = paso(
+      "scan",
+      tabla.info.storage,
+      nombre,
+      null,
+      "recorre la tabla entera",
+      stats(paginasTabla, total, total),
+    );
+    return paso(
+      "filter",
+      "memory",
+      nombre,
+      where.columna,
+      describir(where),
+      stats(0, total, coincidencias),
+      [recorrido],
     );
   }
 

@@ -42,12 +42,13 @@ const DROP_TABLE = /^\s*DROP\s+TABLE\s+([a-zA-Z_]\w*)\s*;?\s*$/i;
 const CREATE_INDEX =
   /^\s*CREATE\s+INDEX\s+([a-zA-Z_]\w*)\s+ON\s+([a-zA-Z_]\w*)\s*\(\s*([a-zA-Z_]\w*)\s*\)\s*USING\s+([a-zA-Z_]\w*)\s*;?\s*$/i;
 
-/** Las dos familias de indice secundario, con los alias que acepta el parser. */
+/** Las familias de indice secundario, con los alias que acepta el parser. */
 const ESTRUCTURAS: Record<string, IndexInfo["structure"]> = {
   bplus: "bplus_unclustered",
   bplus_unclustered: "bplus_unclustered",
   hash: "extendible_hash",
   extendible_hash: "extendible_hash",
+  rtree: "rtree",
 };
 
 /** Cualquier CREATE: el que no sea un CREATE INDEX lo atiende el CREATE TABLE. */
@@ -105,7 +106,7 @@ export function ejecutarCreateIndex(sql: string): string {
           ? "se esperaba ')' despues de la columna indexada"
           : !/\bUSING\b/i.test(sql)
             ? "se esperaba USING despues de la columna indexada"
-            : "se esperaba BPLUS, BPLUS_UNCLUSTERED, HASH o EXTENDIBLE_HASH " +
+            : "se esperaba BPLUS, BPLUS_UNCLUSTERED, HASH, EXTENDIBLE_HASH o RTREE " +
               "despues de USING";
     throw new MotorError({
       error: falta,
@@ -126,7 +127,10 @@ export function ejecutarCreateIndex(sql: string): string {
 
   if (!tabla) falla(`la tabla '${nombreTabla}' no existe`, nombreTabla);
 
-  if (!tabla!.info.columns.some((c) => c.name === columna.toLowerCase())) {
+  const columnaInfo = tabla!.info.columns.find(
+    (c) => c.name === columna.toLowerCase(),
+  );
+  if (!columnaInfo) {
     falla(
       `la columna '${columna}' no existe en la tabla '${tabla!.info.name}'`,
       columna,
@@ -151,7 +155,7 @@ export function ejecutarCreateIndex(sql: string): string {
   if (!estructura) {
     throw new MotorError({
       error:
-        "se esperaba BPLUS, BPLUS_UNCLUSTERED, HASH o EXTENDIBLE_HASH " +
+        "se esperaba BPLUS, BPLUS_UNCLUSTERED, HASH, EXTENDIBLE_HASH o RTREE " +
         "despues de USING",
       kind: "parse",
       ...ubicarEn(
@@ -160,6 +164,19 @@ export function ejecutarCreateIndex(sql: string): string {
         estructuraTexto.length,
       ),
     });
+  }
+
+  if (estructura === "rtree" && columnaInfo!.type !== "POINT") {
+    falla(
+      `la columna '${columna}' no es POINT; RTREE requiere coordenadas`,
+      columna,
+    );
+  }
+  if (estructura !== "rtree" && columnaInfo!.type === "POINT") {
+    falla(
+      `la columna '${columna}' es POINT y requiere un indice R-Tree`,
+      columna,
+    );
   }
 
   tabla!.info.indexes.push({

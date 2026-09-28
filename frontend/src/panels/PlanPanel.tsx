@@ -19,6 +19,7 @@ const CATEGORIA: Record<Op, Categoria> = {
   range_search: "indice",
   index_search: "indice",
   index_range: "indice",
+  radius_search: "indice",
   fetch: "indice",
   scan: "recorrido",
   sort: "externo",
