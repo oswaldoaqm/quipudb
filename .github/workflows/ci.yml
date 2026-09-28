@@ -71,7 +71,8 @@ jobs:
         run: >
           python -m pytest engine/test_bindings.py
           engine/test_query_processor.py
-          engine/executor/test_order_group.py -q -rs -p no:cacheprovider
+          engine/executor/test_order_group.py
+          engine/executor/test_spatial.py -q -rs -p no:cacheprovider
 
   commits:
     name: Validar mensajes de commit
