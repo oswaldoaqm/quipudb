@@ -174,15 +174,23 @@ processor.execute(
     "CREATE TABLE lugares (id INT PRIMARY KEY, nombre VARCHAR(40), ubicacion POINT)"
 )
 processor.execute("INSERT INTO lugares VALUES (1, 'UTEC', POINT(-12.1354, -77.0227))")
-near_utec = processor.execute(
-    "SELECT nombre FROM lugares WHERE ubicacion = POINT(-12.1354, -77.0227)"
+processor.execute(
+    "CREATE INDEX lugares_ubicacion ON lugares (ubicacion) USING RTREE"
 )
-print(near_utec.rows)  # (('UTEC',),)
+cercanos = processor.execute(
+    "SELECT nombre FROM lugares "
+    "WHERE DISTANCIA(ubicacion, POINT(-12.1354, -77.0227)) < 5000"
+)
+print(cercanos.rows)            # (('UTEC',),)
+print(cercanos.plan.to_dict())  # radius_search/rtree -> fetch -> filter
 ```
 
 `POINT` ocupa 16 bytes (dos `double`) y también viaja por la API como
-`{"latitude": ..., "longitude": ...}`. Los índices B+ y hash no se pueden
-crear sobre esta columna; la indexación espacial corresponde al R-Tree.
+`{"latitude": ..., "longitude": ...}`. `DISTANCIA` usa `HAVERSINE` por
+defecto, cuyo radio está en metros; se puede solicitar distancia plana con
+`DISTANCIA(ubicacion, POINT(...), EUCLIDEAN)`, cuyo radio usa las unidades de
+las coordenadas. Un R-Tree se crea con `USING RTREE`; sin él, la misma consulta
+se resuelve mediante `scan` y filtro en memoria.
 
 `WHERE` admite `=`, `<`, `<=`, `>`, `>=` y `BETWEEN` inclusivo. El planner usa
 la clave primaria o un índice secundario aplicable; si no existe uno, registra
@@ -195,12 +203,13 @@ utilizadas. `LIMIT n` acepta un entero no negativo, se aplica al final y añade
 un paso `limit` con estructura `memory` al plan.
 
 `CREATE INDEX nombre ON tabla (columna) USING BPLUS` crea un B+ secundario no
-agrupado; `USING HASH` crea un hash extensible. También se aceptan los nombres
-explícitos `BPLUS_UNCLUSTERED` y `EXTENDIBLE_HASH`. El índice se construye sobre
-las filas existentes y queda disponible para el optimizador. `EXPLAIN` admite
-un `SELECT`, genera el plan sin recorrer sus filas y deja sus contadores en
-cero. `EXPLAIN ANALYZE` sí ejecuta el `SELECT` para obtener estadísticas reales;
-ambos devuelven el plan y no devuelven las filas de la consulta explicada.
+agrupado; `USING HASH` crea un hash extensible y `USING RTREE` crea un índice
+espacial sobre una columna `POINT`. También se aceptan los nombres explícitos
+`BPLUS_UNCLUSTERED` y `EXTENDIBLE_HASH`. El índice se construye sobre las filas
+existentes y queda disponible para el optimizador. `EXPLAIN` admite un `SELECT`,
+genera el plan sin recorrer sus filas y deja sus contadores en cero. `EXPLAIN
+ANALYZE` sí ejecuta el `SELECT` para obtener estadísticas reales; ambos devuelven
+el plan y no devuelven las filas de la consulta explicada.
 
 Las sentencias pueden ocupar varias líneas y contener comentarios de línea
 `-- comentario` o de bloque `/* comentario */`. Los marcadores escritos dentro

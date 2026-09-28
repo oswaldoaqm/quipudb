@@ -108,8 +108,9 @@ transacción explícita.
 Desde #107, `CREATE INDEX nombre ON tabla (columna) USING BPLUS|HASH` valida la
 tabla y la columna, toma un lock exclusivo y delega en
 `Database::create_index`. El core construye el B+ secundario no agrupado o el
-hash extensible sobre las filas que ya existen. Solo se admite sobre tablas
-HEAP y, como los otros DDL, se rechaza dentro de una transacción explícita.
+hash extensible sobre las filas que ya existen. Desde #128, `USING RTREE` hace
+lo mismo sobre una columna `POINT`. Solo se admite sobre tablas HEAP y, como
+los otros DDL, se rechaza dentro de una transacción explícita.
 
 Desde #108, `EXPLAIN SELECT` transforma el IR físico a `Plan` sin ejecutar
 operadores: los pasos muestran la ruta elegida con tiempos y contadores en
@@ -125,9 +126,17 @@ separados para cada coordenada; latitud se limita a `[-90, 90]` y longitud a
 16 bytes fijos, con lo que el catalogo puede cerrar y reabrir el esquema y los
 registros sin perder el tipo. Python expone el valor enlazado como
 `PointValue`, y la API lo serializa como un objeto con `latitude` y
-`longitude`. B+ y hash lo rechazan deliberadamente: el adaptador espacial
-posterior sera responsable de convertir `(latitud, longitud)` en el `(x, y)`
-que usa el R-Tree.
+`longitude`. B+ y hash lo rechazan deliberadamente. Desde #128, el adaptador
+`RTreeIndex` convierte `(latitud, longitud)` en el `(x, y)` del árbol y expone
+la búsqueda por radio mediante el contrato común de índices secundarios.
+
+La condición SQL
+`DISTANCIA(columna, POINT(latitud, longitud)[, metrica]) <|<= radio` se enlaza
+como un predicado espacial. Haversine es la métrica predeterminada y usa metros;
+Euclidean conserva las unidades de las coordenadas. El optimizador elige un
+R-Tree de la columna y genera `radius_search -> fetch`, o bien `scan -> filter`
+si no existe índice. La comparación estricta `<` añade un filtro residual tras
+el R-Tree porque su búsqueda por radio incluye el borde.
 
 Desde #127, `SELECT` admite `LIMIT n` como ultima clausula. El parser exige un
 entero no negativo y conserva el span del valor; la fase enlazada transporta
