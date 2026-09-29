@@ -333,10 +333,8 @@ function ejecutarUna(sql: string): QueryResult {
   const explain = EXPLAIN.exec(sql);
   if (explain) {
     const salida = ejecutarUna(explain[1]);
-    // Sin ANALYZE se devuelve el plan pero no las filas, como en PostgreSQL.
-    return /^\s*EXPLAIN\s+ANALYZE\b/i.test(sql)
-      ? salida
-      : { ...salida, columns: [], column_types: [], rows: [] };
+    // Ambos EXPLAIN devuelven solo el plan, igual que QueryProcessor.
+    return { ...SIN_FILAS, plan: salida.plan, is_explain: true };
   }
 
   const fallo = detectarError(sql);
