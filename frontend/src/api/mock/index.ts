@@ -403,6 +403,7 @@ function ejecutarUna(sql: string): QueryResult {
     rows: salida.rows,
     affected_rows: 0,
     plan: salida.plan,
+    spatial_context: contextoRadio(consulta, consulta.agrupa ? null : tabla.info.name),
   };
 }
 
@@ -460,6 +461,7 @@ function ejecutarJoin(sql: string, consultaCruda: ConsultaLeida): QueryResult {
     rows: salida.rows,
     affected_rows: 0,
     plan: salida.plan,
+    spatial_context: contextoRadio(consulta, null),
   };
 }
 
@@ -468,4 +470,16 @@ export { mockLoadCsv } from "@/api/mock/csv";
 export async function mockListTables(): Promise<TableInfo[]> {
   await new Promise((listo) => setTimeout(listo, LATENCIA_MS));
   return catalogo();
+}
+
+/** Metadata del simulador desde su condicion resuelta, sin volver a leer SQL. */
+function contextoRadio(consulta: ConsultaLeida, table: string | null): QueryResult["spatial_context"] {
+  const condition = consulta.where;
+  if (condition?.tipo !== "distancia") return null;
+  return {
+    kind: "radius", table, column: condition.columna, center: condition.centro,
+    radius: condition.radio, metric: condition.metrica,
+    unit: condition.metrica === "HAVERSINE" ? "meters" : "degrees",
+    operator: condition.operador,
+  };
 }
