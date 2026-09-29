@@ -333,10 +333,8 @@ function ejecutarUna(sql: string): QueryResult {
   const explain = EXPLAIN.exec(sql);
   if (explain) {
     const salida = ejecutarUna(explain[1]);
-    // Sin ANALYZE se devuelve el plan pero no las filas, como en PostgreSQL.
-    return /^\s*EXPLAIN\s+ANALYZE\b/i.test(sql)
-      ? salida
-      : { ...salida, columns: [], column_types: [], rows: [] };
+    // Ambos EXPLAIN devuelven solo el plan, igual que QueryProcessor.
+    return { ...SIN_FILAS, plan: salida.plan, is_explain: true };
   }
 
   const fallo = detectarError(sql);
@@ -403,6 +401,7 @@ function ejecutarUna(sql: string): QueryResult {
     rows: salida.rows,
     affected_rows: 0,
     plan: salida.plan,
+    spatial_context: contextoRadio(consulta, consulta.agrupa ? null : tabla.info.name),
   };
 }
 
@@ -460,6 +459,7 @@ function ejecutarJoin(sql: string, consultaCruda: ConsultaLeida): QueryResult {
     rows: salida.rows,
     affected_rows: 0,
     plan: salida.plan,
+    spatial_context: contextoRadio(consulta, null),
   };
 }
 
@@ -468,4 +468,16 @@ export { mockLoadCsv } from "@/api/mock/csv";
 export async function mockListTables(): Promise<TableInfo[]> {
   await new Promise((listo) => setTimeout(listo, LATENCIA_MS));
   return catalogo();
+}
+
+/** Metadata del simulador desde su condicion resuelta, sin volver a leer SQL. */
+function contextoRadio(consulta: ConsultaLeida, table: string | null): QueryResult["spatial_context"] {
+  const condition = consulta.where;
+  if (condition?.tipo !== "distancia") return null;
+  return {
+    kind: "radius", table, column: condition.columna, center: condition.centro,
+    radius: condition.radio, metric: condition.metrica,
+    unit: condition.metrica === "HAVERSINE" ? "meters" : "degrees",
+    operator: condition.operador,
+  };
 }

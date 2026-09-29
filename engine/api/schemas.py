@@ -10,10 +10,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from engine.parser.ast import SqlTypeName
+from engine.parser.ast import DistanceMetric, SqlTypeName
+from engine.parser.bound_ast import PointValue
 
 TableStructure = Literal["heap", "sequential", "bplus_clustered"]
-IndexStructure = Literal["bplus_unclustered", "extendible_hash"]
+IndexStructure = Literal["bplus_unclustered", "extendible_hash", "rtree"]
 ErrorKind = Literal["lex", "parse", "semantic", "unsupported"]
 
 
@@ -60,6 +61,19 @@ class QueryRequest(BaseModel):
     sql: str
 
 
+class RadiusContextResponse(BaseModel):
+    """Contexto aditivo de radio. No depende del texto descriptivo del plan."""
+
+    kind: Literal["radius"] = "radius"
+    table: str | None = None
+    column: str
+    center: PointValue
+    radius: float
+    metric: DistanceMetric
+    unit: Literal["meters", "degrees"]
+    operator: Literal["<", "<="]
+
+
 class QueryResponse(BaseModel):
     """Espejo de ``QueryResult``, con los tipos de columna que la interfaz pide."""
 
@@ -68,6 +82,8 @@ class QueryResponse(BaseModel):
     rows: list[list[object]]
     affected_rows: int = 0
     plan: dict[str, object] | None = None
+    spatial_context: RadiusContextResponse | None = None
+    is_explain: bool = False
 
 
 class QueryErrorResponse(BaseModel):

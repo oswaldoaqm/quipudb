@@ -8,6 +8,7 @@ levantar el servidor ni compilar los bindings.
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any
 
 from engine.api.schemas import (
@@ -18,6 +19,7 @@ from engine.api.schemas import (
     LoadRowError,
     QueryErrorResponse,
     QueryResponse,
+    RadiusContextResponse,
     TableInfo,
 )
 from engine.executor.bulk_load import LoadReport
@@ -115,6 +117,12 @@ def to_response(result: QueryResult) -> QueryResponse:
         rows=[list(fila) for fila in result.rows],
         affected_rows=result.affected_rows,
         plan=result.plan.to_dict() if result.plan is not None else None,
+        spatial_context=(
+            RadiusContextResponse(**asdict(result.spatial_context))
+            if result.spatial_context is not None
+            else None
+        ),
+        is_explain=result.is_explain,
     )
 
 

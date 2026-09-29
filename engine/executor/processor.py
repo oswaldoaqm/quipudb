@@ -25,6 +25,7 @@ from engine.executor.native import (
 )
 from engine.executor.operators import execute_select
 from engine.executor.result import QueryResult
+from engine.executor.spatial import spatial_context_of
 from engine.parser import (
     BeginTransactionStatement,
     CreateIndexStatement,
@@ -140,6 +141,8 @@ class QueryProcessor:
             rows=last.rows,
             affected_rows=sum(result.affected_rows for result in results),
             plan=last.plan,
+            spatial_context=last.spatial_context,
+            is_explain=last.is_explain,
         )
 
     def _execute_statement(
@@ -549,6 +552,7 @@ class QueryProcessor:
                 column_types=execution.column_types,
                 rows=execution.rows,
                 plan=plan,
+                spatial_context=spatial_context_of(bound),
             )
         finally:
             for nombre in reversed(tomadas):
@@ -589,11 +593,12 @@ class QueryProcessor:
         query = source[statement.statement.span.start : statement.statement.span.end]
         if statement.analyze:
             analyzed = self._select(statement.statement, source, started_ns, query)
-            return QueryResult(plan=analyzed.plan)
+            return QueryResult(plan=analyzed.plan, is_explain=True)
 
         _, physical_plan, _, _ = self._prepare_select(statement.statement, source)
         elapsed_ms = (perf_counter_ns() - started_ns) / 1_000_000
         return QueryResult(
+            is_explain=True,
             plan=explain_select(
                 physical_plan,
                 query,

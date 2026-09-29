@@ -3,9 +3,29 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
-from engine.parser.ast import SqlTypeName
+from engine.parser.ast import ComparisonOperator, DistanceMetric, SqlTypeName
+from engine.parser.bound_ast import PointValue
 from engine.planner.plan import Plan
+
+
+@dataclass(frozen=True, slots=True)
+class RadiusContext:
+    """Region de la condicion validada; HAVERSINE en metros, EUCLIDEAN en grados.
+
+    ``table`` solo habilita identidad de filas cuando la fuente es una tabla
+    simple sin agrupacion. No se reconstruye informacion desde el plan o SQL.
+    """
+
+    table: str | None
+    column: str
+    center: PointValue
+    radius: float
+    metric: DistanceMetric
+    unit: Literal["meters", "degrees"]
+    operator: ComparisonOperator
+    kind: Literal["radius"] = "radius"
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +48,8 @@ class QueryResult:
     rows: tuple[tuple[object, ...], ...] = ()
     affected_rows: int = 0
     plan: Plan | None = None
+    spatial_context: RadiusContext | None = None
+    is_explain: bool = False
 
     def __post_init__(self) -> None:
         # El core devuelve listas de pybind11. Copiarlas a tuplas evita que el

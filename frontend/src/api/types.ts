@@ -75,19 +75,24 @@ export interface PointValue {
   longitude: number;
 }
 
+export interface RadiusContext {
+  kind: "radius";
+  /** Solo una fuente simple, resuelta sin ambiguedad por el ejecutor. */
+  table: string | null;
+  column: string;
+  center: PointValue;
+  radius: number;
+  metric: "HAVERSINE" | "EUCLIDEAN";
+  unit: "meters" | "degrees";
+  operator: "<" | "<=";
+}
+
+/** Nuevos contextos se incorporaran cuando el motor los exponga realmente. */
+export type SpatialContext = RadiusContext;
+
 export type CellValue = string | number | boolean | PointValue | null;
 
-/**
- * Espejo de `QueryResult` de engine/executor/result.py, con un campo de mas.
- *
- * `column_types` no existe alla: el resultado de Python lleva solo los nombres.
- * El Panel de Resultados tiene que mostrar el tipo de cada columna, y la API
- * lo saca del esquema de salida que el ejecutor ya arma -- el mismo que
- * `ExternalGroupBy::output_schema()` produce para un GROUP BY.
- *
- * Deducirlo de las filas no sirve: una columna entera en NULL no dice de que
- * tipo es, y un resultado vacio no tiene de donde deducir nada.
- */
+/** Espejo de QueryResult; los tipos vienen del esquema, incluso sin filas. */
 export interface QueryResult {
   columns: string[];
   /** Un tipo por columna, en el mismo orden que `columns`. */
@@ -95,6 +100,8 @@ export interface QueryResult {
   rows: CellValue[][];
   affected_rows: number;
   plan: Plan | null;
+  spatial_context?: SpatialContext | null;
+  is_explain?: boolean;
 }
 
 export type DataType =

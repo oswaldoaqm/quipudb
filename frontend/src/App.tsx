@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import {
   executeQuery,
@@ -9,7 +9,9 @@ import {
 import { MotorError } from "@/api/errors";
 import { CONSULTA_DE_PRUEBA } from "@/api/mock";
 import { efectoDe, type Efecto } from "@/api/sentencia";
-import type { QueryResult, TableInfo } from "@/api/types";
+import type { TableInfo } from "@/api/types";
+import { useSpatialContext } from "@/hooks/useSpatialContext";
+import { executionReducer, initialExecution } from "@/lib/query-execution";
 import { FilesPanel } from "@/panels/FilesPanel";
 import { MapPanel } from "@/panels/MapPanel";
 import { PlanPanel } from "@/panels/PlanPanel";
@@ -21,9 +23,11 @@ export default function App() {
   const [cargandoTablas, setCargandoTablas] = useState(true);
 
   const [sql, setSql] = useState(CONSULTA_DE_PRUEBA);
-  const [resultado, setResultado] = useState<QueryResult | null>(null);
-  const [error, setError] = useState<MotorError | null>(null);
-  const [ejecutando, setEjecutando] = useState(false);
+  const [execution, dispatch] = useReducer(executionReducer, initialExecution);
+  const requestId = useRef(0);
+  const { result: resultado, error, pending: ejecutando } = execution;
+  const [baseRevision, setBaseRevision] = useState(0);
+  const base = useSpatialContext(resultado, tablas, baseRevision);
   const [efecto, setEfecto] = useState<Efecto>({ clase: "otra" });
 
   const recargarCatalogo = useCallback(
@@ -38,40 +42,45 @@ export default function App() {
       // significa nada.
       if (sentencia.trim() === "") return;
 
-      setEjecutando(true);
-      setError(null);
+      const id = ++requestId.current;
+      dispatch({ type: "begin", id, sql: sentencia });
       try {
-        setResultado(await executeQuery(sentencia));
+        const result = await executeQuery(sentencia);
         const efectoNuevo = efectoDe(sentencia);
+        if (result.affected_rows > 0 || efectoNuevo.clase !== "otra" || !result.plan) {
+          setBaseRevision(revision => revision + 1);
+        }
+        if (id !== requestId.current) return;
+        // Tambien en lotes cuya ultima sentencia es SELECT: la tabla puede ser nueva.
+        const catalogo = await listTables().catch(() => [] as TableInfo[]);
+        if (id !== requestId.current) return;
+        setTablas(catalogo);
         setEfecto(efectoNuevo);
-        // Una tabla nueva o filas nuevas cambian lo que muestra el Panel de
-        // Archivos, y tiene que verse sin recargar la pagina (criterio 3
-        // del #111).
-        if (efectoNuevo.clase !== "otra") await recargarCatalogo();
+        dispatch({ type: "complete", id, result });
       } catch (fallo) {
-        setError(
-          fallo instanceof MotorError
-            ? fallo
-            : MotorError.sinUbicacion(
-                fallo instanceof Error ? fallo.message : String(fallo),
-              ),
-        );
-        setResultado(null);
+        // Un lote puede haber escrito antes del error; no reutilizar esa cache.
+        setBaseRevision(revision => revision + 1);
+        if (id !== requestId.current) return;
+        dispatch({
+          type: "fail", id,
+          error: fallo instanceof MotorError ? fallo : MotorError.sinUbicacion(
+            fallo instanceof Error ? fallo.message : String(fallo),
+          ),
+        });
         setEfecto({ clase: "otra" });
-      } finally {
-        setEjecutando(false);
       }
     },
-    [recargarCatalogo],
+    [],
   );
 
   const cargarCsv = useCallback(
     async (tabla: string, archivo: File) => {
-      const informe = await loadCsv(tabla, archivo);
-      // El conteo de registros de la tabla cambio, y el Panel de Archivos lo
-      // muestra: hay que releerlo aunque la carga haya fallado a medias.
-      await recargarCatalogo();
-      return informe;
+      try {
+        return await loadCsv(tabla, archivo);
+      } finally {
+        setBaseRevision(revision => revision + 1);
+        await recargarCatalogo();
+      }
     },
     [recargarCatalogo],
   );
@@ -123,6 +132,7 @@ export default function App() {
               resultado={resultado}
               hayError={error !== null}
               ejecutando={ejecutando}
+              base={base}
             />
             <div className="grid min-h-0 xl:col-span-2">
               <PlanPanel plan={resultado?.plan ?? null} />
