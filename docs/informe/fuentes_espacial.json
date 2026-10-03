@@ -1,0 +1,39 @@
+{
+  "descripcion": "Fuentes oficiales inmutables del 2.2.4: QuipuDB (#131) y PostGIS (#132). Rutas relativas a benchmarks/results; CSV ignorados por Git.",
+  "corridas": {
+    "131": {
+      "ejecucion": "20261003T063020Z_ad4d7cbd6da347c3847d749ba6c6931a",
+      "archivos": {
+        "mediciones": {
+          "nombre": "20261003T063020Z_ad4d7cbd6da347c3847d749ba6c6931a_mediciones.csv",
+          "sha256": "d905108c82a5040e6cfe25d4a93d777bce124fabe5010ea2302242f5be4b6dae"
+        },
+        "resumen": {
+          "nombre": "20261003T063020Z_ad4d7cbd6da347c3847d749ba6c6931a_resumen.csv",
+          "sha256": "fe9faa03f1e071d771538e66a3426c46d4b98c2a66c4a0ce6141d71557f43df3"
+        },
+        "entorno": {
+          "nombre": "20261003T063020Z_ad4d7cbd6da347c3847d749ba6c6931a_entorno.csv",
+          "sha256": "5475c6f849897a53d4703c7efab2eaf1bd57896697e21f8ea332e286da1f6427"
+        }
+      }
+    },
+    "132": {
+      "ejecucion": "20261003T071040Z_7813dc3770f14e0fa0eb518f4c6d8504",
+      "archivos": {
+        "mediciones": {
+          "nombre": "20261003T071040Z_7813dc3770f14e0fa0eb518f4c6d8504_mediciones.csv",
+          "sha256": "8b55e4e0e57a124f702f27ae795ecc827e60c9fc0914dc88333376ecc4791206"
+        },
+        "resumen": {
+          "nombre": "20261003T071040Z_7813dc3770f14e0fa0eb518f4c6d8504_resumen.csv",
+          "sha256": "f62af5bb06dcca285c64e9dce960e3328588988e5bac9443fac0cc37eb6e5c10"
+        },
+        "entorno": {
+          "nombre": "20261003T071040Z_7813dc3770f14e0fa0eb518f4c6d8504_entorno.csv",
+          "sha256": "d77ac74d3266ea1709bff18266265ec3a7ab10c8c97a1b2b347779aca50a69d6"
+        }
+      }
+    }
+  }
+}
