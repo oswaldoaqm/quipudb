@@ -68,6 +68,7 @@
 #include "quipudb/index/bplus_clustered_table.hpp"
 #include "quipudb/index/distance.hpp"
 #include "quipudb/index/rtree_index.hpp"
+#include "quipudb/index/spatial_scan.hpp"
 #include "quipudb/storage/heap_file.hpp"
 #include "quipudb/storage/sequential_file.hpp"
 #include "quipudb/version.hpp"
@@ -455,6 +456,14 @@ PYBIND11_MODULE(quipudb_native, m) {
       .def("k_nearest", &RTreeIndex::k_nearest, py::arg("center"), py::arg("k"),
            py::arg("metric"), "RIDs de los k puntos mas cercanos, de mas cerca a mas lejos");
 
+  // Busqueda espacial secuencial (#131): la linea base del 2.2.4. Va en C++
+  // para que la comparacion con el R-Tree mida la poda y no el interprete.
+  m.def("scan_radius", &scan_radius, py::arg("table"), py::arg("column"), py::arg("center"),
+        py::arg("radius"), py::arg("metric"),
+        "RIDs a radio unidades del centro recorriendo la tabla entera, sin indice");
+  m.def("scan_k_nearest", &scan_k_nearest, py::arg("table"), py::arg("column"),
+        py::arg("center"), py::arg("k"), py::arg("metric"),
+        "RIDs de los k mas cercanos recorriendo la tabla entera, de mas cerca a mas lejos");
 
   // --- Database -------------------------------------------------------------
 
