@@ -532,3 +532,93 @@ Las pruebas usan fuentes sinteticas explicitamente de prueba, solo en temporales
 No necesitan los CSV ignorados ni bindings. La prueba de renderizado se salta con
 razon explicita si falta Matplotlib (el CI actual instala pytest y Ruff); antes de
 entregar las figuras, ejecutarla con Matplotlib y revisar visualmente las 15.
+
+## Dataset espacial (issue #130)
+
+La comparacion del 2.2.4 (secuencial vs R-Tree vs GIST) mide las tres tecnicas
+sobre los mismos puntos. Como con los datasets de #5, el generador solo usa la
+biblioteca estandar y los CSV quedan fuera de Git (`benchmarks/datasets/*`).
+
+```bash
+python benchmarks/scripts/generar_puntos.py
+python benchmarks/scripts/generar_puntos.py --tamanos 1000 --salida /tmp/quipudb-puntos
+```
+
+Genera `puntos_1000.csv`, `puntos_10000.csv` y `puntos_100000.csv` con la
+cabecera `id,ciudad,latitud,longitud`:
+
+| Columna | Tipo en QuipuDB | Contenido |
+|---|---|---|
+| `id` | `INT`, clave | Enteros 1..N, en orden |
+| `ciudad` | `VARCHAR(16)` | Ciudad alrededor de la cual se genero el punto |
+| `latitud`, `longitud` | `POINT` | Grados WGS84, seis decimales fijos (~11 cm) |
+
+### Distribucion
+
+Los puntos **no** son uniformes sobre el mundo. Con puntos repartidos al azar por
+el planeta los MBR casi no se solapan y el R-Tree sale favorecido de forma
+artificial; datos concentrados en ciudades son el caso real y el mas exigente.
+
+- Se eligen las 15 ciudades mas pobladas del Peru, cada una con probabilidad
+  proporcional a su poblacion urbana (censo 2017, aproximada). Lima concentra
+  ~61 % de los puntos.
+- Alrededor de la ciudad, un desplazamiento normal en **kilometros** norte y este,
+  con desviacion `3.8 km * sqrt(poblacion / 1 millon)`: ~12 km en Lima, <2 km en
+  una ciudad de 200 mil. El 10 % de los puntos cae en la periferia, con una
+  desviacion cinco veces mayor.
+- Los kilometros se convierten a grados con 111,195 km por grado de latitud y
+  ese valor por el coseno de la latitud para la longitud, de modo que las nubes
+  no salen estiradas este-oeste.
+
+No se modela la costa: algunos puntos de ciudades costeras caen en el mar. No
+afecta a las mediciones, que dependen de la densidad y no del uso del suelo.
+
+Como referencia, con 100k puntos y centros tomados del propio dataset, un radio
+de 1 km devuelve entre 1 y ~200 puntos, uno de 5 km hasta ~4 600 y uno de 10 km
+hasta ~16 000 (16 % del total): ahi es donde la poda del R-Tree deja de valer la
+pena, que es lo que busca #131.
+
+### Reproducibilidad
+
+Misma semilla que #5, **20260906**, con un `random.Random` nuevo por tamano. Cada
+punto consume siempre la misma cantidad de numeros aleatorios, asi que los
+datasets estan **anidados**: 1k son las primeras 1 000 filas de 10k, y 10k las
+primeras de 100k. Al crecer el dataset solo se agregan puntos. El SHA-256 de
+referencia de 1k, comprobado en Python 3.11 y 3.14, es:
+
+```text
+a71f78dc15cd138a90c7be4d8cb6a925bbb2afacfc22e613a80b743061e6c82e
+```
+
+### Carga en QuipuDB
+
+`scripts/cargar_puntos.py` valida el CSV completo (ids 1..N en orden, coordenadas
+finitas y en rango, ciudad compatible con `VARCHAR(16)`), crea la tabla Heap
+`puntos(id INT, ciudad VARCHAR(16), ubicacion POINT)`, inserta en el orden del CSV
+y construye el R-Tree `puntos_ubicacion` con `create_index`. El R-Tree necesita
+un Heap porque sus RID son estables. Requiere los bindings:
+
+```bash
+PYTHONPATH=build-py/bindings python -B benchmarks/scripts/cargar_puntos.py \
+  benchmarks/datasets/puntos_100000.csv --catalogo /tmp/quipudb-puntos-100k
+# --sin-indice deja solo el Heap, que es la base de la busqueda secuencial.
+```
+
+La carpeta de `--catalogo` debe ser nueva o estar vacia. Imprime filas, entradas
+del indice, tiempo total y el tamano de cada archivo; no es una medicion
+oficial, que corresponde a #131. `leer_puntos` y `cargar_quipudb` son las que
+reutilizan los benchmarks para que todas las tecnicas reciban las mismas filas.
+
+```bash
+python -B -m pytest benchmarks/test_generar_puntos.py -q -rs -p no:cacheprovider
+PYTHONPATH=build-py/bindings python -B -m pytest benchmarks/test_generar_puntos.py \
+  -k integracion -q -rs -p no:cacheprovider
+ruff check engine benchmarks
+```
+
+Las pruebas comprueban formato, bytes identicos entre corridas, el hash de 1k, el
+anidamiento, que cada punto queda cerca de su ciudad y dentro del Peru, que la
+cantidad por ciudad sigue a la poblacion, que las nubes no estan estiradas, y la
+validacion del CSV. La integracion carga 1k y compara un radio de 10 km del
+R-Tree contra un recorrido completo con una Haversine propia; se salta con motivo
+si faltan los bindings.
