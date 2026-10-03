@@ -35,6 +35,11 @@ class RTreeIndex final : public Index {
 
   [[nodiscard]] std::vector<RID> search_radius(const GeoPoint& center, double radius,
                                                Metric metric);
+  /// Los RID de los `k` puntos mas cercanos a `center`, de mas cerca a mas
+  /// lejos (#121). Mismo contrato que `RTree::k_nearest`: con menos de `k`
+  /// puntos devuelve los que hay, y con empates cual entra es indistinto.
+  [[nodiscard]] std::vector<RID> k_nearest(const GeoPoint& center, std::size_t k,
+                                           Metric metric);
   void build();
   void flush();
 

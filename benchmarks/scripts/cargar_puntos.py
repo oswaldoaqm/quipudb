@@ -33,7 +33,7 @@ class DatasetPuntos:
     ruta: Path
     sha256: str
     # (id, ciudad, latitud, longitud), en el orden del CSV.
-    filas: tuple[tuple[int, str, float, float], ...]
+    registros: tuple[tuple[int, str, float, float], ...]
 
 
 def leer_puntos(ruta: Path, tamano: int | None = None) -> DatasetPuntos:
@@ -111,7 +111,7 @@ def cargar_quipudb(nativo, db, dataset: DatasetPuntos, *, con_indice: bool = Tru
     misma operacion que mide el 2.2.4 como tiempo de construccion del indice.
     """
     tabla = db.create_table(esquema_puntos(nativo), nativo.kind.HEAP)
-    for identificador, ciudad, latitud, longitud in dataset.filas:
+    for identificador, ciudad, latitud, longitud in dataset.registros:
         tabla.insert([identificador, ciudad, nativo.GeoPoint(latitud, longitud)])
     indice = None
     if con_indice:
@@ -144,7 +144,7 @@ def main() -> None:
     tabla, indice = cargar_quipudb(nativo, db, dataset, con_indice=not args.sin_indice)
     segundos = time.perf_counter() - inicio
 
-    print(f"{dataset.ruta}: {len(dataset.filas)} puntos, sha256 {dataset.sha256}")
+    print(f"{dataset.ruta}: {len(dataset.registros)} puntos, sha256 {dataset.sha256}")
     print(f"tabla {TABLA}: {len(tabla)} filas")
     if indice is not None:
         print(f"indice {INDICE} (rtree): {len(indice)} entradas")

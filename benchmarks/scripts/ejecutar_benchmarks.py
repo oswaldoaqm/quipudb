@@ -1,4 +1,4 @@
-"""Ejecuta el banco reproducible: Heap minimo (#38), archivos (#39) o indices (#40)."""
+"""Ejecuta el banco reproducible: Heap (#38), archivos (#39), indices (#40) o espacial (#131)."""
 
 from __future__ import annotations
 
@@ -8,12 +8,16 @@ from pathlib import Path
 
 if __package__:
     from .banco_pruebas import RESULTADOS, Caso, cargar_dataset, ejecutar_banco
+    from .cargar_puntos import leer_puntos
     from .casos_archivos import caso_insercion, casos_archivos
+    from .casos_espaciales import CONSULTAS, POBLACION_CENTROS, casos_espaciales
     from .casos_indices import casos_indices
     from .generar_datasets import SALIDA_PREDETERMINADA, TAMANOS
 else:
     from banco_pruebas import RESULTADOS, Caso, cargar_dataset, ejecutar_banco
+    from cargar_puntos import leer_puntos
     from casos_archivos import caso_insercion, casos_archivos
+    from casos_espaciales import CONSULTAS, POBLACION_CENTROS, casos_espaciales
     from casos_indices import casos_indices
     from generar_datasets import SALIDA_PREDETERMINADA, TAMANOS
 
@@ -47,9 +51,18 @@ def nota_entorno(texto: str) -> tuple[str, str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--suite", choices=("heap", "archivos", "indices"), default="heap")
     parser.add_argument(
-        "--consultas", type=int, default=1000, help="busquedas de igualdad por lote"
+        "--suite", choices=("heap", "archivos", "indices", "espacial"), default="heap"
+    )
+    parser.add_argument(
+        "--consultas",
+        type=int,
+        help=f"consultas por lote (por defecto 1000; {CONSULTAS} en la suite espacial)",
+    )
+    parser.add_argument(
+        "--sin-cruce",
+        action="store_true",
+        help="en la suite espacial, omitir los radios grandes que buscan el cruce",
     )
     parser.add_argument(
         "--consultas-rango", type=int, default=100, help="rangos por lote en indices"
@@ -67,6 +80,8 @@ def main() -> None:
         "--entorno", type=nota_entorno, action="append", default=[], metavar="CLAVE=VALOR"
     )
     args = parser.parse_args()
+    if args.consultas is None:
+        args.consultas = CONSULTAS if args.suite == "espacial" else 1000
     if args.calentamientos < 0 or args.repeticiones < 1:
         parser.error("calentamientos debe ser >= 0 y repeticiones debe ser >= 1")
     if args.page_size is not None and args.page_size <= 0:
@@ -75,16 +90,25 @@ def main() -> None:
         parser.error("no repitas tamanos")
     if len(dict(args.entorno)) != len(args.entorno):
         parser.error("no repitas claves de entorno")
+    if args.suite == "espacial" and not 1 <= args.consultas <= POBLACION_CENTROS:
+        parser.error(f"en la suite espacial consultas debe estar entre 1 y {POBLACION_CENTROS}")
     if args.consultas < 1 or (args.suite != "heap" and args.consultas > min(args.tamanos)):
         parser.error("consultas debe estar entre 1 y el menor N seleccionado")
     if args.suite == "indices" and not 1 <= args.consultas_rango <= min(
         n - n // 100 + 1 for n in args.tamanos
     ):
         parser.error("consultas-rango debe estar entre 1 y N - N//100 + 1 para todos los tamanos")
+    if args.suite == "espacial" and args.page_size is not None:
+        parser.error("la suite espacial usa el page-size del binding")
     try:
-        datasets = [cargar_dataset(args.datasets / f"alumnos_{n}.csv", n) for n in args.tamanos]
+        if args.suite == "espacial":
+            datasets = [leer_puntos(args.datasets / f"puntos_{n}.csv", n) for n in args.tamanos]
+        else:
+            datasets = [cargar_dataset(args.datasets / f"alumnos_{n}.csv", n) for n in args.tamanos]
         nativo = cargar_bindings()
-        if args.suite == "indices":
+        if args.suite == "espacial":
+            casos = casos_espaciales(nativo, args.consultas, cruce=not args.sin_cruce)
+        elif args.suite == "indices":
             casos = casos_indices(nativo, args.consultas, args.consultas_rango, args.page_size)
         elif args.suite == "archivos":
             casos = casos_archivos(nativo, args.consultas, args.page_size)

@@ -622,3 +622,120 @@ cantidad por ciudad sigue a la poblacion, que las nubes no estan estiradas, y la
 validacion del CSV. La integracion carga 1k y compara un radio de 10 km del
 R-Tree contra un recorrido completo con una Haversine propia; se salta con motivo
 si faltan los bindings.
+
+## R-Tree vs busqueda secuencial (issue #131)
+
+`--suite espacial` mide el R-Tree contra recorrer la tabla entera, sobre los CSV
+de puntos de #130 y con el mismo banco de #38 (calentamiento, repeticiones,
+aislamiento y los tres CSV de resultados sin cambios de cabecera).
+
+```bash
+python benchmarks/scripts/generar_puntos.py
+PYTHONPATH=build-py/bindings python -B benchmarks/scripts/ejecutar_benchmarks.py \
+  --suite espacial --tamanos 1000 10000 100000 --calentamientos 1 --repeticiones 5 \
+  --entorno proposito=experimento_oficial --entorno compilacion_core=Release
+```
+
+`--consultas` (100 por defecto, maximo 1 000) fija el tamano del lote y
+`--sin-cruce` omite los radios grandes. La suite usa el page-size del binding.
+
+### Las dos tecnicas
+
+- **secuencial**: `quipudb_native.scan_radius` / `scan_k_nearest`. Recorren el
+  Heap con su cursor y miden la distancia a cada punto. Estan en C++ a proposito:
+  si el recorrido fuera Python y el R-Tree C++, se mediria el interprete y no la
+  poda. El k-NN guarda los k mejores en un max-heap, O(k) de memoria.
+- **rtree**: `RTreeIndex.search_radius` y `RTreeIndex.k_nearest` sobre el R-Tree
+  `puntos_ubicacion`, montado sobre el mismo Heap. El k-NN es el best-first de
+  #121, que se detiene sin leer los subarboles mas lejanos que el k-esimo.
+
+Las dos devuelven **RID**, sin leer los registros: entregan lo mismo y ninguna
+paga una lectura del Heap que la otra no paga. El tiempo incluye el cruce
+Python/binding de cada consulta y la materializacion de la lista de RIDs.
+
+### Casos
+
+`caso` es `<tecnica>_<operacion>_<metrica>`; `n_operaciones` es el numero de
+consultas del lote, asi que `mediana_tiempo_ns / n_operaciones` es el tiempo
+medio por consulta (promedio de 100 consultas, como pide el enunciado).
+
+| Operacion | Tecnicas | Metricas |
+|---|---|---|
+| `construccion_indice` | rtree | — |
+| `radio_1km`, `radio_5km`, `radio_10km` | las dos | haversine, euclidiana |
+| `knn_10`, `knn_50`, `knn_100` | las dos | haversine, euclidiana |
+| `radio_25km` ... `radio_2000km` (cruce) | las dos | haversine |
+
+37 casos por tamano. El secuencial no tiene construccion: no se genera una fila
+con tiempo cero. La construccion mide `create_index` (catalogo, archivo,
+recorrido del Heap e insercion de cada punto) mas un flush, sobre un Heap
+cargado fuera del reloj.
+
+### Consultas
+
+- **Centros:** `Random(20260906).sample(range(1, 1001), 100)` elige ids de los
+  primeros 1 000 puntos y se usan sus coordenadas. Como los datasets estan
+  anidados, son **los mismos centros en 1k, 10k y 100k**: entre tamanos solo
+  cambia la densidad alrededor. Caen donde hay datos, no en el mar.
+- **Radios:** en metros con Haversine. Con la euclidiana el radio va en grados y
+  se usa el equivalente de los mismos km (`km * 1000 / 111 195`). Ese circulo
+  en grados mide lo mismo de norte a sur, pero de este a oeste solo
+  `km * cos(latitud)`: en Lima un 2 % menos y en Tacna un 5 %. Por eso la
+  euclidiana devuelve algo menos de puntos, y la comparacion entre metricas mide
+  sobre todo el costo de la formula, no el de regiones distintas.
+- **Radios de cruce:** 25, 50, 100, 250, 500 y 2 000 km, solo con Haversine.
+  Buscan el radio donde la poda ya no descarta nada y el indice solo agrega
+  trabajo; 2 000 km cubre todo el Peru.
+
+### Validacion
+
+Fuera del reloj. La primera vez que aparece una consulta (por dataset, operacion,
+metrica y centros), su respuesta se calcula con la busqueda secuencial y se
+guarda. Cada repeticion de **las dos tecnicas** se compara contra esa referencia:
+
+- radio: la cantidad y el SHA-256 del conjunto ordenado de RIDs (los RID
+  coinciden porque cada repeticion carga el mismo CSV en el mismo orden en un
+  Heap nuevo). Se guarda el hash y no la lista: con 2 000 km la referencia de
+  100k serian 10 millones de RIDs, mas de 1 GB, y el recolector de basura
+  agregaria ruido a los tiempos;
+- k-NN: la lista de distancias, recalculadas en Python, que debe estar ordenada
+  y tener k elementos. Se comparan distancias y no RIDs porque con empates cual
+  entra es indistinto.
+
+Las pruebas de C++ comprueban ademas la busqueda secuencial contra un oraculo
+independiente, asi que la referencia no es circular. Una diferencia aborta la
+corrida sin exportar.
+
+### Metricas
+
+- `paginas_leidas`: suma de los contadores del Heap y del R-Tree. Es la metrica
+  que no depende de la maquina. El secuencial lee siempre todas las paginas del
+  Heap; el R-Tree, solo los nodos cuyo MBR intersecta la region (o que el k-NN
+  no pudo descartar).
+- `datos_bytes` / `indices_bytes`: tamano del Heap y del archivo `.rtree`.
+- En el entorno, por caso: metrica, radio en km y en unidades, `resultados_totales`
+  (puntos devueltos en las 100 consultas, identico entre tecnicas) y
+  `fraccion_media_devuelta`, que es la selectividad.
+
+**Memoria.** Las dos estructuras viven en disco y se leen pagina a pagina: el
+banco no mide RAM. Por consulta, el secuencial necesita una pagina y O(k) para el
+k-NN; el R-Tree, el camino de la recursion para el radio y la cola de prioridad
+del best-first para el k-NN (O(k + frontera)). El costo de memoria permanente es
+el espacio en disco del indice.
+
+### Pruebas
+
+```bash
+python -B -m pytest benchmarks/test_casos_espaciales.py -q -rs -p no:cacheprovider
+PYTHONPATH=build-py/bindings python -B -m pytest benchmarks/test_casos_espaciales.py \
+  engine/test_bindings.py -q -rs -p no:cacheprovider
+ruff check engine benchmarks
+```
+
+Las unitarias comprueban centros identicos entre tamanos, conversion de radios,
+el oraculo de distancias, la lista de casos y la CLI. La integracion corre una
+suite reducida sobre 1k con bindings reales y comprueba que el secuencial lee
+las mismas paginas con cualquier radio, que el R-Tree poda con radio chico y no
+con 2 000 km, y que las dos tecnicas devuelven la misma cantidad de puntos.
+Los resultados oficiales y su analisis estan en
+[comparacion_rtree_secuencial.md](comparacion_rtree_secuencial.md).

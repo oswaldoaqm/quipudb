@@ -113,6 +113,39 @@ def test_point_cruza_el_binding_y_persiste(db):
         table.insert([2, quipudb.GeoPoint(91.0, 0.0)])
 
 
+def test_knn_y_busqueda_secuencial_espacial_cruzan_el_binding(db):
+    """El 2.2.4 (#131) compara el R-Tree contra recorrer la tabla: las dos
+    tecnicas tienen que estar en Python y devolver lo mismo."""
+    schema = quipudb.Schema(
+        "lugares",
+        [
+            quipudb.Column("id", quipudb.DataType.INT),
+            quipudb.Column("ubicacion", quipudb.DataType.POINT),
+        ],
+        0,
+    )
+    table = db.create_table(schema, quipudb.kind.HEAP)
+    lima = quipudb.GeoPoint(-12.0464, -77.0428)
+    centro = table.insert([1, lima])
+    cerca = table.insert([2, quipudb.GeoPoint(-12.05, -77.04)])
+    lejos = table.insert([3, quipudb.GeoPoint(-16.3989, -71.5375)])
+    index = db.create_index("lugares", "por_ubicacion", "ubicacion", quipudb.kind.RTREE)
+    haversine = quipudb.Metric.HAVERSINE
+
+    assert index.k_nearest(lima, 2, haversine) == [centro, cerca]
+    assert quipudb.scan_k_nearest(table, "ubicacion", lima, 2, haversine) == [centro, cerca]
+    assert quipudb.scan_k_nearest(table, "ubicacion", lima, 9, haversine) == [
+        centro,
+        cerca,
+        lejos,
+    ]
+    assert sorted(quipudb.scan_radius(table, "ubicacion", lima, 5_000.0, haversine)) == sorted(
+        index.search_radius(lima, 5_000.0, haversine)
+    )
+    with pytest.raises(quipudb.SchemaError):
+        quipudb.scan_radius(table, "id", lima, 1.0, haversine)
+
+
 def test_un_entero_que_no_entra_en_int32_se_denuncia(db):
     """Truncar en silencio dejaria dos claves distintas colapsadas en una."""
     t = db.create_table(esquema_alumnos(), quipudb.kind.HEAP)
