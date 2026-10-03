@@ -739,3 +739,82 @@ las mismas paginas con cualquier radio, que el R-Tree poda con radio chico y no
 con 2 000 km, y que las dos tecnicas devuelven la misma cantidad de puntos.
 Los resultados oficiales y su analisis estan en
 [comparacion_rtree_secuencial.md](comparacion_rtree_secuencial.md).
+
+## GiST de PostGIS (issue #132)
+
+`scripts/bench_postgis.py` corre las mismas consultas de la suite espacial sobre
+PostgreSQL con PostGIS: mismos CSV de #130, mismos 100 centros, radios, k y
+metricas. Escribe los tres CSV del banco con `tecnica=postgis_gist`, asi que se
+grafican junto a los de #131. No necesita los bindings; si `psycopg` (ya en
+`requirements.txt`) y un servidor.
+
+### Levantar PostGIS
+
+Los indices GiST espaciales necesitan PostGIS, una extension aparte. La forma
+mas simple es su imagen oficial de Docker; se usaron PostgreSQL 17.5 y PostGIS
+3.5.2:
+
+```bash
+docker run -d --name quipudb-postgis -e POSTGRES_PASSWORD=quipudb   -p 55432:5432 postgis/postgis:17-3.5 -c jit=off
+```
+
+El script se conecta por defecto a `localhost:55432` con usuario `postgres` y
+clave `quipudb` (`--dsn` para otro servidor), reintenta mientras el contenedor
+arranca y crea la extension si falta. `jit=off` evita que la compilacion JIT
+entre en consultas de milisegundos.
+
+### Medir
+
+```bash
+python benchmarks/scripts/generar_puntos.py
+python -B benchmarks/scripts/bench_postgis.py --tamanos 1000 10000 100000   --calentamientos 1 --repeticiones 5   --referencia benchmarks/results/<id de #131>_entorno.csv   --entorno proposito=experimento_oficial
+```
+
+`--referencia` compara la cantidad de puntos devueltos en cada radio con la
+corrida de QuipuDB y aborta si no coincide. En la oficial coincidieron los 54.
+
+Por tamano y metrica se crea una tabla (`puntos_geog` con `geography` para
+Haversine, `puntos_geom` con `geometry` para la euclidiana), se copia el CSV en
+su orden y se hace `VACUUM ANALYZE`. Despues:
+
+- **Construccion:** `DROP INDEX` y `CREATE INDEX ... USING gist`, cronometrado
+  desde el cliente, en cada repeticion. PostgreSQL no da buffers de un `CREATE
+  INDEX`, asi que sus paginas quedan en 0 y el entorno lo marca como
+  `paginas_construccion=no_instrumentadas`.
+- **Consultas:** `ST_DWithin(ubicacion, centro, radio, false)` (esfera, la misma
+  de la Haversine del core) o `ST_DWithin` en grados con `geometry`, y
+  `ORDER BY ubicacion <-> centro LIMIT k` para el k-NN. Cada una con
+  `EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, FORMAT JSON)`:
+  `tiempo_ns` es la suma de los `Execution Time` del lote y `paginas_leidas` los
+  bloques compartidos tocados (hit + read, de 8 KiB). Se fuerza el indice con
+  `enable_seqscan = off` y se verifica que el plan lo use; el plan que habria
+  elegido PostgreSQL queda como `plan_natural` en el entorno.
+- **Tiempo del cliente:** despues, el mismo lote sin `EXPLAIN`, cronometrado
+  desde Python. Su mediana queda como `tiempo_cliente_ns_mediana`: incluye la
+  red hasta el contenedor, que en Docker para Windows cuesta mas que la consulta.
+
+Las consultas se repiten sobre la misma tabla, sin recargar: los datos quedan en
+`shared_buffers`, igual que los archivos de QuipuDB quedan en la cache del
+sistema. Docker corre en una VM y no se puede fijar a un nucleo como el proceso
+de #131; la dispersion es mayor y el informe lo indica.
+
+### Graficas e informe del 2.2.4
+
+`scripts/generar_graficas_espacial.py` lee solo las dos corridas oficiales
+fijadas en `docs/informe/fuentes_espacial.json` (nombres y SHA-256 de los seis
+CSV, que siguen fuera de Git) y genera siete figuras PNG + SVG en
+`docs/informe/graficas/espacial/` y las tablas del
+[informe integrado](../docs/informe/comparacion_espacial.md), entre sus marcadores
+BEGIN/END RESULTADOS. Si falta una fuente o cambio su hash, falla antes de
+escribir nada.
+
+```bash
+MPLCONFIGDIR=/tmp/quipudb-matplotlib python -B benchmarks/scripts/generar_graficas_espacial.py
+MPLCONFIGDIR=/tmp/quipudb-matplotlib python -B -m pytest   benchmarks/test_postgis_y_graficas_espacial.py -q -rs -p no:cacheprovider
+```
+
+Las pruebas no necesitan PostgreSQL ni los CSV oficiales: comprueban el SQL
+generado, que PostGIS cubra exactamente los casos de la suite espacial, la
+lectura de referencias, y el generador sobre fuentes sinteticas (tablas, hash
+alterado y conservacion del texto fuera de los marcadores). La que verifica los
+hashes oficiales se salta con motivo si los CSV no estan.

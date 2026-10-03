@@ -309,4 +309,5 @@ de la recursion en radios y la cola del best-first en k-NN. El banco no mide RAM
 - Los resultados dependen de la distribucion: con puntos uniformes las consultas
   devolverian menos y el R-Tree saldria mas favorecido.
 
-La comparacion contra GIST de PostgreSQL corresponde a #132.
+La comparacion contra GiST de PostgreSQL (#132), con las graficas de las tres
+tecnicas, esta en [comparacion_espacial.md](../docs/informe/comparacion_espacial.md).
