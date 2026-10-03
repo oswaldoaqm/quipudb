@@ -89,7 +89,8 @@ def guardar(fig, carpeta: Path, nombre: str) -> None:
             buffer = io.StringIO()
             fig.savefig(buffer, format="svg", metadata={"Date": None})
             texto = "\n".join(linea.rstrip() for linea in buffer.getvalue().splitlines()) + "\n"
-            ruta.write_text(texto, encoding="utf-8")
+            # newline fijo: en Windows write_text traduciria a CRLF y el SVG cambiaria.
+            ruta.write_text(texto, encoding="utf-8", newline="\n")
         else:
             fig.savefig(ruta, dpi=300, metadata={"Software": "QuipuDB issue #132"})
 
