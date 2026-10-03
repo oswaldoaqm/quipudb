@@ -165,6 +165,14 @@ def _clave_rid(rid) -> tuple[int, int]:
     return rid.page, rid.slot
 
 
+def _firma_radio(rids) -> tuple[int, str]:
+    """Cantidad y hash del conjunto de RIDs. Guardar las listas completas como
+    referencia llega a 10 millones de tuplas con un radio que cubre 100k puntos:
+    mas de 1 GB de RAM y un recolector de basura que mete ruido en los tiempos."""
+    ordenados = sorted(map(_clave_rid, rids))
+    return len(ordenados), _huella(ordenados)
+
+
 def caso_construccion(nativo) -> Caso:
     """Tiempo de construir el R-Tree sobre un Heap ya cargado. El secuencial no
     tiene construccion: no se genera una fila ficticia con tiempo cero."""
@@ -215,9 +223,7 @@ def caso_radio(nativo, tecnica, radio_km, metrica, consultas=CONSULTAS) -> Caso:
             clave = (dataset.sha256, operacion, metrica, _huella(centros))
             if clave not in _REFERENCIAS:
                 _REFERENCIAS[clave] = [
-                    sorted(
-                        map(_clave_rid, nativo.scan_radius(estado.tabla, "ubicacion", c, radio, m))
-                    )
+                    _firma_radio(nativo.scan_radius(estado.tabla, "ubicacion", c, radio, m))
                     for c in geo
                 ]
             esperados = _REFERENCIAS[clave]
@@ -228,8 +234,8 @@ def caso_radio(nativo, tecnica, radio_km, metrica, consultas=CONSULTAS) -> Caso:
                 radio_unidades=radio,
                 consultas=len(centros),
                 centros_sha256=_huella(centros),
-                resultados_totales=sum(map(len, esperados)),
-                fraccion_media_devuelta=sum(map(len, esperados))
+                resultados_totales=sum(cantidad for cantidad, _ in esperados),
+                fraccion_media_devuelta=sum(cantidad for cantidad, _ in esperados)
                 / (len(centros) * len(dataset.registros)),
             )
 
@@ -238,7 +244,9 @@ def caso_radio(nativo, tecnica, radio_km, metrica, consultas=CONSULTAS) -> Caso:
                     resultados.append(estado.radio(centro, radio, m))
 
             def validar():
-                obtenidos = [sorted(map(_clave_rid, r)) for r in resultados]
+                obtenidos = [_firma_radio(r) for r in resultados]
+                # Se liberan antes de la siguiente repeticion, no al cerrar el caso.
+                resultados.clear()
                 if obtenidos != esperados:
                     raise RuntimeError("el radio no coincide con la busqueda secuencial")
 
