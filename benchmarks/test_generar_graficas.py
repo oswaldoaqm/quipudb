@@ -214,9 +214,11 @@ def test_renderizado_completo_y_fuentes_intactas(fuentes, tmp_path):
         if ruta.suffix == ".png":
             assert ruta.read_bytes().startswith(b"\x89PNG")
         else:
-            assert "<svg" in ruta.read_text()
-            assert all(linea == linea.rstrip() for linea in ruta.read_text().splitlines())
-    informe = (salida / "comparacion_experimental.md").read_text()
+            assert "<svg" in ruta.read_text(encoding="utf-8")
+            assert all(
+                linea == linea.rstrip() for linea in ruta.read_text(encoding="utf-8").splitlines()
+            )
+    informe = (salida / "comparacion_experimental.md").read_text(encoding="utf-8")
     assert "99.000000 ms" in informe
     assert "315 muestras" in informe
 
