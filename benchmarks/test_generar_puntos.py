@@ -169,8 +169,8 @@ def test_rechaza_tamanos_no_soportados_sin_crear_archivos(tmp_path, tamano):
 def test_leer_puntos_convierte_y_conserva_el_orden(conjuntos):
     dataset = leer_puntos(conjuntos[0] / "puntos_1000.csv", 1_000)
     assert dataset.sha256 == SHA256_1K
-    assert len(dataset.filas) == 1_000
-    assert dataset.filas[0] == (1, "chimbote", -9.079577, -78.596628)
+    assert len(dataset.registros) == 1_000
+    assert dataset.registros[0] == (1, "chimbote", -9.079577, -78.596628)
 
 
 @pytest.mark.parametrize(
@@ -223,13 +223,13 @@ def test_integracion_carga_en_heap_con_rtree(nativo_real, conjuntos, tmp_path):
     assert db.index(TABLA, INDICE) is indice
 
     # El indice responde lo mismo que un recorrido completo con un oraculo propio.
-    _, _, lat_c, lon_c = dataset.filas[0]
+    _, _, lat_c, lon_c = dataset.registros[0]
     centro = nativo_real.GeoPoint(lat_c, lon_c)
     rids = indice.search_radius(centro, 10_000.0, nativo_real.Metric.HAVERSINE)
     obtenidos = sorted(tabla.read(rid)[0] for rid in rids)
     esperados = sorted(
         identificador
-        for identificador, _, lat, lon in dataset.filas
+        for identificador, _, lat, lon in dataset.registros
         if haversine_m(lat_c, lon_c, lat, lon) <= 10_000.0
     )
     assert obtenidos == esperados
