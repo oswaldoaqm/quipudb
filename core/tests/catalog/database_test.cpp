@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 #include "quipudb/catalog/database.hpp"
 #include "quipudb/error.hpp"
@@ -240,6 +241,25 @@ TEST_F(DatabaseTest, RTreeSeConstruyeBuscaYPersisteDesdeElCatalogo) {
   auto* indice = dynamic_cast<RTreeIndex*>(&reabierta.index("lugares", "por_ubicacion"));
   ASSERT_NE(indice, nullptr);
   EXPECT_EQ(indice->search_radius(lima, 5'000.0, Metric::kHaversine).size(), 2u);
+}
+
+TEST_F(DatabaseTest, RTreeDevuelveLosKMasCercanosComoRidsOrdenados) {
+  const GeoPoint lima{-12.0464, -77.0428};
+  Database db(path_);
+  TableFile& tabla = db.create_table(lugares(), kind::kHeap);
+  const RID arequipa = tabla.insert(Record{3, GeoPoint{-16.3989, -71.5375}});
+  const RID cerca = tabla.insert(Record{2, GeoPoint{-12.05, -77.04}});
+  const RID centro = tabla.insert(Record{1, lima});
+
+  auto* indice = dynamic_cast<RTreeIndex*>(
+      &db.create_index("lugares", "por_ubicacion", "ubicacion", kind::kRTree));
+  ASSERT_NE(indice, nullptr);
+
+  EXPECT_EQ(indice->k_nearest(lima, 2, Metric::kHaversine), (std::vector<RID>{centro, cerca}));
+  // Con mas k que puntos devuelve todos, y sigue el orden por distancia.
+  EXPECT_EQ(indice->k_nearest(lima, 10, Metric::kEuclidean),
+            (std::vector<RID>{centro, cerca, arequipa}));
+  EXPECT_TRUE(indice->k_nearest(lima, 0, Metric::kHaversine).empty());
 }
 
 TEST_F(DatabaseTest, DevuelveSiempreElMismoObjetoParaUnIndice) {

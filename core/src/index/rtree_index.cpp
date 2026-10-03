@@ -104,6 +104,14 @@ std::vector<RID> RTreeIndex::search_radius(const GeoPoint& center, double radius
   return out;
 }
 
+std::vector<RID> RTreeIndex::k_nearest(const GeoPoint& center, std::size_t k, Metric metric) {
+  const auto entries = tree_.k_nearest(to_point(center), k, metric);
+  std::vector<RID> out;
+  out.reserve(entries.size());
+  for (const auto& entry : entries) out.push_back(entry.rid);
+  return out;
+}
+
 void RTreeIndex::build() {
   auto cursor = data_->cursor();
   Record record;

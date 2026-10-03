@@ -451,7 +451,10 @@ PYBIND11_MODULE(quipudb_native, m) {
   py::class_<RTreeIndex, Index>(m, "RTreeIndex",
                                 "Indice espacial secundario sobre una columna POINT")
       .def("search_radius", &RTreeIndex::search_radius, py::arg("center"), py::arg("radius"),
-           py::arg("metric"), "RIDs a radio unidades del centro segun la metrica elegida");
+           py::arg("metric"), "RIDs a radio unidades del centro segun la metrica elegida")
+      .def("k_nearest", &RTreeIndex::k_nearest, py::arg("center"), py::arg("k"),
+           py::arg("metric"), "RIDs de los k puntos mas cercanos, de mas cerca a mas lejos");
+
 
   // --- Database -------------------------------------------------------------
 
