@@ -18,6 +18,7 @@ from engine.executor.predicates import (
     equality_key,
     matches,
     native_metric,
+    polygon_search_args,
     range_values,
     spatial_search_args,
 )
@@ -435,6 +436,10 @@ def _read_candidates(
             lambda: index.search_radius(center, radius, metric),
         )
         index_op = Op.RADIUS_SEARCH
+    elif plan.route is AccessRoute.RTREE_POLYGON:
+        vertices = polygon_search_args(condition, native)
+        index_measurement = measure_native(index, lambda: index.search_polygon(vertices))
+        index_op = Op.POLYGON_SEARCH
     else:
         raise ValueError(f"ruta de SELECT desconocida: {plan.route!r}")
 

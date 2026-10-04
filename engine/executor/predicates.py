@@ -12,6 +12,7 @@ from engine.parser.bound_ast import (
     BoundComparisonCondition,
     BoundCondition,
     BoundDistanceCondition,
+    BoundPolygonCondition,
     BoundValue,
     PointValue,
 )
@@ -62,6 +63,10 @@ def matches(row: tuple[BoundValue, ...], condition: BoundCondition) -> bool:
     """Evalua en memoria un predicado sobre una fila ya convertida."""
 
     value = row[condition.column.index]
+    if isinstance(condition, BoundPolygonCondition):
+        if not isinstance(value, PointValue):
+            raise TypeError("DENTRO solo se puede evaluar sobre un POINT")
+        return contains_point(condition.vertices, value)
     if isinstance(condition, BoundDistanceCondition):
         if not isinstance(value, PointValue):
             raise TypeError("DISTANCIA solo se puede evaluar sobre un POINT")
@@ -91,6 +96,60 @@ def spatial_search_args(condition: BoundCondition, native: Any) -> tuple[object,
         raise TypeError("una busqueda por radio necesita DISTANCIA")
     metric = native_metric(condition.metric, native)
     return to_native_value(condition.center, native), condition.radius, metric
+
+
+def polygon_search_args(condition: BoundCondition, native: Any) -> list[object]:
+    """Traduce DENTRO a la lista de vertices que espera el R-Tree nativo."""
+
+    if not isinstance(condition, BoundPolygonCondition):
+        raise TypeError("una busqueda por poligono necesita DENTRO")
+    return [to_native_value(vertex, native) for vertex in condition.vertices]
+
+
+def contains_point(vertices: tuple[PointValue, ...], point: PointValue) -> bool:
+    """Si ``point`` cae dentro del poligono o sobre su borde.
+
+    Es una traduccion literal de ``contains_point`` del core (``rtree.cpp``),
+    con las mismas tolerancias y el mismo orden de operaciones, para que una
+    consulta sin indice decida el borde exactamente igual que el R-Tree. Como
+    en el core, ``x`` es la longitud e ``y`` la latitud.
+    """
+
+    if len(vertices) < 3:
+        raise ValueError(f"un poligono necesita al menos 3 vertices, y se dieron {len(vertices)}")
+    px, py = point.longitude, point.latitude
+    polygon = [(vertex.longitude, vertex.latitude) for vertex in vertices]
+
+    # El borde primero: el conteo de cruces no decide de forma estable sobre una arista.
+    j = len(polygon) - 1
+    for i in range(len(polygon)):
+        if _on_segment(polygon[j], polygon[i], px, py):
+            return True
+        j = i
+
+    inside = False
+    j = len(polygon) - 1
+    for i in range(len(polygon)):
+        ax, ay = polygon[i]
+        bx, by = polygon[j]
+        if (ay > py) != (by > py) and px < (bx - ax) * (py - ay) / (by - ay) + ax:
+            inside = not inside
+        j = i
+    return inside
+
+
+def _on_segment(a: tuple[float, float], b: tuple[float, float], px: float, py: float) -> bool:
+    ax, ay = a
+    bx, by = b
+    scale = max(abs(ax), abs(ay), abs(bx), abs(by), abs(px), abs(py), 1.0)
+    cross = (bx - ax) * (py - ay) - (by - ay) * (px - ax)
+    if abs(cross) > scale * scale * 1e-12:
+        return False
+    slack = scale * 1e-12
+    return (
+        min(ax, bx) - slack <= px <= max(ax, bx) + slack
+        and min(ay, by) - slack <= py <= max(ay, by) + slack
+    )
 
 
 def native_metric(metric: DistanceMetric, native: Any) -> Any:
@@ -131,10 +190,12 @@ def _compare(left: BoundValue, right: BoundValue) -> int:
 
 
 __all__ = [
+    "contains_point",
     "distance_between",
     "equality_key",
     "matches",
     "native_metric",
+    "polygon_search_args",
     "range_values",
     "spatial_search_args",
 ]
