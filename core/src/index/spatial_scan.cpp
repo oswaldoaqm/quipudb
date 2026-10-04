@@ -84,4 +84,23 @@ std::vector<RID> scan_k_nearest(TableFile& table, std::string_view column, const
   return out;
 }
 
+std::vector<RID> scan_polygon(TableFile& table, std::string_view column,
+                              const std::vector<GeoPoint>& vertices) {
+  const std::size_t posicion = columna_point(table, column);
+  std::vector<Point> poligono;
+  poligono.reserve(vertices.size());
+  for (const auto& vertex : vertices) poligono.push_back(como_punto(vertex));
+  // Valida los vertices con las mismas reglas que el R-Tree antes de leer.
+  (void)bounding_box_of(poligono);
+
+  std::vector<RID> out;
+  auto cursor = table.cursor();
+  Record record;
+  while (cursor->next(record)) {
+    const Point p = como_punto(std::get<GeoPoint>(record[posicion]));
+    if (contains_point(poligono, p)) out.push_back(cursor->rid());
+  }
+  return out;
+}
+
 }  // namespace quipudb

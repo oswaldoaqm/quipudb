@@ -454,7 +454,23 @@ PYBIND11_MODULE(quipudb_native, m) {
       .def("search_radius", &RTreeIndex::search_radius, py::arg("center"), py::arg("radius"),
            py::arg("metric"), "RIDs a radio unidades del centro segun la metrica elegida")
       .def("k_nearest", &RTreeIndex::k_nearest, py::arg("center"), py::arg("k"),
-           py::arg("metric"), "RIDs de los k puntos mas cercanos, de mas cerca a mas lejos");
+           py::arg("metric"), "RIDs de los k puntos mas cercanos, de mas cerca a mas lejos")
+      .def("search_polygon", &RTreeIndex::search_polygon, py::arg("vertices"),
+           "RIDs de los puntos dentro del poligono, bordes incluidos. Los vertices van "
+           "en orden y sin repetir el primero; con menos de tres lanza InvalidRecord");
+
+  // El mismo criterio que usa el R-Tree, para que el filtro en memoria de una
+  // consulta sin indice decida el borde igual que el indice.
+  m.def(
+      "contains_point",
+      [](const std::vector<GeoPoint>& vertices, const GeoPoint& point) {
+        std::vector<Point> poligono;
+        poligono.reserve(vertices.size());
+        for (const auto& v : vertices) poligono.push_back(Point{v.longitude, v.latitude});
+        return contains_point(poligono, Point{point.longitude, point.latitude});
+      },
+      py::arg("vertices"), py::arg("point"),
+      "True si el punto cae dentro del poligono o sobre su borde");
 
   // Busqueda espacial secuencial (#131): la linea base del 2.2.4. Va en C++
   // para que la comparacion con el R-Tree mida la poda y no el interprete.
@@ -464,6 +480,9 @@ PYBIND11_MODULE(quipudb_native, m) {
   m.def("scan_k_nearest", &scan_k_nearest, py::arg("table"), py::arg("column"),
         py::arg("center"), py::arg("k"), py::arg("metric"),
         "RIDs de los k mas cercanos recorriendo la tabla entera, de mas cerca a mas lejos");
+  m.def("scan_polygon", &scan_polygon, py::arg("table"), py::arg("column"),
+        py::arg("vertices"),
+        "RIDs dentro del poligono recorriendo la tabla entera, sin indice");
 
   // --- Database -------------------------------------------------------------
 
