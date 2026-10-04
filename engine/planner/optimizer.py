@@ -12,13 +12,14 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TypeAlias
 
-from engine.parser.ast import ComparisonOperator
+from engine.parser.ast import ComparisonOperator, OrderDirection
 from engine.parser.bound_ast import (
     BoundBetweenCondition,
     BoundComparisonCondition,
     BoundCondition,
     BoundDeleteStatement,
     BoundDistanceCondition,
+    BoundDistanceOrderBy,
     BoundJoinRef,
     BoundSelectStatement,
     BoundSource,
@@ -36,6 +37,7 @@ class AccessRoute(StrEnum):
     INDEX_SEARCH = "index_search"
     INDEX_RANGE = "index_range"
     RTREE_RADIUS = "rtree_radius"
+    RTREE_KNN = "rtree_knn"
 
 
 class JoinStrategy(StrEnum):
@@ -122,13 +124,23 @@ class PhysicalTableAccess:
     route: AccessRoute
     index: IndexMetadata | None = None
     residual_filter: bool = False
+    nearest: BoundDistanceOrderBy | None = None
+    nearest_limit: int | None = None
 
     def __post_init__(self) -> None:
         index_route = self.route in {
             AccessRoute.INDEX_SEARCH,
             AccessRoute.INDEX_RANGE,
             AccessRoute.RTREE_RADIUS,
+            AccessRoute.RTREE_KNN,
         }
+        if self.route is AccessRoute.RTREE_KNN:
+            if self.nearest is None or self.nearest_limit is None or self.nearest_limit < 0:
+                raise ValueError("RTREE_KNN necesita un orden espacial y un limite no negativo")
+            if self.nearest.direction is not OrderDirection.ASC or self.residual_filter:
+                raise ValueError("RTREE_KNN necesita orden ASC sin filtro residual")
+        elif self.nearest is not None or self.nearest_limit is not None:
+            raise ValueError("solo RTREE_KNN admite parametros de vecinos")
         if index_route != (self.index is not None):
             raise ValueError("las rutas de indice necesitan exactamente un indice")
         if self.index is None:
@@ -137,11 +149,13 @@ class PhysicalTableAccess:
             raise ValueError("el indice elegido no pertenece a la metadata de la tabla")
         if self.route is AccessRoute.INDEX_RANGE and not self.index.supports_range:
             raise ValueError("INDEX_RANGE necesita un indice que soporte rangos")
-        if self.route is AccessRoute.RTREE_RADIUS:
+        if self.route in {AccessRoute.RTREE_RADIUS, AccessRoute.RTREE_KNN}:
             if self.index.structure is not Structure.RTREE:
-                raise ValueError("RTREE_RADIUS necesita un indice R-Tree")
+                raise ValueError("una ruta espacial necesita un indice R-Tree")
         elif self.index.structure is Structure.RTREE:
-            raise ValueError("un R-Tree solo se usa con RTREE_RADIUS")
+            raise ValueError("un R-Tree solo se usa con una ruta espacial")
+        if self.nearest is not None and self.index.column != self.nearest.column.index:
+            raise ValueError("el indice no corresponde a la columna del orden espacial")
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,7 +213,16 @@ class PhysicalSelectPlan:
     group_strategy: GroupStrategy | None = None
 
     def __post_init__(self) -> None:
-        if self.external_sort != (self.statement.order_by is not None):
+        uses_knn = isinstance(self.source, PhysicalTableAccess) and self.source.nearest is not None
+        if uses_knn and (
+            self.source.nearest != self.statement.order_by
+            or self.source.nearest_limit != self.statement.limit
+            or self.statement.where is not None
+            or self.statement.group_by is not None
+            or not isinstance(self.statement.source, BoundTableRef)
+        ):
+            raise ValueError("k-NN necesita ORDER BY y LIMIT sobre una tabla sin WHERE ni GROUP BY")
+        if self.external_sort != (self.statement.order_by is not None and not uses_knn):
             raise ValueError("ORDER BY y external_sort deben aparecer juntos")
         if (self.group_strategy is not None) != (self.statement.group_by is not None):
             raise ValueError("GROUP BY necesita exactamente una estrategia de agrupacion")
@@ -300,10 +323,30 @@ def optimize_select(
         offset=0,
         primary_table_allowed=True,
     )
+    order = statement.order_by
+    if (
+        isinstance(source, PhysicalTableAccess)
+        and isinstance(order, BoundDistanceOrderBy)
+        and order.direction is OrderDirection.ASC
+        and statement.limit is not None
+        and statement.where is None
+        and statement.group_by is None
+    ):
+        index = _best_spatial_index(source.table, order.column.index)
+        if index is not None:
+            source = PhysicalTableAccess(
+                source.table,
+                AccessRoute.RTREE_KNN,
+                index,
+                nearest=order,
+                nearest_limit=statement.limit,
+            )
     return PhysicalSelectPlan(
         statement=statement,
         source=source,
-        external_sort=statement.order_by is not None,
+        external_sort=statement.order_by is not None and not (
+            isinstance(source, PhysicalTableAccess) and source.nearest is not None
+        ),
         group_strategy=(GroupStrategy.AUTO if statement.group_by is not None else None),
     )
 
@@ -429,6 +472,10 @@ def _validate_source(
 
     dueno = _leaf_of(bound, where)
     for fisica, (semantica, offset) in zip(fisicas, semanticas, strict=True):
+        if fisica.route is AccessRoute.RTREE_KNN:
+            if not isinstance(bound, BoundTableRef) or where is not None:
+                raise ValueError("k-NN solo reemplaza el acceso de una tabla sin WHERE")
+            continue
         if semantica is not dueno:
             if fisica.index is not None or fisica.route is not AccessRoute.SCAN:
                 raise ValueError(

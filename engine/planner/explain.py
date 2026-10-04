@@ -7,6 +7,7 @@ from engine.parser.bound_ast import (
     BoundAggregateCall,
     BoundColumnReference,
     BoundCondition,
+    BoundDistanceOrderBy,
     BoundJoinRef,
     BoundSelectStatement,
     BoundSource,
@@ -62,9 +63,11 @@ def explain_select(
             children=[root],
         )
 
-    if statement.order_by is not None:
+    if physical.external_sort:
         detail = f"direccion {statement.order_by.direction.value}; external sort"
-        if statement.group_by is not None:
+        if isinstance(statement.order_by, BoundDistanceOrderBy):
+            detail += f"; distancia {statement.order_by.metric.value}"
+        if statement.group_by is not None and not isinstance(statement.order_by, BoundDistanceOrderBy):
             detail += "; puede reutilizar el orden producido por GROUP BY"
         root = Step(
             op=Op.SORT,
@@ -84,7 +87,9 @@ def explain_select(
             children=[root],
         )
 
-    if statement.limit is not None:
+    if statement.limit is not None and not (
+        isinstance(physical.source, PhysicalTableAccess) and physical.source.nearest is not None
+    ):
         root = Step(
             op=Op.LIMIT,
             structure=Structure.MEMORY,
@@ -144,6 +149,26 @@ def _access_step(
     table_name = semantic.schema.table_name
     if access.route is AccessRoute.SCAN:
         return Step(op=Op.SCAN, structure=access.table.structure, table=table_name)
+
+    if access.nearest is not None:
+        index_step = Step(
+            op=Op.KNN_SEARCH,
+            structure=Structure.RTREE,
+            table=table_name,
+            column=access.nearest.column.column.name,
+            detail=(
+                f"indice {access.index.name}; k-NN k={access.nearest_limit}; "
+                f"{access.nearest.metric.value}; "
+                f"{source[access.nearest.span.start:access.nearest.span.end]}"
+            ),
+        )
+        return Step(
+            op=Op.FETCH,
+            structure=access.table.structure,
+            table=table_name,
+            detail="lee por RID conservando el orden de los vecinos",
+            children=[index_step],
+        )
 
     if condition is None:  # protegido por PhysicalSelectPlan
         raise ValueError(f"la ruta {access.route.value} necesita una condicion")

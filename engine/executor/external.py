@@ -11,12 +11,22 @@ from typing import Any
 from engine.executor.instrumentation import copy_stats, measure_memory, measure_native
 from engine.executor.native import from_native_record, from_native_schema, to_native_schema
 from engine.executor.operators import SelectExecution, apply_limit, execute_source
-from engine.executor.predicates import equality_key, matches, range_values, spatial_search_args
-from engine.parser.ast import AggregateFunction, OrderDirection
+from engine.executor.predicates import (
+    distance_between,
+    equality_key,
+    matches,
+    range_values,
+    spatial_search_args,
+)
+from engine.parser.ast import AggregateFunction, OrderDirection, SqlTypeName
 from engine.parser.bound_ast import (
+    BoundColumn,
     BoundColumnReference,
     BoundCondition,
+    BoundDistanceOrderBy,
+    BoundOrderBy,
     BoundSchema,
+    PointValue,
 )
 from engine.planner.optimizer import (
     AccessRoute,
@@ -126,14 +136,13 @@ def _execute_ordered(
     if order_by is None:
         raise ValueError("ORDER BY no fue resuelto")
 
-    native_rows, sort_step = _sort(
+    native_rows, sort_step = _sort_order(
         native,
         schema,
         pipeline.source,
         order_by.column.index,
-        order_by.direction,
+        order_by,
         statement.schema.table_name,
-        order_by.column.column.name,
         pipeline.root,
         lambda: pipeline.stream_time_ms,
         options,
@@ -232,6 +241,7 @@ def _execute_grouped(
     order_by = statement.order_by
     reuses_group_order = (
         order_by is not None
+        and not isinstance(order_by, BoundDistanceOrderBy)
         and order_by.direction is OrderDirection.ASC
         and used == native.ExternalGroupBy.Strategy.SORT
     )
@@ -239,14 +249,13 @@ def _execute_grouped(
         native_rows = tuple(measured_group_output)
         root: Step | None = None
     else:
-        native_rows, root = _sort(
+        native_rows, root = _sort_order(
             native,
             grouped_schema,
             measured_group_output,
             0,
-            order_by.direction,
+            order_by,
             schema.table_name,
-            group_by.column.column.name,
             None,
             lambda: group_output_timer.time_ms,
             options,
@@ -305,6 +314,69 @@ def _execute_grouped(
     execution = SelectExecution(columns, tipos, projected.value, project_step)
     del measured_group_output, grouped_source, native_source, group
     return execution
+
+
+def _sort_order(
+    native: Any,
+    schema: BoundSchema,
+    records: Iterable[Any],
+    key_column: int,
+    order: BoundOrderBy | BoundDistanceOrderBy,
+    table_name: str,
+    child: Step | None,
+    upstream_time_ms: Callable[[], float],
+    options: ExternalExecutionOptions,
+) -> tuple[tuple[Any, ...], Step]:
+    """Ordena la fila completa; la clave espacial calculada nunca sale al usuario."""
+
+    if not isinstance(order, BoundDistanceOrderBy):
+        return _sort(
+            native,
+            schema,
+            records,
+            key_column,
+            order.direction,
+            table_name,
+            order.column.column.name,
+            child,
+            upstream_time_ms,
+            options,
+        )
+
+    key_name = "_quipudb_distance"
+    names = {column.name for column in schema.columns}
+    while key_name in names:
+        key_name += "_"
+    sort_schema = BoundSchema(
+        schema.table_name,
+        schema.columns + (BoundColumn(key_name, SqlTypeName.DOUBLE, None),),
+        schema.key_column,
+    )
+
+    def with_distance() -> Iterator[Any]:
+        for record in records:
+            point = from_native_record(record, schema)[key_column]
+            if not isinstance(point, PointValue):
+                raise TypeError("ORDER BY DISTANCIA requiere POINT")
+            yield list(record) + [distance_between(point, order.center, order.metric)]
+
+    rows, step = _sort(
+        native,
+        sort_schema,
+        with_distance(),
+        len(schema.columns),
+        order.direction,
+        table_name,
+        order.column.column.name,
+        child,
+        upstream_time_ms,
+        options,
+    )
+    step.detail += (
+        f"; DISTANCIA con {order.metric.value}; "
+        f"POINT({order.center.latitude}, {order.center.longitude}); ordenamiento completo"
+    )
+    return tuple(row[:-1] for row in rows), step
 
 
 def _sort(

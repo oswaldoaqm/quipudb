@@ -20,6 +20,7 @@ from engine.parser.ast import (
     DeleteStatement,
     DistanceCondition,
     DistanceMetric,
+    DistanceOrderBy,
     DoubleLiteral,
     DropTableStatement,
     EndTransactionStatement,
@@ -400,6 +401,49 @@ def test_distancia_rechaza_formas_que_no_son_busqueda_por_radio(
 ) -> None:
     with pytest.raises(SQLParseError, match=message):
         parse_sql(f"SELECT * FROM tiendas WHERE {where}")
+
+
+@pytest.mark.parametrize(
+    ("metric_text", "metric", "direction_text", "direction"),
+    [
+        ("", DistanceMetric.HAVERSINE, "", OrderDirection.ASC),
+        (", HAVERSINE", DistanceMetric.HAVERSINE, " ASC", OrderDirection.ASC),
+        (", EUCLIDEAN", DistanceMetric.EUCLIDEAN, " DESC", OrderDirection.DESC),
+    ],
+)
+def test_order_by_distancia_preserva_argumentos_direccion_y_spans(
+    metric_text, metric, direction_text, direction,
+) -> None:
+    sql = (
+        "SELECT id FROM tiendas\nORDER BY distancia(tiendas.ubicacion,\n"
+        f"POINT(-12.0464, -77.0428){metric_text}){direction_text} LIMIT 10"
+    )
+    statement = parse_sql(sql)
+    assert isinstance(statement, SelectStatement)
+    order = statement.order_by
+    assert isinstance(order, DistanceOrderBy)
+    assert order.column.name.name == "ubicacion"
+    assert order.column.qualifier.name == "tiendas"
+    assert (order.center.latitude, order.center.longitude) == (-12.0464, -77.0428)
+    assert order.metric is metric
+    assert order.direction is direction
+    assert sql[order.span.start:order.span.end].endswith(f"){direction_text}")
+    assert statement.limit.value == 10
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "DISTANCIA(ubicacion)",
+        "DISTANCIA(ubicacion, 'Lima')",
+        "DISTANCIA(ubicacion, POINT(91, 0))",
+        "DISTANCIA(ubicacion, POINT(0, 0), MANHATTAN)",
+        "DISTANCIA(ubicacion, POINT(0, 0)) < 5",
+    ],
+)
+def test_order_by_distancia_rechaza_argumentos_y_operadores_invalidos(expression) -> None:
+    with pytest.raises(SQLParseError):
+        parse_sql(f"SELECT * FROM tiendas ORDER BY {expression}")
 
 
 def test_delete_exige_y_parsea_where() -> None:

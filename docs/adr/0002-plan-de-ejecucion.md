@@ -55,6 +55,8 @@ dibuja.
 | `range_search` | Busqueda por rango de clave primaria en la tabla | ninguno |
 | `index_search` | Busqueda puntual en un indice secundario; entrega RIDs | ninguno |
 | `index_range` | Busqueda por rango en un indice secundario; entrega RIDs | ninguno |
+| `radius_search` | Busqueda espacial por radio; entrega RIDs | ninguno |
+| `knn_search` | k vecinos mas cercanos, ya ordenados; entrega RIDs | ninguno |
 | `fetch` | Lee de la tabla los registros de los RIDs que entrega el hijo | 1 |
 | `filter` | Evalua en memoria un predicado que ninguna estructura resolvio | 1 |
 | `project` | Se queda con algunas columnas | 1 |
@@ -65,6 +67,12 @@ dibuja.
 | `insert` / `remove` | Escritura en la tabla y en sus indices | ninguno |
 
 ### Valores de `structure`
+
+Desde #128, `rtree` identifica el índice espacial. Desde #129,
+`knn_search/rtree` seguido de `fetch` declara un ORDER BY espacial con límite
+absorbido por el acceso: no contiene `sort` ni un `limit` posterior. En cambio,
+el fallback contiene `sort/external_sort` y `limit/memory`, si se pidió límite.
+Los contadores del índice y de la recuperación por RID siguen separados.
 
 Los cinco primeros son, letra por letra, las constantes `kind::` de
 `core/include/quipudb/catalog/table.hpp`. Los tres ultimos solo existen en la

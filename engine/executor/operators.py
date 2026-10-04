@@ -12,8 +12,15 @@ from engine.executor.instrumentation import measure_memory, measure_native
 from engine.executor.native import (
     from_native_record,
     to_native_schema,
+    to_native_value,
 )
-from engine.executor.predicates import equality_key, matches, range_values, spatial_search_args
+from engine.executor.predicates import (
+    equality_key,
+    matches,
+    native_metric,
+    range_values,
+    spatial_search_args,
+)
 from engine.parser.ast import SqlTypeName
 from engine.parser.bound_ast import (
     BoundCondition,
@@ -91,7 +98,11 @@ def execute_select(
 
     return apply_limit(
         SelectExecution(columns, tipos, rows, root),
-        statement.limit,
+        (
+            None
+            if isinstance(plan.source, PhysicalTableAccess) and plan.source.nearest is not None
+            else statement.limit
+        ),
         table_name,
     )
 
@@ -325,6 +336,48 @@ def _read_candidates(
             table=table_name,
             stats=measured.stats,
             time_ms=measured.time_ms,
+        )
+
+    if plan.nearest is not None:
+        index = database.index(table_name, plan.index.name)
+        center = to_native_value(plan.nearest.center, native)
+        metric = native_metric(plan.nearest.metric, native)
+        # LIMIT puede exceder size_t o la cardinalidad: no se reserva espacio
+        # para mas vecinos que entradas existentes en el indice.
+        k = min(plan.nearest_limit, len(index))
+        nearest = measure_native(index, lambda: index.k_nearest(center, k, metric))
+        index_step = Step(
+            op=Op.KNN_SEARCH,
+            structure=Structure.RTREE,
+            table=table_name,
+            column=plan.nearest.column.column.name,
+            detail=(
+                f"indice {plan.index.name}; k-NN k={plan.nearest_limit}; "
+                f"{plan.nearest.metric.value}; "
+                f"{source[plan.nearest.span.start:plan.nearest.span.end]}"
+            ),
+            stats=nearest.stats,
+            time_ms=nearest.time_ms,
+        )
+
+        def fetch_nearest() -> list[Any]:
+            rows = []
+            for rid in nearest.value:
+                record = table.read(rid)
+                if record is None:
+                    raise RuntimeError(f"el indice {plan.index.name!r} apunta a un RID inexistente")
+                rows.append(record)
+            return rows
+
+        fetched = measure_native(table, fetch_nearest)
+        return fetched.value, Step(
+            op=Op.FETCH,
+            structure=plan.table.structure,
+            table=table_name,
+            detail="lee por RID conservando el orden de los vecinos",
+            stats=fetched.stats,
+            time_ms=fetched.time_ms,
+            children=[index_step],
         )
 
     if condition is None:

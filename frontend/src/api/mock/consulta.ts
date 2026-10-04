@@ -52,6 +52,12 @@ export interface Agregado {
   alias: string;
 }
 
+export interface OrdenLeido {
+  columna: string;
+  descendente: boolean;
+  distancia?: { centro: PointValue; metrica: "HAVERSINE" | "EUCLIDEAN" };
+}
+
 export interface ConsultaLeida {
   /** Columnas simples pedidas; null si es `*` o si solo hay agregados. */
   columnas: string[] | null;
@@ -59,7 +65,7 @@ export interface ConsultaLeida {
   agrupa: string | null;
   tabla: string;
   where: Condicion | null;
-  orden: { columna: string; descendente: boolean } | null;
+  orden: OrdenLeido | null;
   limit: number | null;
 }
 
@@ -96,6 +102,11 @@ const DISTANCIA = new RegExp(
 );
 const ORDEN = new RegExp(
   `\\bORDER\\s+BY\\s+(${REFERENCIA})(?:\\s+(ASC|DESC))?`,
+  "i",
+);
+const ORDEN_DISTANCIA = new RegExp(
+  `\\bORDER\\s+BY\\s+DISTANCIA\\s*\\(\\s*(${REFERENCIA})\\s*,\\s*(${PUNTO})` +
+    `(?:\\s*,\\s*(HAVERSINE|EUCLIDEAN))?\\s*\\)(?:\\s+(ASC|DESC))?`,
   "i",
 );
 const LIMITE = /\bLIMIT\s+(\d+)\b/i;
@@ -162,6 +173,7 @@ export function leerConsulta(sql: string): ConsultaLeida | null {
 
   const lista = cabeza[1].trim();
   const orden = ORDEN.exec(sql);
+  const espacial = ORDEN_DISTANCIA.exec(sql);
   const agrupa = AGRUPA.exec(sql);
   const limite = LIMITE.exec(sql);
 
@@ -193,7 +205,16 @@ export function leerConsulta(sql: string): ConsultaLeida | null {
     agrupa: agrupa ? agrupa[1].toLowerCase() : null,
     tabla: cabeza[2].toLowerCase(),
     where: leerCondicion(sql),
-    orden: orden
+    orden: espacial
+      ? {
+          columna: espacial[1].toLowerCase(),
+          descendente: /desc/i.test(espacial[4] ?? ""),
+          distancia: {
+            centro: valorDe(espacial[2]) as PointValue,
+            metrica: (espacial[3]?.toUpperCase() ?? "HAVERSINE") as "HAVERSINE" | "EUCLIDEAN",
+          },
+        }
+      : orden
       ? {
           columna: orden[1].toLowerCase(),
           descendente: /desc/i.test(orden[2] ?? ""),
@@ -265,6 +286,15 @@ function distanciaEntre(
     Math.sin(deltaLatitud / 2) ** 2 +
     Math.cos(latitudA) * Math.cos(latitudB) * Math.sin(deltaLongitud / 2) ** 2;
   return 6_371_008.8 * 2 * Math.asin(Math.sqrt(Math.min(1, haversine)));
+}
+
+function compararOrden(a: CellValue, b: CellValue, orden: OrdenLeido): number {
+  const signo = orden.descendente ? -1 : 1;
+  if (orden.distancia && esPoint(a) && esPoint(b)) {
+    const { centro, metrica } = orden.distancia;
+    return signo * (distanciaEntre(a, centro, metrica) - distanciaEntre(b, centro, metrica));
+  }
+  return signo * comparar(a, b);
 }
 
 function paginas(filas: number): number {
@@ -657,9 +687,9 @@ export function ejecutar(
       ? agrupacion.columns.indexOf(consulta.orden.columna)
       : -1;
     if (consulta.orden && posicionOrden >= 0) {
-      const signo = consulta.orden.descendente ? -1 : 1;
+      const orden = consulta.orden;
       filas = [...filas].sort(
-        (a, b) => signo * comparar(a[posicionOrden], b[posicionOrden]),
+        (a, b) => compararOrden(a[posicionOrden], b[posicionOrden], orden),
       );
       raiz = paso(
         "sort",
@@ -692,26 +722,47 @@ export function ejecutar(
     };
   }
 
+  let usaKnn = false;
   if (consulta.orden) {
-    const indice = nombres.indexOf(consulta.orden.columna);
-    const signo = consulta.orden.descendente ? -1 : 1;
-    filas = [...filas].sort((a, b) => signo * comparar(a[indice], b[indice]));
-
-    const runs = Math.max(1, Math.ceil(paginas(filas.length) / 8));
-    raiz = paso(
-      "sort",
-      "external_sort",
-      tabla.info.name,
-      consulta.orden.columna,
-      `k-way merge, ${runs} runs, ${consulta.orden.descendente ? "DESC" : "ASC"}`,
-      {
-        pages_read: paginas(filas.length),
-        pages_written: paginas(filas.length),
-        records_examined: filas.length,
-        records_returned: filas.length,
-      },
-      [raiz],
+    const orden = consulta.orden;
+    const indice = nombres.indexOf(orden.columna);
+    filas = [...filas].sort((a, b) => compararOrden(a[indice], b[indice], orden));
+    const espacial = tabla.info.indexes.find(
+      (i) => i.structure === "rtree" && i.column === orden.columna,
     );
+    usaKnn = !!orden.distancia && !orden.descendente && consulta.limit !== null
+      && !consulta.where && !base && !!espacial;
+
+    if (usaKnn) {
+      filas = filas.slice(0, consulta.limit!);
+      const vecinos = paso(
+        "knn_search", "rtree", tabla.info.name, orden.columna,
+        `indice ${espacial!.name}; k-NN k=${consulta.limit}; ${orden.distancia!.metrica}`,
+        stats(filas.length ? paginas(filas.length) : 0, filas.length, filas.length),
+      );
+      raiz = paso(
+        "fetch", tabla.info.storage, tabla.info.name, null,
+        "lee por RID conservando el orden de los vecinos",
+        stats(filas.length, filas.length, filas.length), [vecinos],
+      );
+    } else {
+      const runs = Math.max(1, Math.ceil(paginas(filas.length) / 8));
+      raiz = paso(
+        "sort",
+        "external_sort",
+        tabla.info.name,
+        orden.columna,
+        `k-way merge, ${runs} runs, ${orden.descendente ? "DESC" : "ASC"}` +
+          (orden.distancia ? `; DISTANCIA con ${orden.distancia.metrica}; ordenamiento completo` : ""),
+        {
+          pages_read: paginas(filas.length),
+          pages_written: paginas(filas.length),
+          records_examined: filas.length,
+          records_returned: filas.length,
+        },
+        [raiz],
+      );
+    }
   }
 
   let columns = nombres;
@@ -737,7 +788,7 @@ export function ejecutar(
 
   ({ filas, raiz } = aplicarLimit(
     filas,
-    consulta.limit,
+    usaKnn ? null : consulta.limit,
     raiz,
     tabla.info.name,
   ));

@@ -20,6 +20,7 @@ from engine.parser.bound_ast import (
     BoundColumnReference,
     BoundComparisonCondition,
     BoundDistanceCondition,
+    BoundDistanceOrderBy,
     BoundGroupBy,
     BoundOrderBy,
     BoundSchema,
@@ -47,6 +48,35 @@ def _schema() -> BoundSchema:
         ),
         0,
     )
+
+
+def test_bind_order_by_distancia_resuelve_point_y_metrica() -> None:
+    schema = BoundSchema(
+        "lugares",
+        (BoundColumn("id", SqlTypeName.INT, None), BoundColumn("ubicacion", SqlTypeName.POINT, None)),
+        0,
+    )
+    source = (
+        "SELECT id FROM lugares ORDER BY "
+        "DISTANCIA(lugares.ubicacion, POINT(-12.0464, -77.0428), EUCLIDEAN) LIMIT 10"
+    )
+    bound = bind_select(_select(source), schema, source)
+    assert isinstance(bound.order_by, BoundDistanceOrderBy)
+    assert bound.order_by.column.index == 1
+    assert bound.order_by.center.latitude == -12.0464
+    assert bound.order_by.center.longitude == -77.0428
+    assert bound.order_by.metric is DistanceMetric.EUCLIDEAN
+    assert bound.limit == 10
+
+
+@pytest.mark.parametrize("column", ["nombre", "ausente"])
+def test_bind_order_by_distancia_rechaza_columna_no_espacial_con_span(column) -> None:
+    source = f"SELECT id FROM datos ORDER BY DISTANCIA({column}, POINT(0, 0)) LIMIT 2"
+    statement = _select(source)
+    with pytest.raises(SQLSemanticError) as caught:
+        bind_select(statement, _schema(), source)
+    assert caught.value.span == statement.order_by.column.span
+    assert "POINT" in caught.value.message or "no existe" in caught.value.message
 
 
 def test_bind_select_expande_wildcard_y_conserva_esquema_y_span() -> None:

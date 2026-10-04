@@ -29,6 +29,7 @@ class Op(StrEnum):
     INDEX_SEARCH = "index_search"  # busqueda puntual en un indice secundario: devuelve RIDs
     INDEX_RANGE = "index_range"  # busqueda por rango en un indice secundario: devuelve RIDs
     RADIUS_SEARCH = "radius_search"  # busqueda espacial por radio en R-Tree: devuelve RIDs
+    KNN_SEARCH = "knn_search"  # k vecinos mas cercanos en R-Tree, ordenados: devuelve RIDs
     FETCH = "fetch"  # lee de la tabla los registros de los RIDs que entrega el hijo
     FILTER = "filter"  # evalua en memoria un predicado que ninguna estructura resolvio
     PROJECT = "project"  # se queda con algunas columnas
