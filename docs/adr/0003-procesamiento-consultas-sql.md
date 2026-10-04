@@ -96,13 +96,14 @@ condition            = identifier, comparison_operator, literal
                      | identifier, "BETWEEN", literal, "AND", literal
                      | distance_condition ;
 comparison_operator  = "=" | "<" | "<=" | ">" | ">=" ;
-distance_condition   = "DISTANCIA", "(", identifier, ",", point_literal,
-                       [ ",", distance_metric ], ")",
+distance_condition   = distance_expression,
                        ( "<" | "<=" ), signed_number ;
+distance_expression  = "DISTANCIA", "(", identifier, ",", point_literal,
+                       [ ",", distance_metric ], ")" ;
 distance_metric      = "HAVERSINE" | "EUCLIDEAN" ;
 
 group_by_clause      = "GROUP", "BY", identifier ;
-order_by_clause      = "ORDER", "BY", identifier,
+order_by_clause      = "ORDER", "BY", ( identifier | distance_expression ),
                        [ "ASC" | "DESC" ] ;
 limit_clause         = "LIMIT", unsigned_integer ;
 
@@ -335,6 +336,23 @@ DELETE. El optimizador emite `radius_search/rtree` y después recupera registros
 por RID; sin índice usa scan y filtro. Para `<`, el filtro residual conserva la
 estricta exclusión del borde que la búsqueda nativa inclusiva no puede expresar.
 
+El issue #129 añade `ORDER BY DISTANCIA(columna, POINT(...)[, metrica])`. ASC
+es la dirección predeterminada y las métricas conservan el contrato de #128.
+El centro debe ser un literal POINT válido y la columna debe ser POINT.
+Con un R-Tree, LIMIT y una sola tabla sin WHERE ni GROUP BY, el acceso k-NN
+entrega los vecinos ya ordenados; el plan emite `knn_search/rtree -> fetch` y
+absorbe el LIMIT. El límite nativo se acota a la cardinalidad del índice para
+evitar reservas o conversiones desproporcionadas.
+
+Sin índice, sin LIMIT, con DESC o después de filtros, joins o agrupación, el
+ejecutor añade una clave DOUBLE temporal con la distancia y usa ExternalSort.
+Esa clave se elimina antes de producir columnas y filas; el corte se aplica
+al final. El fallback respeta WHERE antes de LIMIT, en vez de filtrar solo k
+vecinos y perder coincidencias. En GROUP BY, la columna espacial de orden debe
+seguir siendo la única columna de agrupación. EXPLAIN describe la elección
+sin recorrer datos; EXPLAIN ANALYZE conserva sus contadores reales. Los empates
+no tienen un desempate SQL garantizado.
+
 ### Limites explicitos
 
 Quedan fuera de este subconjunto:
@@ -346,7 +364,7 @@ Quedan fuera de este subconjunto:
 - aliases, `HAVING` y listas de varias columnas en `GROUP BY` u `ORDER BY`;
 - listas de columnas en `INSERT` e identificadores delimitados;
 - `COMMIT` y `ROLLBACK` como sentencias SQL;
-- k-NN, polígonos y demás operadores espaciales, consultas textuales o
+- polígonos y demás operadores espaciales no enumerados, consultas textuales o
   multimedia.
 
 `BEGIN TRANSACTION` y `END TRANSACTION` (2.1.4) ya no estan fuera de alcance

@@ -138,6 +138,15 @@ R-Tree de la columna y genera `radius_search -> fetch`, o bien `scan -> filter`
 si no existe índice. La comparación estricta `<` añade un filtro residual tras
 el R-Tree porque su búsqueda por radio incluye el borde.
 
+Desde #129, `ORDER BY DISTANCIA(...) ASC LIMIT k` sobre una sola tabla sin
+WHERE ni GROUP BY reemplaza el acceso por `RTreeIndex.k_nearest` cuando existe
+un R-Tree de la columna. Los RID llegan de más cerca a más lejos y `fetch`
+conserva ese orden. El plan expone `knn_search/rtree`, con el límite integrado,
+y el frontend lo identifica como acceso dirigido. Sin índice, sin límite,
+con DESC o con filtros/joins/grupos se ordena por una clave DOUBLE calculada
+mediante ExternalSort. Esa clave es interna y no cambia la salida HTTP ni las
+columnas proyectadas.
+
 Desde #127, `SELECT` admite `LIMIT n` como ultima clausula. El parser exige un
 entero no negativo y conserva el span del valor; la fase enlazada transporta
 el limite sin depender del catalogo. Tras ejecutar acceso, filtro, agrupacion,

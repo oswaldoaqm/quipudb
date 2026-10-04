@@ -183,6 +183,13 @@ cercanos = processor.execute(
 )
 print(cercanos.rows)            # (('UTEC',),)
 print(cercanos.plan.to_dict())  # radius_search/rtree -> fetch -> filter
+
+vecinos = processor.execute(
+    "SELECT * FROM lugares "
+    "ORDER BY DISTANCIA(ubicacion, POINT(-12.1354, -77.0227)) LIMIT 10"
+)
+print(vecinos.rows)            # hasta 10 registros, de más cerca a más lejos
+print(vecinos.plan.to_dict())  # knn_search/rtree -> fetch; sin sort
 ```
 
 `POINT` ocupa 16 bytes (dos `double`) y también viaja por la API como
@@ -192,6 +199,14 @@ defecto, cuyo radio está en metros; se puede solicitar distancia plana con
 las coordenadas. Un R-Tree se crea con `USING RTREE`; sin él, la misma consulta
 se resuelve mediante `scan` y filtro en memoria.
 
+`ORDER BY DISTANCIA(columna, POINT(...)[, metrica])` ordena por cercanía. Sobre
+una tabla con R-Tree, `ASC LIMIT k` usa el k-NN del índice y recupera solo esos
+vecinos, sin ordenar toda la tabla. Sin índice, sin `LIMIT`, con `DESC`, con
+`WHERE` o sobre un JOIN, se calcula la distancia y se ordena con ExternalSort
+antes del corte final. Un centro como `mi_ubicacion` en un ejemplo representa
+el literal `POINT(latitud, longitud)`; no es una variable SQL. Los empates por
+distancia pueden devolver cualquiera de las filas empatadas.
+
 `WHERE` admite `=`, `<`, `<=`, `>`, `>=` y `BETWEEN` inclusivo. El planner usa
 la clave primaria o un índice secundario aplicable; si no existe uno, registra
 el `scan` y el filtro en memoria. `DELETE` materializa todos sus candidatos antes
@@ -200,7 +215,8 @@ y usa external sorting; `GROUP BY` admite `COUNT(*)`, `SUM`, `MIN`, `MAX` y
 `AVG`, y usa external hashing con fallback seguro a sort. El plan explica la
 dirección, los runs, las pasadas, la estrategia y las particiones realmente
 utilizadas. `LIMIT n` acepta un entero no negativo, se aplica al final y añade
-un paso `limit` con estructura `memory` al plan.
+un paso `limit` con estructura `memory` al plan, salvo cuando el k-NN incorpora
+el límite en su propio acceso `knn_search`.
 
 `CREATE INDEX nombre ON tabla (columna) USING BPLUS` crea un B+ secundario no
 agrupado; `USING HASH` crea un hash extensible y `USING RTREE` crea un índice

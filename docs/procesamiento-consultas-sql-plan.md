@@ -239,7 +239,7 @@ Reglas mínimas:
 - `AND`, `OR`, `NOT`, subconsultas, expresiones aritméticas y funciones escalares.
 - `HAVING`, múltiples columnas de orden o agrupación y aliases.
 - Transacciones y concurrencia, que corresponden a 2.1.4.
-- k-NN, polígonos y demás operadores SQL espaciales, búsqueda de texto y
+- Polígonos y demás operadores SQL espaciales no enumerados, búsqueda de texto y
   similitud multimedia de las partes posteriores. La búsqueda por radio con
   `DISTANCIA` y el índice R-Tree se incorporaron posteriormente en #128.
 
@@ -257,6 +257,10 @@ adicional requiere actualizar primero este plan y el ADR.
 > El issue #128 agregó `DISTANCIA` en `WHERE`, selección de métrica,
 > `CREATE INDEX ... USING RTREE`, `radius_search/rtree` y fallback a scan más
 > filtro cuando no existe un índice espacial.
+> El issue #129 agrega `ORDER BY DISTANCIA(...)`: con R-Tree, ASC y LIMIT
+> sobre una tabla sin WHERE/GROUP BY usa `knn_search/rtree -> fetch`; en los
+> demás casos ordena todas las filas candidatas por distancia con ExternalSort.
+> EXPLAIN, API y panel de planes conservan la distinción entre ambos caminos.
 
 ## Issues verificados y orden de entrega
 

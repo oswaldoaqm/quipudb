@@ -41,7 +41,7 @@ no equivale a haber iniciado una modificación protegida por undo.
 | `SELECT` | `*` o proyección de columnas; filtro simple opcional |
 | `EXPLAIN [ANALYZE] SELECT` | Plan físico sin ejecutar, o plan medido después de ejecutar el SELECT |
 | `WHERE` | Una comparación `=`, `<`, `<=`, `>`, `>=`, `BETWEEN` inclusivo o búsqueda por radio con `DISTANCIA` |
-| `ORDER BY` | Una columna, ASC o DESC |
+| `ORDER BY` | Una columna o DISTANCIA sobre POINT, ASC o DESC; k-NN con R-Tree para ASC con LIMIT sobre una tabla sin filtros |
 | `LIMIT` | Un entero no negativo; se aplica al resultado final, despues de ordenar o agrupar |
 | `GROUP BY` | Una columna; agregados `COUNT(*)`, `SUM`, `MIN`, `MAX`, `AVG`, sujetos a validación semántica |
 | `DELETE FROM ... WHERE ...` | Requiere filtro; mantiene índices secundarios |
@@ -94,7 +94,13 @@ Si la columna `POINT` tiene un R-Tree, el plan usa `radius_search` con estructur
 forma estricta `<` conserva un filtro residual porque el operador nativo incluye
 el borde del radio.
 
-`ORDER BY` utiliza el ordenamiento externo; no se asume una optimización general
+Desde #129, `ORDER BY DISTANCIA(...) ASC LIMIT k` sin filtros sobre una tabla
+con R-Tree usa k-NN: el plan muestra `knn_search/rtree` y `fetch`, sin sort ni
+corte posterior. La métrica es seleccionable en el SQL. Sin índice, sin límite,
+con DESC o después de WHERE/JOIN/GROUP BY se calculan las distancias y se
+ordenan externamente; esta alternativa preserva la semántica de los filtros.
+
+El resto de `ORDER BY` utiliza el ordenamiento externo; no se asume una optimización general
 que elimine ese paso por existir un índice ordenado. `GROUP BY` usa agrupación
 externa, con estrategia AUTO y su alternativa de ordenamiento cuando corresponda.
 Las restricciones de proyección, tipos y agregados se verifican semánticamente.
