@@ -14,6 +14,7 @@ export type Op =
   | "index_search"
   | "index_range"
   | "radius_search"
+  | "knn_search"
   | "fetch"
   | "filter"
   | "project"
