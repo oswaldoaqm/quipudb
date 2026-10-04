@@ -38,6 +38,8 @@ from engine.parser.ast import (
     OrderBy,
     OrderDirection,
     PointLiteral,
+    PolygonCondition,
+    PolygonLiteral,
     Projection,
     SelectStatement,
     SqlType,
@@ -520,9 +522,13 @@ class _Parser:
         end = self._expect(TokenKind.TRANSACTION, "se esperaba TRANSACTION despues de END")
         return EndTransactionStatement(span=combine_spans(start.span, end.span))
 
-    def _condition(self) -> ComparisonCondition | BetweenCondition | DistanceCondition:
+    def _condition(
+        self,
+    ) -> ComparisonCondition | BetweenCondition | DistanceCondition | PolygonCondition:
         if self._match(TokenKind.DISTANCIA):
             return self._distance_condition(self._previous())
+        if self._match(TokenKind.DENTRO):
+            return self._polygon_condition(self._previous())
 
         column = self._column_reference("se esperaba una columna en WHERE")
         if self._match(TokenKind.BETWEEN):
@@ -577,6 +583,35 @@ class _Parser:
             metric=metric,
             span=combine_spans(start.span, radius.span),
         )
+
+    def _polygon_condition(self, start: Token) -> PolygonCondition:
+        """``DENTRO(columna, POLYGON(POINT(...), POINT(...), POINT(...)[, ...]))``."""
+
+        self._expect(TokenKind.LPAREN, "se esperaba '(' despues de DENTRO")
+        column = self._column_reference("se esperaba una columna en DENTRO")
+        self._expect(TokenKind.COMMA, "se esperaba ',' despues de la columna de DENTRO")
+        polygon_start = self._expect(
+            TokenKind.POLYGON, "se esperaba POLYGON como region de DENTRO"
+        )
+        self._expect(TokenKind.LPAREN, "se esperaba '(' despues de POLYGON")
+        vertices = [self._polygon_vertex()]
+        while self._match(TokenKind.COMMA):
+            vertices.append(self._polygon_vertex())
+        polygon_end = self._expect(TokenKind.RPAREN, "se esperaba ')' despues de los vertices")
+        polygon = PolygonLiteral(
+            tuple(vertices), combine_spans(polygon_start.span, polygon_end.span)
+        )
+        if len(vertices) < 3:
+            raise self._error(
+                polygon_end,
+                f"POLYGON necesita al menos 3 vertices y tiene {len(vertices)}",
+            )
+        end = self._expect(TokenKind.RPAREN, "se esperaba ')' despues de DENTRO")
+        return PolygonCondition(column, polygon, combine_spans(start.span, end.span))
+
+    def _polygon_vertex(self) -> PointLiteral:
+        point = self._expect(TokenKind.POINT, "cada vertice de POLYGON debe ser un POINT")
+        return self._point_literal(point)
 
     def _distance_arguments(self) -> tuple[ColumnReference, PointLiteral, DistanceMetric]:
         """Argumentos compartidos por DISTANCIA en WHERE y ORDER BY."""

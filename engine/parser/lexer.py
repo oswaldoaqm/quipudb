@@ -50,6 +50,8 @@ _KEYWORDS = {
         TokenKind.BETWEEN,
         TokenKind.AND,
         TokenKind.DISTANCIA,
+        TokenKind.DENTRO,
+        TokenKind.POLYGON,
         TokenKind.HAVERSINE,
         TokenKind.EUCLIDEAN,
         TokenKind.INT,
