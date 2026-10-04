@@ -521,7 +521,7 @@ class QueryProcessor:
                 tomadas.append(nombre)
 
             try:
-                if bound.group_by is not None or bound.order_by is not None:
+                if physical_plan.group_strategy is not None or physical_plan.external_sort:
                     execution = execute_external_select(
                         self._database,
                         self._native,

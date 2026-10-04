@@ -86,3 +86,19 @@ def test_api_contexto_y_catalogo_con_rtree(tmp_path):
         assert result.json()['rows'] == []
         assert result.json()['spatial_context']['unit'] == 'meters'
         assert result.json()['spatial_context']['center']['longitude'] == -77.0428
+
+
+def test_api_knn_conserva_point_y_expone_el_operador(tmp_path):
+    import quipudb_native
+    database, processor = _processor(tmp_path)
+    processor.execute('CREATE INDEX ubicaciones ON tiendas (ubicacion) USING RTREE')
+    query = f'SELECT * FROM tiendas ORDER BY distancia(ubicacion, {_CENTER}) LIMIT 2'
+    with TestClient(create_app(processor=processor, database=database, native=quipudb_native)) as client:
+        result = client.post('/query', json={'sql': query})
+        assert result.status_code == 200
+        body = result.json()
+        assert [row[0] for row in body['rows']] == [1, 2]
+        assert body['rows'][0][2] == {'latitude': -12.0464, 'longitude': -77.0428}
+        assert body['plan']['root']['children'][0]['op'] == 'knn_search'
+        assert body['plan']['root']['children'][0]['structure'] == 'rtree'
+        assert body['spatial_context'] is None

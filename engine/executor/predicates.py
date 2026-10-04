@@ -65,7 +65,7 @@ def matches(row: tuple[BoundValue, ...], condition: BoundCondition) -> bool:
     if isinstance(condition, BoundDistanceCondition):
         if not isinstance(value, PointValue):
             raise TypeError("DISTANCIA solo se puede evaluar sobre un POINT")
-        distance = _distance(value, condition.center, condition.metric)
+        distance = distance_between(value, condition.center, condition.metric)
         if condition.operator is ComparisonOperator.LESS_THAN:
             return distance < condition.radius
         if condition.operator is ComparisonOperator.LESS_THAN_OR_EQUAL:
@@ -89,14 +89,20 @@ def spatial_search_args(condition: BoundCondition, native: Any) -> tuple[object,
 
     if not isinstance(condition, BoundDistanceCondition):
         raise TypeError("una busqueda por radio necesita DISTANCIA")
-    metric = {
-        DistanceMetric.HAVERSINE: native.Metric.HAVERSINE,
-        DistanceMetric.EUCLIDEAN: native.Metric.EUCLIDEAN,
-    }[condition.metric]
+    metric = native_metric(condition.metric, native)
     return to_native_value(condition.center, native), condition.radius, metric
 
 
-def _distance(left: PointValue, right: PointValue, metric: DistanceMetric) -> float:
+def native_metric(metric: DistanceMetric, native: Any) -> Any:
+    """Misma eleccion de metrica para radio, k-NN y ordenamiento."""
+
+    return {
+        DistanceMetric.HAVERSINE: native.Metric.HAVERSINE,
+        DistanceMetric.EUCLIDEAN: native.Metric.EUCLIDEAN,
+    }[metric]
+
+
+def distance_between(left: PointValue, right: PointValue, metric: DistanceMetric) -> float:
     if metric is DistanceMetric.EUCLIDEAN:
         return math.hypot(left.longitude - right.longitude, left.latitude - right.latitude)
 
@@ -124,4 +130,11 @@ def _compare(left: BoundValue, right: BoundValue) -> int:
     return 0
 
 
-__all__ = ["equality_key", "matches", "range_values", "spatial_search_args"]
+__all__ = [
+    "distance_between",
+    "equality_key",
+    "matches",
+    "native_metric",
+    "range_values",
+    "spatial_search_args",
+]

@@ -104,6 +104,28 @@ def test_explain_declara_busqueda_por_radio_en_rtree() -> None:
     assert "por_ubicacion" in plan.root.walk()[0].detail
 
 
+def test_explain_knn_absorbe_limit_y_no_declara_sort() -> None:
+    source = (
+        "EXPLAIN SELECT * FROM tiendas ORDER BY "
+        "DISTANCIA(ubicacion, POINT(0, 0), EUCLIDEAN) LIMIT 10"
+    )
+    statement = parse_sql(source)
+    schema = BoundSchema(
+        "tiendas",
+        (BoundColumn("id", SqlTypeName.INT, None), BoundColumn("ubicacion", SqlTypeName.POINT, None)),
+        0,
+    )
+    bound = bind_select(statement.statement, schema, source)
+    index = IndexMetadata("por_ubicacion", 1, Structure.RTREE, False)
+    physical = optimize_select(bound, TableMetadata("tiendas", Structure.HEAP, (index,)))
+    plan = explain_select(physical, source[8:], source)
+    assert [step.op for step in plan.root.walk()] == [Op.KNN_SEARCH, Op.FETCH]
+    assert plan.root.walk()[0].structure is Structure.RTREE
+    assert "EUCLIDEAN" in plan.root.walk()[0].detail
+    assert "k=10" in plan.root.walk()[0].detail
+    assert all(step.stats == Stats() for step in plan.root.walk())
+
+
 def test_explain_coloca_limit_despues_de_ordenar_y_proyectar() -> None:
     source = "EXPLAIN SELECT nombre FROM alumnos ORDER BY nombre LIMIT 5"
     statement = parse_sql(source)

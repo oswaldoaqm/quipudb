@@ -167,6 +167,42 @@ def test_distancia_sin_rtree_cae_a_scan_mas_filtro() -> None:
     assert plan.residual_filter is True
 
 
+def test_order_by_distancia_con_limit_elige_knn_del_indice_correcto() -> None:
+    statement = _spatial_select_sql(
+        "SELECT id FROM tiendas ORDER BY DISTANCIA(ubicacion, POINT(0, 0)) LIMIT 10"
+    )
+    first = _index("a_ubicacion", Structure.RTREE)
+    second = _index("z_ubicacion", Structure.RTREE)
+    plan = optimize_select(statement, TableMetadata("tiendas", Structure.HEAP, (second, first)))
+    assert plan.route is AccessRoute.RTREE_KNN
+    assert plan.index == first
+    assert plan.source.nearest == statement.order_by
+    assert plan.source.nearest_limit == 10
+    assert plan.external_sort is False
+
+
+@pytest.mark.parametrize(
+    ("where", "direction", "limit", "indexed"),
+    [
+        ("", "", "", True),
+        ("", " DESC", " LIMIT 10", True),
+        (" WHERE id > 2", "", " LIMIT 10", True),
+        ("", "", " LIMIT 10", False),
+    ],
+)
+def test_order_by_distancia_usa_sort_si_knn_no_preserva_el_resultado(
+    where, direction, limit, indexed,
+) -> None:
+    statement = _spatial_select_sql(
+        f"SELECT * FROM tiendas{where} ORDER BY DISTANCIA(ubicacion, POINT(0, 0)){direction}{limit}"
+    )
+    indexes = (_index("por_ubicacion", Structure.RTREE),) if indexed else ()
+    plan = optimize_select(statement, TableMetadata("tiendas", Structure.HEAP, indexes))
+    assert plan.route is not AccessRoute.RTREE_KNN
+    assert plan.source.nearest is None
+    assert plan.external_sort is True
+
+
 def test_order_by_agrega_external_sort_sin_cambiar_la_ruta_de_acceso() -> None:
     statement = _select_sql("SELECT nombre FROM alumnos WHERE promedio = 15 ORDER BY codigo DESC")
     by_average = _index("por_promedio", Structure.EXTENDIBLE_HASH)
