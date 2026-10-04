@@ -1,89 +1,276 @@
 # QuipuDB
 
 Motor de base de datos multimodal escrito desde cero: almacenamiento paginado,
-indices B+ y hash, R-Tree para datos espaciales, busqueda de texto y busqueda
-vectorial sobre imagenes y audio.
+índices B+ y hash, R-Tree para datos espaciales, búsqueda de texto y búsqueda
+vectorial sobre imágenes y audio.
 
 El nombre viene del **quipu**, el sistema andino de cuerdas anudadas que los
-incas usaban para registrar y recuperar informacion: un motor de almacenamiento
-e indexacion anterior en siglos al disco duro.
+incas usaban para registrar y recuperar información: un motor de almacenamiento
+e indexación anterior en siglos al disco duro.
 
-> Proyecto Integrador del curso **Base de Datos 2**, Universidad de Ingenieria y
-> Tecnologia (UTEC), ciclo 2026-2. En desarrollo activo.
+> Proyecto Integrador del curso **Base de Datos 2**, Universidad de Ingeniería y
+> Tecnología (UTEC), ciclo 2026-2. En desarrollo activo.
 
-## Arquitectura
+## Contenido
 
-El motor esta partido en dos capas con un contrato explicito entre ellas: un
-core en C++ que es lo unico que toca disco, y una capa Python que traduce SQL a
-operaciones del core y la expone por HTTP.
+- [Estado del proyecto](#estado-del-proyecto)
+- [Arquitectura del sistema](#arquitectura-del-sistema)
+- [Arquetipo y organización del código](#arquetipo-y-organización-del-código)
+- [Manual de instalación](#manual-de-instalación)
+- [Uso](#uso)
+- [Comparación experimental](#comparación-experimental)
+- [Documentación](#documentación)
+- [Equipo](#equipo)
 
-```
- frontend/  ->  engine/api  ->  engine/{parser, planner, transactions}
-                                        |  pybind11
-                                        v
-                                     core/  (C++20)
-                          storage · index · external · catalog
-```
-
-El detalle esta en [`docs/arquitectura.md`](docs/arquitectura.md), y las
-decisiones de diseno fechadas en [`docs/adr/`](docs/adr/).
-
-## Estructura del repositorio
-
-| Ruta | Contenido |
-|---|---|
-| `core/` | Motor en C++20: paginas, heap file, archivo secuencial, indices, external algorithms |
-| `bindings/` | Capa pybind11 que expone el core a Python |
-| `engine/` | Parser SQL, planner, transacciones y API REST |
-| `frontend/` | Interfaz grafica: archivos, consultas, resultados y plan de ejecucion |
-| `benchmarks/` | Comparacion experimental contra PostgreSQL |
-| `docs/` | Arquitectura, ADRs e informe |
-
-## Alcance del proyecto
+## Estado del proyecto
 
 | Parte | Contenido | Estado |
 |---|---|---|
-| 1 | Base de datos relacional: storage, indices, SQL, transacciones, frontend, benchmarks | En curso |
-| 2 | Base de datos espacial: R-Tree, k-NN, consultas por rango y poligono | Pendiente |
-| 3 | Busqueda de texto: SPIMI, TF-IDF + coseno, BM25 | Pendiente |
-| 4 | Busqueda vectorial multimedia: SIFT/MFCC, IVF, HNSW | Pendiente |
-| 5 | Aplicacion de IA sobre la API del motor | Pendiente |
+| 1 | Base de datos relacional: Heap y Secuencial, B+ agrupado y no agrupado, hash extensible, algoritmos externos, SQL, transacciones, interfaz y experimentos | **Completa** |
+| 2 | Base de datos espacial: R-Tree, consultas por radio, k-NN y polígono, métricas euclidiana y Haversine, mapa, SQL espacial y comparación contra PostGIS | **Completa** (la búsqueda por polígono está en el núcleo; falta exponerla en SQL) |
+| 3 | Búsqueda de texto: SPIMI, TF-IDF + coseno, BM25 | Pendiente |
+| 4 | Búsqueda vectorial multimedia: SIFT/MFCC, IVF, HNSW | Pendiente |
+| 5 | Aplicación de IA sobre la API del motor | Pendiente |
 
-## Compilar y ejecutar
+## Arquitectura del sistema
 
-Requisitos: CMake 3.20+, un compilador con C++20 y Python 3.11+.
+El motor está partido en dos capas con un contrato explícito entre ellas: un
+**núcleo en C++20**, que es lo único que toca disco, y una **capa Python** que
+traduce SQL a operaciones del núcleo y la expone por HTTP. La interfaz web solo
+habla con la API.
+
+```mermaid
+flowchart TB
+    FE["frontend/<br/>React + TypeScript · Monaco · Leaflet"]
+    API["engine/api<br/>FastAPI: /query · /tables · /tables/{t}/load"]
+    subgraph ENG["engine/ · Python"]
+        P["parser<br/>lexer · AST · semántica"] --> PL["planner<br/>reglas de acceso"] --> EX["executor<br/>operadores · DML · carga CSV"]
+        TX["transactions<br/>undo log · LockManager"]
+    end
+    B["bindings/ · pybind11 → quipudb_native"]
+    subgraph CORE["core/ · C++20"]
+        ST["storage<br/>Page · DiskManager · Heap · Secuencial"]
+        IX["index<br/>B+ · Hash extensible · R-Tree · métricas"]
+        XT["external<br/>sort · group · join"]
+        CT["catalog<br/>Database · tipos · RecordCodec"]
+    end
+    D[("archivos de páginas<br/>4 KiB")]
+    BM["benchmarks/"]
+    FE -- "HTTP + JSON" --> API --> ENG --> B --> CORE --> D
+    BM -. "sin SQL ni HTTP" .-> B
+```
+
+| Capa | Responsabilidad |
+|---|---|
+| `core/storage` | Páginas de 4 KiB con cabecera de 8 bytes; `DiskManager` lee, escribe y asigna páginas (la 0 guarda metadatos). Heap File con lista libre LIFO y reutilización de slots; Archivo Secuencial con overflow por grupo, borrado lazy y reorganización al superar 30 % de desperdicio. |
+| `core/index` | Árbol B+ persistente (tabla agrupada y índice no agrupado), hash extensible con FNV-1a, R-Tree con split cuadrático, métricas euclidiana y Haversine, y la búsqueda espacial secuencial usada como línea base. |
+| `core/external` | Ordenamiento externo con mezcla k-way, agrupación externa por hash con caída a sort, hash join externo e index nested loop. |
+| `core/catalog` | Tipos (`INT`, `DOUBLE`, `BOOL`, `DATE`, `VARCHAR(n)`, `POINT`), codificación de registros de ancho fijo, catálogo y apertura de tablas e índices. |
+| `bindings/` | Módulo `quipudb_native`: expone el núcleo a Python con las mismas excepciones. |
+| `engine/parser` | Lexer con posiciones, parser descendente recursivo, AST inmutable y validación semántica. |
+| `engine/planner` | Elige el acceso por reglas (clave primaria, índice secundario, R-Tree o recorrido) y construye el plan de ejecución. |
+| `engine/executor` | Ejecuta el plan, mantiene los índices en `INSERT`/`DELETE`, carga CSV y mide cada operador. |
+| `engine/transactions` | `BEGIN`/`END TRANSACTION`, bitácora de deshacer en memoria y locks de tabla compartidos/exclusivos con timeout. |
+| `engine/api` | API REST con FastAPI: un único `QueryProcessor` por proceso, con acceso serializado. |
+| `frontend/` | Paneles de Archivos, Consultas, Resultados, Mapa y Plan de ejecución. |
+
+**Contratos.** `TableFile` es una organización de registros (Heap, Secuencial, B+
+agrupado); `Index` asocia una clave con un RID (página, slot) y lo implementan el
+B+ no agrupado, el hash extensible y el R-Tree. Los índices secundarios solo se
+montan sobre Heap, que es la única organización donde un RID no cambia al
+insertar o reorganizar.
+
+**Plan de ejecución.** Cada `SELECT` devuelve, junto con sus filas, un árbol de
+pasos (`scan`, `index_search`, `index_range`, `radius_search`, `knn_search`,
+`fetch`, `filter`, `sort`, `group`, `join`, `limit`, `project`) con las páginas
+leídas, los registros examinados y devueltos y el tiempo de cada uno. El mismo
+contrato ([ADR 0002](docs/adr/0002-plan-de-ejecucion.md)) alimenta el panel de
+plan de la interfaz y los benchmarks.
+
+**Recorrido de una consulta.** La interfaz envía el SQL a `POST /query`; el
+lexer y el parser construyen el AST de todo el lote antes de ejecutar nada; la
+validación semántica resuelve tablas, columnas y tipos; el planner elige el
+acceso; el executor adquiere los locks, llama al núcleo por los bindings y
+devuelve filas y plan.
+
+El detalle está en [`docs/arquitectura.md`](docs/arquitectura.md), y las
+decisiones de diseño fechadas en [`docs/adr/`](docs/adr/).
+
+## Arquetipo y organización del código
+
+El repositorio es un **monorepo organizado por capas**: cada directorio de primer
+nivel corresponde a una capa de la arquitectura, y las pruebas viven junto al
+código que verifican (`core/tests/` replica la estructura de `core/src/`; en
+Python, cada módulo tiene su `test_*.py` al lado).
+
+```
+quipudb/
+├── CMakeLists.txt              build del núcleo, sus pruebas y los bindings (opcionales)
+├── requirements.txt            dependencias de la capa Python
+├── core/                       C++20: lo único que toca disco
+│   ├── include/quipudb/        cabeceras públicas; cada una documenta su contrato
+│   │   ├── storage/            page, disk_manager, heap_file, sequential_file
+│   │   ├── index/              bplus_tree, bplus_clustered_table, bplus_unclustered_index,
+│   │   │                       extendible_hash(_index), rtree(_index), distance, spatial_scan
+│   │   ├── external/           external_sort, external_group, external_join
+│   │   └── catalog/            types, record_codec, table, catalog, database
+│   ├── src/                    implementaciones, con la misma estructura
+│   └── tests/                  pruebas unitarias (GoogleTest + ctest)
+├── bindings/module.cpp         pybind11 → módulo quipudb_native
+├── engine/                     capa Python
+│   ├── parser/                 tokens, lexer, parser, ast, semantic, bound_ast, errors
+│   ├── planner/                optimizer, plan, explain, native_catalog
+│   ├── executor/               processor, operators, predicates, dml, external,
+│   │                           spatial, bulk_load, result, instrumentation
+│   ├── transactions/           transaction, locks, demo_concurrencia
+│   └── api/                    main (FastAPI), schemas, service
+├── frontend/                   React 19 + TypeScript + Vite
+│   └── src/
+│       ├── panels/             FilesPanel, QueryPanel, ResultsPanel, MapPanel, PlanPanel
+│       ├── api/                cliente HTTP y simulador en memoria (mock/)
+│       ├── components/ hooks/ lib/
+├── benchmarks/                 comparación experimental
+│   ├── scripts/                generadores de datasets, suites, PostGIS y gráficas
+│   ├── datasets/ results/      CSV generados (no se versionan)
+│   └── *.md                    protocolos e informes de cada corrida
+└── docs/
+    ├── arquitectura.md         diseño general
+    ├── adr/                    decisiones de arquitectura (ADR 0001–0005)
+    └── informe/                informe modular y gráficas oficiales
+```
+
+Convenciones:
+
+- **Nombres en español** en el dominio (`insertar`, `ubicacion`, `reorganizar`) y
+  en inglés en las interfaces del núcleo (`insert`, `search`, `TableFile`).
+- **Cada error del núcleo tiene su excepción** (`IoError`, `SchemaError`,
+  `InvalidRecord`, `DuplicateKey`, `Unsupported`), que llega a Python con el mismo
+  nombre, derivada de `QuipuDBError`.
+- **Commits convencionales** (`feat(index): ...`, `test(bench): ...`), ramas por
+  funcionalidad y pull requests revisados; un hook y la CI validan el formato.
+  Ver [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- **CI** (GitHub Actions): compila el núcleo y corre `ctest`, ejecuta `ruff` y
+  `pytest`, compila los bindings y prueba la integración SQL y espacial.
+
+## Manual de instalación
+
+### Requisitos
+
+| Herramienta | Versión | Para qué |
+|---|---|---|
+| CMake | 3.20 o superior | Configurar el build del núcleo |
+| Compilador C++ | Con soporte de C++20 (por ejemplo, GCC 13 o superior) | Núcleo y bindings |
+| Python | 3.11 o superior | Capa Python, API y benchmarks |
+| Node.js | 20 o superior | Interfaz web |
+| Git | — | Clonar; GoogleTest y pybind11 se descargan solos con `FetchContent` |
+| Docker | Opcional | Solo para la comparación contra PostGIS |
+
+Probado en Ubuntu (CI), macOS sobre Apple Silicon y Windows 11 con MSYS2 UCRT64
+(g++ 14 y el Python 3.11 de MSYS2).
+
+### 1. Clonar
 
 ```bash
-# Core en C++
+git clone https://github.com/oswaldoaqm/quipudb.git
+cd quipudb
+git config core.hooksPath .githooks     # valida los mensajes de commit
+```
+
+### 2. Compilar el núcleo y correr sus pruebas
+
+```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
-
-# Capa Python
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
 ```
 
-Si vas a trabajar sobre la capa Python **no necesitas compilar los bindings**;
-solo se construyen con `-DQUIPUDB_BUILD_PYTHON=ON`. Las pruebas que dependen de
-ellos se saltan solas si el módulo no está: `pytest` sigue pasando.
+### 3. Compilar los bindings de Python
 
-### Bindings de Python (opcional)
-
-Dan acceso al core desde Python: `Database`, `TableFile`, `Index` y los tipos del
-esquema. Los necesitan el parser (2.1.3), las transacciones (2.1.4) y los
-benchmarks (2.1.6); el frontend consume la API, no el core.
+Los necesitan el procesador SQL, las transacciones, la API y los benchmarks. Se
+activan con `-DQUIPUDB_BUILD_PYTHON=ON`; pybind11 se descarga solo.
 
 ```bash
 cmake -S . -B build-py -DCMAKE_BUILD_TYPE=Release -DQUIPUDB_BUILD_PYTHON=ON
 cmake --build build-py --parallel
-
-# Que Python encuentre el modulo
-export PYTHONPATH=$PWD/build-py/bindings        # Windows: set PYTHONPATH=%CD%\build-py\bindings
-python -m pytest engine/test_bindings.py -q
 ```
 
-pybind11 se descarga solo con FetchContent: no hay que instalarlo aparte.
+El módulo queda en `build-py/bindings/` y **debe compilarse para el mismo
+intérprete de Python que lo va a importar** (misma versión y mismo toolchain:
+en Windows, el Python de MSYS2 con el g++ de MSYS2).
+
+### 4. Instalar la capa Python
+
+```bash
+python -m venv .venv
+source .venv/bin/activate                 # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Para que Python encuentre el engine y el módulo nativo:
+
+```bash
+export PYTHONPATH=$PWD/build-py/bindings:$PWD        # Linux/macOS
+set PYTHONPATH=%CD%\build-py\bindings;%CD%            # Windows (cmd)
+```
+
+Si solo trabajas sobre la capa Python **no necesitas los bindings**: las pruebas
+que dependen de ellos se saltan solas y `pytest` sigue pasando.
+
+### 5. Verificar la instalación
+
+```bash
+python -c "import quipudb_native; print('bindings OK')"
+python -m pytest -q                    # engine y benchmarks
+ruff check engine benchmarks
+```
+
+### 6. Levantar la API
+
+```bash
+export QUIPUDB_CATALOG=datos/catalogo.txt    # opcional; este es el valor por defecto
+uvicorn engine.api.main:app --reload --port 8000
+```
+
+La documentación interactiva queda en `http://localhost:8000/docs`. La API
+acepta CORS desde el servidor de desarrollo del frontend (`localhost:5173`).
+
+### 7. Levantar la interfaz
+
+```bash
+cd frontend
+npm install
+cp .env.example .env          # luego poner VITE_USE_MOCK=false para usar el motor real
+npm run dev                   # http://localhost:5173
+```
+
+Con `VITE_USE_MOCK=true` (el valor de ejemplo) la interfaz usa un simulador en
+memoria y no necesita la API ni el núcleo compilado. Con `VITE_USE_MOCK=false`
+habla con la API en `VITE_API_URL` (por defecto `http://localhost:8000`).
+
+| Script | Qué hace |
+|---|---|
+| `npm run dev` | Servidor de desarrollo con recarga en caliente |
+| `npm run build` | Verifica tipos y compila a `frontend/dist/` |
+| `npm run typecheck` | Solo la verificación de tipos |
+| `npm run test:spatial` | Pruebas de la visualización espacial |
+
+### Problemas frecuentes
+
+- **`ModuleNotFoundError: quipudb_native`**: falta compilar los bindings o el
+  `PYTHONPATH` no apunta a `build-py/bindings`.
+- **`ImportError` al cargar el módulo**: se compiló para otro intérprete; vuelve
+  a configurar `build-py` con el Python que vas a usar.
+- **La interfaz dice "No se pudo contactar al motor"**: la API no está levantada
+  o `VITE_API_URL` no coincide con su puerto.
+- **`IoError ... declara N registros vivos y en las páginas hay M`**: el proceso
+  terminó sin `flush` y el archivo quedó inconsistente; el motor no tiene
+  recuperación ante caídas todavía. Borra el directorio de datos y vuelve a cargar.
+
+## Uso
+
+### Desde Python, con los bindings
+
+Dan acceso al núcleo: `Database`, `TableFile`, `Index` y los tipos del esquema.
 
 ```python
 import quipudb_native as q
@@ -107,11 +294,25 @@ print(t.stats().as_dict())          # lo que consume el plan de ejecucion
 db.flush()
 ```
 
-### Procesar SQL
+Detalles que conviene saber:
 
-Con los bindings compilados, `QueryProcessor` ejecuta `CREATE TABLE`,
-`CREATE INDEX`, `DROP TABLE`, `INSERT INTO`, `SELECT`, `EXPLAIN` y
-`DELETE FROM`. El resultado de una consulta incluye las filas y el plan físico:
+- **`Database` es la puerta de entrada.** Devuelve siempre el mismo objeto para
+  una tabla o índice dado; dos handles sobre el mismo archivo se pisan.
+- **Los enteros se promueven según el esquema.** Un `15` en una columna DOUBLE
+  entra como `15.0`, y en una DATE como `Date(15)`.
+- **`bool` es `bool`.** No llega como entero, pese a que en Python `bool` derive
+  de `int`.
+- **`cursor()` no se expone**: deja de valer si la tabla se modifica, y desde
+  Python eso sería un uso-después-de-liberar. `scan_with_rids()` devuelve copias
+  materializadas para `DELETE`; `source_of()` lo envuelve sin entregarlo a los
+  algoritmos externos.
+
+### SQL
+
+`QueryProcessor` ejecuta `CREATE TABLE`, `CREATE INDEX`, `DROP TABLE`,
+`INSERT INTO`, `SELECT`, `EXPLAIN [ANALYZE]`, `DELETE FROM` y
+`BEGIN`/`END TRANSACTION`. El resultado de una consulta incluye las filas y el
+plan físico:
 
 ```python
 import quipudb_native as q
@@ -138,8 +339,7 @@ processor.execute("CREATE INDEX cursos_por_nota ON cursos (nota) USING BPLUS")
 
 result = processor.execute("SELECT nombre, nota FROM cursos WHERE nota >= 14")
 print(result.columns)          # ('nombre', 'nota')
-print(result.rows)             # (('Bases de Datos 2', 18.0),)
-print(result.plan.to_dict())   # scan/filter/project y sus estadísticas
+print(result.plan.to_dict())   # index_range/fetch/project y sus estadísticas
 
 planned = processor.execute("EXPLAIN SELECT nombre FROM cursos WHERE nota >= 14")
 measured = processor.execute(
@@ -161,13 +361,49 @@ print(grouped.columns)         # ('nombre', 'COUNT_all', 'AVG_nota')
 
 deleted = processor.execute("DELETE FROM cursos WHERE nota < 11")
 print(deleted.affected_rows)   # 0
-print(deleted.plan)            # None: el plan DML aún requiere acuerdo en ADR 0002
 
 processor.execute("DROP TABLE cursos")
 ```
 
-El tipo espacial básico se declara como `POINT` y recibe coordenadas en orden
-latitud, longitud. Ambos limites se validan antes de escribir en disco:
+`WHERE` admite `=`, `<`, `<=`, `>`, `>=` y `BETWEEN` inclusivo. El planner usa
+la clave primaria o un índice secundario aplicable; si no existe uno, registra
+el `scan` y el filtro en memoria. `DELETE` materializa todos sus candidatos antes
+de escribir y mantiene cada índice secundario. `ORDER BY` admite `ASC` y `DESC`
+y usa external sorting; `GROUP BY` admite `COUNT(*)`, `SUM`, `MIN`, `MAX` y
+`AVG`, y usa external hashing con fallback seguro a sort. El plan explica la
+dirección, los runs, las pasadas, la estrategia y las particiones realmente
+utilizadas. `LIMIT n` acepta un entero no negativo y se aplica al final.
+
+`CREATE INDEX nombre ON tabla (columna) USING BPLUS` crea un B+ secundario no
+agrupado; `USING HASH` crea un hash extensible y `USING RTREE` un índice
+espacial sobre una columna `POINT`. También se aceptan los nombres explícitos
+`BPLUS_UNCLUSTERED` y `EXTENDIBLE_HASH`. El índice se construye sobre las filas
+existentes y queda disponible para el optimizador. `EXPLAIN` genera el plan sin
+recorrer filas; `EXPLAIN ANALYZE` ejecuta el `SELECT` para obtener estadísticas
+reales. Ambos devuelven el plan y no las filas de la consulta explicada.
+
+Las sentencias pueden ocupar varias líneas y contener comentarios `-- ...` o
+`/* ... */`. Un lote separado por `;` se analiza completo antes de ejecutar; se
+suman sus `affected_rows` y las filas y el plan pertenecen a la última sentencia.
+Las sentencias se confirman individualmente por defecto; para que un lote sea
+atómico ante un error de ejecución se encierra entre `BEGIN TRANSACTION;` y
+`END TRANSACTION;`.
+
+Para pruebas reproducibles puede limitarse la memoria de los algoritmos externos:
+
+```python
+processor = QueryProcessor(
+    db,
+    external_buffers=3,
+    external_page_size=512,
+    temp_dir="temporales",
+)
+```
+
+### SQL espacial
+
+El tipo `POINT` recibe coordenadas en orden latitud, longitud, y ambos límites
+se validan antes de escribir en disco:
 
 ```python
 processor.execute(
@@ -192,96 +428,31 @@ print(vecinos.rows)            # hasta 10 registros, de más cerca a más lejos
 print(vecinos.plan.to_dict())  # knn_search/rtree -> fetch; sin sort
 ```
 
-`POINT` ocupa 16 bytes (dos `double`) y también viaja por la API como
-`{"latitude": ..., "longitude": ...}`. `DISTANCIA` usa `HAVERSINE` por
-defecto, cuyo radio está en metros; se puede solicitar distancia plana con
-`DISTANCIA(ubicacion, POINT(...), EUCLIDEAN)`, cuyo radio usa las unidades de
-las coordenadas. Un R-Tree se crea con `USING RTREE`; sin él, la misma consulta
-se resuelve mediante `scan` y filtro en memoria.
+`POINT` ocupa 16 bytes (dos `double`) y viaja por la API como
+`{"latitude": ..., "longitude": ...}`. `DISTANCIA` usa `HAVERSINE` por defecto,
+cuyo radio está en metros; `DISTANCIA(ubicacion, POINT(...), EUCLIDEAN)` usa
+distancia plana en las unidades de las coordenadas. Sin R-Tree, la misma
+consulta se resuelve con `scan` y filtro en memoria.
 
 `ORDER BY DISTANCIA(columna, POINT(...)[, metrica])` ordena por cercanía. Sobre
 una tabla con R-Tree, `ASC LIMIT k` usa el k-NN del índice y recupera solo esos
 vecinos, sin ordenar toda la tabla. Sin índice, sin `LIMIT`, con `DESC`, con
 `WHERE` o sobre un JOIN, se calcula la distancia y se ordena con ExternalSort
-antes del corte final. Un centro como `mi_ubicacion` en un ejemplo representa
+antes del corte final. Un centro como `mi_ubicacion` en el enunciado representa
 el literal `POINT(latitud, longitud)`; no es una variable SQL. Los empates por
 distancia pueden devolver cualquiera de las filas empatadas.
 
-`WHERE` admite `=`, `<`, `<=`, `>`, `>=` y `BETWEEN` inclusivo. El planner usa
-la clave primaria o un índice secundario aplicable; si no existe uno, registra
-el `scan` y el filtro en memoria. `DELETE` materializa todos sus candidatos antes
-de escribir y mantiene cada índice secundario. `ORDER BY` admite `ASC` y `DESC`
-y usa external sorting; `GROUP BY` admite `COUNT(*)`, `SUM`, `MIN`, `MAX` y
-`AVG`, y usa external hashing con fallback seguro a sort. El plan explica la
-dirección, los runs, las pasadas, la estrategia y las particiones realmente
-utilizadas. `LIMIT n` acepta un entero no negativo, se aplica al final y añade
-un paso `limit` con estructura `memory` al plan, salvo cuando el k-NN incorpora
-el límite en su propio acceso `knn_search`.
-
-`CREATE INDEX nombre ON tabla (columna) USING BPLUS` crea un B+ secundario no
-agrupado; `USING HASH` crea un hash extensible y `USING RTREE` crea un índice
-espacial sobre una columna `POINT`. También se aceptan los nombres explícitos
-`BPLUS_UNCLUSTERED` y `EXTENDIBLE_HASH`. El índice se construye sobre las filas
-existentes y queda disponible para el optimizador. `EXPLAIN` admite un `SELECT`,
-genera el plan sin recorrer sus filas y deja sus contadores en cero. `EXPLAIN
-ANALYZE` sí ejecuta el `SELECT` para obtener estadísticas reales; ambos devuelven
-el plan y no devuelven las filas de la consulta explicada.
-
-Las sentencias pueden ocupar varias líneas y contener comentarios de línea
-`-- comentario` o de bloque `/* comentario */`. Los marcadores escritos dentro
-de un string se conservan como texto. Una llamada también puede contener varias
-sentencias separadas por `;`: el script completo se analiza antes de ejecutar,
-se suman sus `affected_rows` y las filas y el plan pertenecen a la última
-sentencia. Las sentencias se confirman individualmente por defecto; para que un
-lote sea atómico ante un error de ejecución se encierra entre
-`BEGIN TRANSACTION;` y `END TRANSACTION;`.
-
-Para pruebas reproducibles puede limitarse la memoria de estos algoritmos sin
-cambiar los valores por defecto:
-
-```python
-processor = QueryProcessor(
-    db,
-    external_buffers=3,
-    external_page_size=512,
-    temp_dir="temporales",
-)
-```
-
-Detalles que conviene saber:
-
-- **`Database` es la puerta de entrada.** Devuelve siempre el mismo objeto para
-  una tabla o índice dado; dos handles sobre el mismo archivo se pisan.
-- **Los enteros se promueven según el esquema.** Un `15` en una columna DOUBLE
-  entra como `15.0`, y en una DATE como `Date(15)`.
-- **`bool` es `bool`.** No llega como entero, pese a que en Python `bool` derive
-  de `int`.
-- **Cada error del core tiene su excepción**: `IoError`, `SchemaError`,
-  `InvalidRecord`, `DuplicateKey`, `Unsupported`, todas derivadas de
-  `QuipuDBError`.
-- **`cursor()` no se expone**: deja de valer si la tabla se modifica, y desde
-  Python eso sería un uso-después-de-liberar. `scan_with_rids()` devuelve copias
-  materializadas para `DELETE`; `source_of()` lo envuelve sin entregarlo a los
-  algoritmos externos.
+La intersección con polígonos (`RTree::search_polygon`, número de cruces, admite
+polígonos no convexos) está implementada y probada en el núcleo; todavía no se
+expone en los bindings ni en la gramática SQL.
 
 ### API REST
 
-Con los bindings compilados y `requirements.txt` instalado, la API se levanta
-desde la raiz del repositorio:
-
-```bash
-export PYTHONPATH=build-py/bindings
-export QUIPUDB_CATALOG=datos/catalogo.txt   # opcional; este es el valor por defecto
-uvicorn engine.api.main:app --reload --port 8000
-```
-
-| Ruta | Que hace |
+| Ruta | Qué hace |
 |---|---|
-| `POST /query` | Ejecuta SQL (`{"sql": "..."}`) y devuelve filas y plan |
-| `GET /tables` | Describe cada tabla: columnas, indices y numero de registros |
+| `POST /query` | Ejecuta SQL (`{"sql": "..."}`) y devuelve columnas, tipos, filas, plan y, si hay una condición de radio, un `spatial_context` |
+| `GET /tables` | Describe cada tabla: columnas, organización, índices y número de registros |
 | `POST /tables/{tabla}/load` | Carga un CSV en una tabla existente |
-
-La documentacion interactiva queda en `http://localhost:8000/docs`.
 
 #### Carga masiva desde CSV
 
@@ -306,30 +477,30 @@ curl -F "file=@alumnos.csv" http://localhost:8000/tables/alumnos/load
 ```
 
 - **La cabecera es obligatoria** y empareja las columnas por nombre, en
-  cualquier orden y sin distinguir mayusculas (salvo que la tabla tenga dos
+  cualquier orden y sin distinguir mayúsculas (salvo que la tabla tenga dos
   columnas que solo difieran en eso). Si falta, sobra o se repite alguna, se
-  responde 400 diciendo cuales y no se inserta nada. Las columnas sin nombre
-  al final de la cabecera se ignoran, pero sus campos tienen que venir vacios.
+  responde 400 diciendo cuáles y no se inserta nada. Las columnas sin nombre
+  al final de la cabecera se ignoran, pero sus campos tienen que venir vacíos.
 - **El separador se detecta en la cabecera**: coma, punto y coma o tabulador.
-  Un CSV guardado desde Excel en espanol usa punto y coma y coma decimal; en
+  Un CSV guardado desde Excel en español usa punto y coma y coma decimal; en
   ese caso un `DOUBLE` puede venir como `15,5`.
 - **Los valores se convierten al tipo del esquema** con las mismas reglas que
   un `INSERT`: `INT` de 32 bits, `DOUBLE` finito, `BOOL` como `true`/`false` o
   `1`/`0`, `DATE` como `AAAA-MM-DD` y `VARCHAR(n)` de hasta `n` bytes en UTF-8.
-  Un campo vacio solo es valido en un `VARCHAR`, porque el motor no tiene
+  Un campo vacío solo es válido en un `VARCHAR`, porque el motor no tiene
   `NULL`.
 - **Por defecto la carga es parcial**: cada fila se inserta por separado; las
   que no se pueden convertir o insertar se cuentan en `failed` y se detallan
-  con la linea del archivo donde empiezan (contando la cabecera). Solo se
-  listan las primeras 100; `errors_truncated` avisa si hubo mas.
+  con la línea del archivo donde empiezan (contando la cabecera). Solo se
+  listan las primeras 100; `errors_truncated` avisa si hubo más.
 - **Con `?atomic=true`** la primera fila que falla deshace todas las anteriores
-  y se responde 400 con su linea. Usa la misma bitacora de deshacer que
+  y se responde 400 con su línea. Usa la misma bitácora de deshacer que
   `BEGIN TRANSACTION`, que guarda una entrada por fila cargada.
-- **Codificacion: UTF-8 (con o sin BOM) o cp1252**, que es lo que escribe
-  "Guardar como CSV" en un Excel de Windows en espanol. `encoding` en la
-  respuesta dice cual se uso. Un archivo con tildes en UTF-8 y algun byte roto
-  no se reinterpreta como cp1252 (cambiaria cada tilde por basura): se rechaza
-  entero antes de insertar, indicando la primera linea invalida.
+- **Codificación: UTF-8 (con o sin BOM) o cp1252**, que es lo que escribe
+  "Guardar como CSV" en un Excel de Windows en español. `encoding` en la
+  respuesta dice cuál se usó. Un archivo con tildes en UTF-8 y algún byte roto
+  no se reinterpreta como cp1252: se rechaza entero antes de insertar,
+  indicando la primera línea inválida.
 - **No se lee entero en memoria**: FastAPI lo deja en un archivo temporal y se
   procesa fila por fila. 100 000 filas cargan en unos segundos.
 - No se puede cargar con un `BEGIN TRANSACTION` abierto, y la tabla queda con
@@ -343,47 +514,89 @@ with open("alumnos.csv", encoding="utf-8-sig", newline="") as archivo:
 print(reporte.inserted, reporte.failed)
 ```
 
-## Interfaz
+### Interfaz
 
-Los cuatro paneles de la seccion 2.1.5 -- archivos, consultas, resultados y
-plan de ejecucion -- en una sola pantalla. Requiere Node 20+.
+Cinco paneles en una sola pantalla:
+
+- **Archivos**: tablas con su organización, columnas, índices y botón para cargar CSV.
+- **Consultas**: editor Monaco con resaltado SQL; `Ctrl+Enter` ejecuta y los errores
+  se muestran con línea y columna.
+- **Resultados**: tabla virtualizada con el tipo de cada columna, filas y tiempo.
+- **Mapa**: Leaflet sobre OpenStreetMap. Resultados en azul, resto de la tabla en
+  gris, punto de referencia en ámbar y, para un radio Haversine, el círculo de
+  búsqueda. El detalle está en [`docs/frontend-mapa-radio.md`](docs/frontend-mapa-radio.md).
+- **Plan de ejecución**: árbol de pasos con páginas y tiempo por operador,
+  coloreados según sean en memoria, algoritmo externo o acceso por índice.
+
+### Demostración de concurrencia
 
 ```bash
-cd frontend
-npm install
-npm run dev            # http://localhost:5173
+python -m engine.transactions.demo_concurrencia --modo sin-lock   # actualizaciones perdidas
+python -m engine.transactions.demo_concurrencia --modo con-lock   # resultado correcto
 ```
 
-Arranca con **datos falsos**: no necesita el core compilado ni la API
-levantada, y lanza sola una consulta de prueba al abrir. Los planes que dibuja
-son los tres ejemplos del [ADR 0002](docs/adr/0002-plan-de-ejecucion.md), asi
-que el panel ya sabe representar las formas que el planner produce.
+Cuatro hilos incrementan cinco veces la misma fila con
+`BEGIN → SELECT → DELETE → INSERT → END`. Sin un `LockManager` compartido el
+contador termina por debajo de 20; con él, siempre en 20, y los interbloqueos de
+upgrade compartido→exclusivo se resuelven por timeout y reintento.
 
-Para hablar con el motor real, copia `frontend/.env.example` a `frontend/.env`
-y pon `VITE_USE_MOCK=false`. Todo el trafico pasa por `frontend/src/api/client.ts`;
-ningun componente cambia al hacerlo.
+## Comparación experimental
 
-| Script | Que hace |
+Los benchmarks llaman directamente a los bindings, sin SQL ni HTTP. Cada corrida
+oficial guarda sus CSV con un ID y su SHA-256; las gráficas y tablas se generan
+desde esos CSV.
+
+| Experimento | Compara | Informe |
+|---|---|---|
+| #39 | Heap File vs. Archivo Secuencial (1k, 10k, 100k) | [`comparacion_heap_secuencial.md`](benchmarks/comparacion_heap_secuencial.md) |
+| #40 | B+ agrupado vs. B+ no agrupado vs. hash extensible | [`comparacion_indices.md`](benchmarks/comparacion_indices.md) |
+| #131 | R-Tree vs. búsqueda secuencial | [`comparacion_rtree_secuencial.md`](benchmarks/comparacion_rtree_secuencial.md) |
+| #132 | Secuencial vs. R-Tree vs. GiST de PostGIS | [`docs/informe/comparacion_espacial.md`](docs/informe/comparacion_espacial.md) |
+
+```bash
+python benchmarks/scripts/generar_datasets.py       # alumnos 1k/10k/100k
+python benchmarks/scripts/generar_puntos.py         # puntos 1k/10k/100k
+
+PYTHONPATH=build-py/bindings python -B benchmarks/scripts/ejecutar_benchmarks.py \
+  --suite archivos --tamanos 1000 10000 100000 --consultas 1000
+PYTHONPATH=build-py/bindings python -B benchmarks/scripts/ejecutar_benchmarks.py \
+  --suite indices --tamanos 1000 10000 100000 --consultas 1000 --consultas-rango 100
+PYTHONPATH=build-py/bindings python -B benchmarks/scripts/ejecutar_benchmarks.py \
+  --suite espacial --tamanos 1000 10000 100000 --calentamientos 1 --repeticiones 5
+
+python -B benchmarks/scripts/generar_graficas.py
+python -B benchmarks/scripts/generar_graficas_espacial.py
+```
+
+La medición contra PostGIS necesita Docker; los pasos están en el
+[README de benchmarks](benchmarks/README.md#gist-de-postgis-issue-132), junto con
+los protocolos completos de cada suite.
+
+## Documentación
+
+| Documento | Contenido |
 |---|---|
-| `npm run dev` | Servidor de desarrollo con recarga en caliente |
-| `npm run build` | Verifica tipos y compila a `frontend/dist/` |
-| `npm run typecheck` | Solo la verificacion de tipos |
+| [`docs/arquitectura.md`](docs/arquitectura.md) | Diseño general del motor |
+| [`docs/adr/`](docs/adr/) | Decisiones: núcleo (0001), plan de ejecución (0002), SQL (0003), transacciones (0004), locks (0005) |
+| [`docs/informe/`](docs/informe/) | Informe modular: dominio, archivos e índices, SQL, transacciones, interfaz y experimentos |
+| [`benchmarks/README.md`](benchmarks/README.md) | Datasets, protocolos y reproducción de las corridas |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Ramas, commits y pull requests |
 
 ## Equipo
 
-| Integrante | Responsabilidad en la Parte 1 |
-|---|---|
-| Oswaldo Alejandro Quispe Monzon | Gestion de archivos e indexacion (2.1.1, 2.1.2) |
-| Sebastian Cangalaya Martinez | Procesamiento de consultas SQL (2.1.3) |
-| Juan David Velo Poma | Transacciones y concurrencia (2.1.4) |
-| Danna Gala | Interfaz de usuario (2.1.5) |
-| Mauricio Teran | Comparacion experimental (2.1.6) |
+| Integrante | Parte 1 | Parte 2 |
+|---|---|---|
+| Oswaldo Alejandro Quispe Monzon | Gestión de archivos e indexación (2.1.1, 2.1.2) | Estructura del R-Tree; API REST y carga CSV |
+| Sebastian Cangalaya Martinez | Procesamiento de consultas SQL (2.1.3) | SQL espacial (2.2.3); R-Tree en el catálogo y el planner |
+| Juan David Velo Poma | Transacciones y concurrencia (2.1.4) | Comparación experimental espacial (2.2.4) |
+| Danna Gala | Interfaz de usuario (2.1.5) | Métricas y consultas del R-Tree (2.2.1) |
+| Mauricio Teran | Comparación experimental (2.1.6) | Visualización en mapa (2.2.2) |
 
 ## Contribuir
 
-Las convenciones de commits, ramas y pull requests estan en
-[`CONTRIBUTING.md`](CONTRIBUTING.md). Leelo antes del primer commit: el
-historial del repositorio es parte de la evaluacion del curso.
+Las convenciones de commits, ramas y pull requests están en
+[`CONTRIBUTING.md`](CONTRIBUTING.md). Léelo antes del primer commit: el
+historial del repositorio es parte de la evaluación del curso.
 
 ## Licencia
 
