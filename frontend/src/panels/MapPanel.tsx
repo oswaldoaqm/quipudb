@@ -11,7 +11,7 @@ import { SpatialRegion } from "@/components/SpatialRegion";
 import type { SpatialBase } from "@/hooks/useSpatialContext";
 import {
   basePointsOutsideResults, extractSpatialPoints, isPointValue,
-  mapMessage, radiusContext, spatialView,
+  mapMessage, searchContext, spatialView,
 } from "@/lib/spatial";
 
 import "leaflet/dist/leaflet.css";
@@ -40,12 +40,14 @@ function formatCell(value: unknown): string {
 /** Presentacion del resultado y su contexto; no ejecuta consultas ni filtra distancias. */
 export function MapPanel({ resultado, hayError, ejecutando, base }: MapPanelProps) {
   const { points, invalidCount, pointColumns } = useMemo(() => extractSpatialPoints(resultado), [resultado]);
-  const context = radiusContext(resultado);
+  const context = searchContext(resultado);
   const view = useMemo(() => spatialView(context, points), [context, points]);
   const background = useMemo(() => basePointsOutsideResults(base?.result ?? null, resultado, base?.table ?? null), [base?.result, base?.table, resultado]);
   const message = mapMessage(resultado, ejecutando, hayError);
   const count = resultado?.rows.length ?? 0;
-  const center = view.kind === "circle" ? view.center : view.kind === "points" ? view.positions[0] : [0, 0] as [number, number];
+  const center = view.kind === "circle" ? view.center
+    : view.kind === "polygon" ? view.vertices[0]
+    : view.kind === "points" ? view.positions[0] : [0, 0] as [number, number];
 
   return (
     <Panel titulo="Mapa" nota={message ? undefined : `${count} ${count === 1 ? "coincidencia" : "coincidencias"} · ${points.length} ${points.length === 1 ? "punto" : "puntos"}`}>
@@ -57,12 +59,13 @@ export function MapPanel({ resultado, hayError, ejecutando, base }: MapPanelProp
             <ul aria-label="Leyenda del mapa" className="flex flex-wrap items-center gap-x-3 gap-y-1">
               {base?.result && <li className="flex items-center gap-1"><span className="size-2.5 rounded-full border border-slate-600 bg-slate-400" aria-hidden="true" />Base · {background.points.length}</li>}
               <li className="flex items-center gap-1"><span className="size-2.5 rounded-full bg-blue-600" aria-hidden="true" />Resultados · {points.length}</li>
-              {context && <li className="flex items-center gap-1"><span className="size-2.5 rounded-full border border-amber-900 bg-amber-400" aria-hidden="true" />Referencia</li>}
-              {view.kind === "circle" && <li className="flex items-center gap-1"><span className="size-3 rounded-full border border-blue-600 bg-blue-100" aria-hidden="true" />Región · {context?.operator} {context?.radius} m</li>}
+              {context?.kind === "radius" && <li className="flex items-center gap-1"><span className="size-2.5 rounded-full border border-amber-900 bg-amber-400" aria-hidden="true" />Referencia</li>}
+              {view.kind === "circle" && context?.kind === "radius" && <li className="flex items-center gap-1"><span className="size-3 rounded-full border border-blue-600 bg-blue-100" aria-hidden="true" />Región · {context.operator} {context.radius} m</li>}
+              {view.kind === "polygon" && <li className="flex items-center gap-1"><span className="size-3 border border-blue-600 bg-blue-100" aria-hidden="true" />Polígono · {view.vertices.length} vértices</li>}
             </ul>
             {resultado.rows.length === 0 && <p className="mt-1 font-medium">0 coincidencias. Se muestra la búsqueda actual.</p>}
             {resultado.rows.length > 0 && pointColumns.length === 0 && <p className="mt-1">La proyección no contiene POINT; incluye la columna espacial para ver los resultados.</p>}
-            {context?.metric === "EUCLIDEAN" && <p className="mt-1 text-muted-foreground">Radio euclidiano: {context.radius} grados. La región no se representa como círculo geográfico.</p>}
+            {context?.kind === "radius" && context.metric === "EUCLIDEAN" && <p className="mt-1 text-muted-foreground">Radio euclidiano: {context.radius} grados. La región no se representa como círculo geográfico.</p>}
             {invalidCount > 0 && <p className="mt-1 text-muted-foreground">{invalidCount} valores POINT omitidos por coordenadas inválidas.</p>}
             {resultado.spatial_context && !context && <p className="mt-1 text-muted-foreground">Contexto espacial inválido: se muestran solo los puntos válidos.</p>}
             {base?.message && <p className="mt-1 text-muted-foreground">{base.message}</p>}
