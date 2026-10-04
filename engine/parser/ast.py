@@ -187,6 +187,15 @@ class OrderBy:
 
 
 @dataclass(frozen=True, slots=True)
+class DistanceOrderBy:
+    column: ColumnReference
+    center: PointLiteral
+    metric: DistanceMetric
+    direction: OrderDirection
+    span: Span
+
+
+@dataclass(frozen=True, slots=True)
 class Limit:
     value: int
     span: Span
@@ -256,7 +265,7 @@ class SelectStatement:
     source: FromSource
     where: Condition | None
     group_by: GroupBy | None
-    order_by: OrderBy | None
+    order_by: OrderBy | DistanceOrderBy | None
     span: Span
     limit: Limit | None = None
 

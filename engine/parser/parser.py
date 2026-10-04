@@ -21,6 +21,7 @@ from engine.parser.ast import (
     DeleteStatement,
     DistanceCondition,
     DistanceMetric,
+    DistanceOrderBy,
     DoubleLiteral,
     DropTableStatement,
     EndTransactionStatement,
@@ -462,17 +463,25 @@ class _Parser:
         column = self._column_reference("se esperaba una columna despues de GROUP BY")
         return GroupBy(column, combine_spans(start.span, column.span))
 
-    def _order_by(self, start: Token) -> OrderBy:
+    def _order_by(self, start: Token) -> OrderBy | DistanceOrderBy:
         self._expect(TokenKind.BY, "se esperaba BY despues de ORDER")
-        column = self._column_reference("se esperaba una columna despues de ORDER BY")
+        spatial = self._match(TokenKind.DISTANCIA)
+        if spatial:
+            column, center, metric = self._distance_arguments()
+            end_span = self._previous().span
+        else:
+            column = self._column_reference("se esperaba una columna despues de ORDER BY")
+            end_span = column.span
         direction = OrderDirection.ASC
-        end_span = column.span
         if self._match(TokenKind.ASC):
             end_span = self._previous().span
         elif self._match(TokenKind.DESC):
             direction = OrderDirection.DESC
             end_span = self._previous().span
-        return OrderBy(column, direction, combine_spans(start.span, end_span))
+        span = combine_spans(start.span, end_span)
+        if spatial:
+            return DistanceOrderBy(column, center, metric, direction, span)
+        return OrderBy(column, direction, span)
 
     def _limit(self, start: Token) -> Limit:
         value = self._peek()
@@ -544,24 +553,7 @@ class _Parser:
         )
 
     def _distance_condition(self, start: Token) -> DistanceCondition:
-        self._expect(TokenKind.LPAREN, "se esperaba '(' despues de DISTANCIA")
-        column = self._column_reference("se esperaba una columna en DISTANCIA")
-        self._expect(TokenKind.COMMA, "se esperaba ',' despues de la columna de DISTANCIA")
-        point = self._expect(TokenKind.POINT, "se esperaba POINT como centro de DISTANCIA")
-        center = self._point_literal(point)
-
-        metric = DistanceMetric.HAVERSINE
-        if self._match(TokenKind.COMMA):
-            if self._match(TokenKind.HAVERSINE):
-                metric = DistanceMetric.HAVERSINE
-            elif self._match(TokenKind.EUCLIDEAN):
-                metric = DistanceMetric.EUCLIDEAN
-            else:
-                raise self._error(
-                    self._peek(),
-                    "se esperaba HAVERSINE o EUCLIDEAN como metrica de DISTANCIA",
-                )
-        self._expect(TokenKind.RPAREN, "se esperaba ')' despues de DISTANCIA")
+        column, center, metric = self._distance_arguments()
 
         operator_token = self._peek()
         if operator_token.kind not in {TokenKind.LESS_THAN, TokenKind.LESS_THAN_OR_EQUAL}:
@@ -585,6 +577,29 @@ class _Parser:
             metric=metric,
             span=combine_spans(start.span, radius.span),
         )
+
+    def _distance_arguments(self) -> tuple[ColumnReference, PointLiteral, DistanceMetric]:
+        """Argumentos compartidos por DISTANCIA en WHERE y ORDER BY."""
+
+        self._expect(TokenKind.LPAREN, "se esperaba '(' despues de DISTANCIA")
+        column = self._column_reference("se esperaba una columna en DISTANCIA")
+        self._expect(TokenKind.COMMA, "se esperaba ',' despues de la columna de DISTANCIA")
+        point = self._expect(TokenKind.POINT, "se esperaba POINT como centro de DISTANCIA")
+        center = self._point_literal(point)
+
+        metric = DistanceMetric.HAVERSINE
+        if self._match(TokenKind.COMMA):
+            if self._match(TokenKind.HAVERSINE):
+                metric = DistanceMetric.HAVERSINE
+            elif self._match(TokenKind.EUCLIDEAN):
+                metric = DistanceMetric.EUCLIDEAN
+            else:
+                raise self._error(
+                    self._peek(),
+                    "se esperaba HAVERSINE o EUCLIDEAN como metrica de DISTANCIA",
+                )
+        self._expect(TokenKind.RPAREN, "se esperaba ')' despues de DISTANCIA")
+        return column, center, metric
 
     def _literal(self) -> Literal:
         if self._match(TokenKind.INTEGER):

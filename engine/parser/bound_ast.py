@@ -139,6 +139,17 @@ class BoundOrderBy:
 
 
 @dataclass(frozen=True, slots=True)
+class BoundDistanceOrderBy:
+    """Orden espacial con centro constante y metrica resueltos."""
+
+    column: BoundColumnReference
+    center: PointValue
+    metric: DistanceMetric
+    direction: OrderDirection
+    span: Span
+
+
+@dataclass(frozen=True, slots=True)
 class BoundComparisonCondition:
     """Comparacion simple con su literal convertido al tipo de la columna."""
 
@@ -245,7 +256,7 @@ class BoundSelectStatement:
     where: BoundCondition | None
     span: Span
     group_by: BoundGroupBy | None = None
-    order_by: BoundOrderBy | None = None
+    order_by: BoundOrderBy | BoundDistanceOrderBy | None = None
     limit: int | None = None
 
     @property
@@ -289,6 +300,7 @@ __all__ = [
     "BoundCreateTable",
     "BoundDeleteStatement",
     "BoundDistanceCondition",
+    "BoundDistanceOrderBy",
     "BoundDropTableStatement",
     "BoundGroupBy",
     "BoundInsertStatement",

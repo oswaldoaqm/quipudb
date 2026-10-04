@@ -19,6 +19,7 @@ from engine.parser.ast import (
     DateLiteral,
     DeleteStatement,
     DistanceCondition,
+    DistanceOrderBy,
     DoubleLiteral,
     DropTableStatement,
     FromSource,
@@ -45,6 +46,7 @@ from engine.parser.bound_ast import (
     BoundCreateTable,
     BoundDeleteStatement,
     BoundDistanceCondition,
+    BoundDistanceOrderBy,
     BoundDropTableStatement,
     BoundGroupBy,
     BoundInsertStatement,
@@ -404,11 +406,29 @@ def bind_select(
                 statement.order_by.column.span,
                 source,
             )
-        order_by = BoundOrderBy(
-            order_column,
-            statement.order_by.direction,
-            statement.order_by.span,
-        )
+        if isinstance(statement.order_by, DistanceOrderBy):
+            if order_column.column.data_type is not SqlTypeName.POINT:
+                _fail(
+                    "ORDER BY DISTANCIA requiere una columna POINT",
+                    statement.order_by.column.span,
+                    source,
+                )
+            center = _bind_point(
+                statement.order_by.center, BoundColumn("centro", SqlTypeName.POINT, None), source
+            )
+            order_by = BoundDistanceOrderBy(
+                order_column,
+                center,
+                statement.order_by.metric,
+                statement.order_by.direction,
+                statement.order_by.span,
+            )
+        else:
+            order_by = BoundOrderBy(
+                order_column,
+                statement.order_by.direction,
+                statement.order_by.span,
+            )
 
     where = _bind_condition(statement.where, scope, source)
     limit = None
