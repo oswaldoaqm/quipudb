@@ -17,6 +17,7 @@ from engine.api.schemas import (
     IndexInfo,
     LoadResponse,
     LoadRowError,
+    PolygonContextResponse,
     QueryErrorResponse,
     QueryResponse,
     RadiusContextResponse,
@@ -24,7 +25,7 @@ from engine.api.schemas import (
 )
 from engine.executor.bulk_load import LoadReport
 from engine.executor.native import from_native_schema
-from engine.executor.result import QueryResult
+from engine.executor.result import PolygonContext, QueryResult
 from engine.parser.bound_ast import BoundSchema
 from engine.parser.errors import (
     SQLError,
@@ -117,13 +118,24 @@ def to_response(result: QueryResult) -> QueryResponse:
         rows=[list(fila) for fila in result.rows],
         affected_rows=result.affected_rows,
         plan=result.plan.to_dict() if result.plan is not None else None,
-        spatial_context=(
-            RadiusContextResponse(**asdict(result.spatial_context))
-            if result.spatial_context is not None
-            else None
-        ),
+        spatial_context=_spatial_context(result),
         is_explain=result.is_explain,
     )
+
+
+def _spatial_context(
+    result: QueryResult,
+) -> RadiusContextResponse | PolygonContextResponse | None:
+    context = result.spatial_context
+    if context is None:
+        return None
+    if isinstance(context, PolygonContext):
+        return PolygonContextResponse(
+            table=context.table,
+            column=context.column,
+            vertices=list(context.vertices),
+        )
+    return RadiusContextResponse(**asdict(context))
 
 
 def to_error(error: SQLError) -> QueryErrorResponse:
