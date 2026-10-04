@@ -27,7 +27,7 @@ e indexación anterior en siglos al disco duro.
 | Parte | Contenido | Estado |
 |---|---|---|
 | 1 | Base de datos relacional: Heap y Secuencial, B+ agrupado y no agrupado, hash extensible, algoritmos externos, SQL, transacciones, interfaz y experimentos | **Completa** |
-| 2 | Base de datos espacial: R-Tree, consultas por radio, k-NN y polígono, métricas euclidiana y Haversine, mapa, SQL espacial y comparación contra PostGIS | **Completa** (la búsqueda por polígono está en el núcleo; falta exponerla en SQL) |
+| 2 | Base de datos espacial: R-Tree, consultas por radio, k-NN y polígono, métricas euclidiana y Haversine, mapa, SQL espacial y comparación contra PostGIS | **Completa** |
 | 3 | Búsqueda de texto: SPIMI, TF-IDF + coseno, BM25 | Pendiente |
 | 4 | Búsqueda vectorial multimedia: SIFT/MFCC, IVF, HNSW | Pendiente |
 | 5 | Aplicación de IA sobre la API del motor | Pendiente |
@@ -82,7 +82,7 @@ insertar o reorganizar.
 
 **Plan de ejecución.** Cada `SELECT` devuelve, junto con sus filas, un árbol de
 pasos (`scan`, `index_search`, `index_range`, `radius_search`, `knn_search`,
-`fetch`, `filter`, `sort`, `group`, `join`, `limit`, `project`) con las páginas
+`polygon_search`, `fetch`, `filter`, `sort`, `group`, `join`, `limit`, `project`) con las páginas
 leídas, los registros examinados y devueltos y el tiempo de cada uno. El mismo
 contrato ([ADR 0002](docs/adr/0002-plan-de-ejecucion.md)) alimenta el panel de
 plan de la interfaz y los benchmarks.
@@ -442,15 +442,29 @@ antes del corte final. Un centro como `mi_ubicacion` en el enunciado representa
 el literal `POINT(latitud, longitud)`; no es una variable SQL. Los empates por
 distancia pueden devolver cualquiera de las filas empatadas.
 
-La intersección con polígonos (`RTree::search_polygon`, número de cruces, admite
-polígonos no convexos) está implementada y probada en el núcleo; todavía no se
-expone en los bindings ni en la gramática SQL.
+`DENTRO(columna, POLYGON(POINT(...), POINT(...), POINT(...)[, ...]))` devuelve
+los puntos dentro de un polígono, por ejemplo las sucursales de un distrito:
+
+```sql
+SELECT * FROM tiendas
+WHERE DENTRO(ubicacion, POLYGON(POINT(-12.02, -77.06), POINT(-12.02, -77.00),
+  POINT(-12.08, -77.00), POINT(-12.08, -77.03), POINT(-12.05, -77.03),
+  POINT(-12.05, -77.06)));
+```
+
+Los vértices van en orden (horario o antihorario) y sin repetir el primero al
+final; hacen falta al menos tres distintos. El polígono puede ser no convexo y
+**el borde cuenta como dentro**. Con R-Tree el plan es `polygon_search/rtree ->
+fetch`: el MBR del polígono poda subárboles y cada candidato se comprueba con el
+número de cruces. Sin índice es `scan` + `filter`, con exactamente el mismo
+criterio de borde. `DENTRO` también sirve en `DELETE` y se combina con
+`ORDER BY` y `LIMIT`.
 
 ### API REST
 
 | Ruta | Qué hace |
 |---|---|
-| `POST /query` | Ejecuta SQL (`{"sql": "..."}`) y devuelve columnas, tipos, filas, plan y, si hay una condición de radio, un `spatial_context` |
+| `POST /query` | Ejecuta SQL (`{"sql": "..."}`) y devuelve columnas, tipos, filas, plan y, si hay una condición espacial, un `spatial_context` (`kind: "radius"` con centro y radio, o `kind: "polygon"` con los vértices) |
 | `GET /tables` | Describe cada tabla: columnas, organización, índices y número de registros |
 | `POST /tables/{tabla}/load` | Carga un CSV en una tabla existente |
 
@@ -523,8 +537,8 @@ Cinco paneles en una sola pantalla:
   se muestran con línea y columna.
 - **Resultados**: tabla virtualizada con el tipo de cada columna, filas y tiempo.
 - **Mapa**: Leaflet sobre OpenStreetMap. Resultados en azul, resto de la tabla en
-  gris, punto de referencia en ámbar y, para un radio Haversine, el círculo de
-  búsqueda. El detalle está en [`docs/frontend-mapa-radio.md`](docs/frontend-mapa-radio.md).
+  gris, punto de referencia en ámbar y la región de búsqueda: el círculo de un
+  radio Haversine o el polígono de `DENTRO`. El detalle está en [`docs/frontend-mapa-radio.md`](docs/frontend-mapa-radio.md).
 - **Plan de ejecución**: árbol de pasos con páginas y tiempo por operador,
   coloreados según sean en memoria, algoritmo externo o acceso por índice.
 
