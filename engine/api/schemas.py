@@ -74,6 +74,18 @@ class RadiusContextResponse(BaseModel):
     operator: Literal["<", "<="]
 
 
+class PolygonContextResponse(BaseModel):
+    """Contexto aditivo de ``DENTRO``: los vertices en el orden del SQL, sin cerrar."""
+
+    kind: Literal["polygon"] = "polygon"
+    table: str | None = None
+    column: str
+    vertices: list[PointValue]
+
+
+SpatialContextResponse = RadiusContextResponse | PolygonContextResponse
+
+
 class QueryResponse(BaseModel):
     """Espejo de ``QueryResult``, con los tipos de columna que la interfaz pide."""
 
@@ -82,7 +94,7 @@ class QueryResponse(BaseModel):
     rows: list[list[object]]
     affected_rows: int = 0
     plan: dict[str, object] | None = None
-    spatial_context: RadiusContextResponse | None = None
+    spatial_context: SpatialContextResponse | None = Field(default=None, discriminator="kind")
     is_explain: bool = False
 
 

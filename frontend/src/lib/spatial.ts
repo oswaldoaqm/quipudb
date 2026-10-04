@@ -1,4 +1,6 @@
-import type { CellValue, PointValue, QueryResult, RadiusContext, TableInfo } from "@/api/types";
+import type {
+  CellValue, PointValue, PolygonContext, QueryResult, RadiusContext, TableInfo,
+} from "@/api/types";
 
 export interface SpatialPoint {
   /** Identidad dentro del resultado; dos filas pueden compartir coordenadas. */
@@ -64,6 +66,7 @@ export function extractSpatialPoints(result: QueryResult | null): SpatialResult 
 
 export type SpatialView =
   | { kind: "circle"; center: [number, number]; radius: number }
+  | { kind: "polygon"; vertices: [number, number][] }
   | { kind: "points"; positions: [number, number][] }
   | { kind: "empty" };
 
@@ -78,8 +81,60 @@ export function radiusContext(result: QueryResult | null): RadiusContext | null 
   return context;
 }
 
+/** Un poligono valido: al menos tres vertices con coordenadas geograficas validas. */
+export function polygonContext(result: QueryResult | null): PolygonContext | null {
+  const context = result?.spatial_context;
+  if (!context || result?.is_explain || context.kind !== "polygon" ||
+      !Array.isArray(context.vertices) || context.vertices.length < 3 ||
+      !context.vertices.every(isPointValue)) return null;
+  return context;
+}
+
+/** El contexto espacial valido de la consulta, sea de radio o de poligono. */
+export function searchContext(result: QueryResult | null): RadiusContext | PolygonContext | null {
+  return radiusContext(result) ?? polygonContext(result);
+}
+
+/**
+ * Si `point` cae dentro del poligono o sobre su borde. Traduccion del
+ * `contains_point` del core (rtree.cpp), con x = longitud e y = latitud, para que
+ * el simulador decida el borde igual que el motor.
+ */
+export function containsPoint(vertices: readonly PointValue[], point: PointValue): boolean {
+  if (vertices.length < 3) return false;
+  const px = point.longitude;
+  const py = point.latitude;
+  const onSegment = (a: PointValue, b: PointValue) => {
+    const scale = Math.max(Math.abs(a.longitude), Math.abs(a.latitude), Math.abs(b.longitude),
+      Math.abs(b.latitude), Math.abs(px), Math.abs(py), 1);
+    const cross = (b.longitude - a.longitude) * (py - a.latitude) - (b.latitude - a.latitude) * (px - a.longitude);
+    if (Math.abs(cross) > scale * scale * 1e-12) return false;
+    const slack = scale * 1e-12;
+    return px >= Math.min(a.longitude, b.longitude) - slack && px <= Math.max(a.longitude, b.longitude) + slack &&
+      py >= Math.min(a.latitude, b.latitude) - slack && py <= Math.max(a.latitude, b.latitude) + slack;
+  };
+  for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+    if (onSegment(vertices[j], vertices[i])) return true;
+  }
+  let inside = false;
+  for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+    const a = vertices[i];
+    const b = vertices[j];
+    if ((a.latitude > py) !== (b.latitude > py) &&
+        px < (b.longitude - a.longitude) * (py - a.latitude) / (b.latitude - a.latitude) + a.longitude) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
 /** La capa base deliberadamente no participa de esta politica de encuadre. */
-export function spatialView(context: RadiusContext | null, points: SpatialPoint[]): SpatialView {
+export function spatialView(
+  context: RadiusContext | PolygonContext | null, points: SpatialPoint[],
+): SpatialView {
+  if (context?.kind === "polygon") {
+    return { kind: "polygon", vertices: context.vertices.map(v => [v.latitude, v.longitude]) };
+  }
   if (context) {
     const center: [number, number] = [context.center.latitude, context.center.longitude];
     if (context.radius === 0) return { kind: "points", positions: [center] };
@@ -95,7 +150,7 @@ export function mapMessage(result: QueryResult | null, loading: boolean, error: 
   if (loading) return "Ejecutando consulta…";
   if (!result) return "Ejecuta una consulta con una columna POINT para ver sus puntos.";
   if (result.is_explain) return "EXPLAIN muestra el plan; no devuelve puntos para el mapa.";
-  if (radiusContext(result)) return null;
+  if (searchContext(result)) return null;
   if (!result.rows.length) return "0 coincidencias. La consulta no devolvió resultados.";
   const spatial = extractSpatialPoints(result);
   if (!spatial.pointColumns.length) return "El resultado no contiene columnas POINT. Incluye una columna de coordenadas en el SELECT.";
@@ -130,7 +185,7 @@ export function basePointsOutsideResults(
   base: QueryResult | null, result: QueryResult | null, table: TableInfo | null,
 ): { points: SpatialPoint[]; hasIdentity: boolean } {
   const points = extractSpatialPoints(base).points;
-  if (!base || !result || !table || radiusContext(result)?.table !== table.name) {
+  if (!base || !result || !table || searchContext(result)?.table !== table.name) {
     return { points: [], hasIdentity: false };
   }
   const resultPoints = extractSpatialPoints(result).points;

@@ -15,6 +15,7 @@ export type Op =
   | "index_range"
   | "radius_search"
   | "knn_search"
+  | "polygon_search"
   | "fetch"
   | "filter"
   | "project"
@@ -88,8 +89,16 @@ export interface RadiusContext {
   operator: "<" | "<=";
 }
 
-/** Nuevos contextos se incorporaran cuando el motor los exponga realmente. */
-export type SpatialContext = RadiusContext;
+/** `DENTRO(columna, POLYGON(...))`: vertices en el orden del SQL, sin cerrar. */
+export interface PolygonContext {
+  kind: "polygon";
+  /** Solo una fuente simple, resuelta sin ambiguedad por el ejecutor. */
+  table: string | null;
+  column: string;
+  vertices: PointValue[];
+}
+
+export type SpatialContext = RadiusContext | PolygonContext;
 
 export type CellValue = string | number | boolean | PointValue | null;
 

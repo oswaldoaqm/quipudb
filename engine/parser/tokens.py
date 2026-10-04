@@ -56,6 +56,8 @@ class TokenKind(StrEnum):
     BETWEEN = "BETWEEN"
     AND = "AND"
     DISTANCIA = "DISTANCIA"
+    DENTRO = "DENTRO"
+    POLYGON = "POLYGON"
     HAVERSINE = "HAVERSINE"
     EUCLIDEAN = "EUCLIDEAN"
     INT = "INT"

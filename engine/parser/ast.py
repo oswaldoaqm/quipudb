@@ -171,7 +171,26 @@ class DistanceCondition:
     span: Span
 
 
-Condition: TypeAlias = ComparisonCondition | BetweenCondition | DistanceCondition
+@dataclass(frozen=True, slots=True)
+class PolygonLiteral:
+    """``POLYGON(POINT(...), POINT(...), POINT(...)[, ...])``, sin cerrar."""
+
+    vertices: tuple[PointLiteral, ...]
+    span: Span
+
+
+@dataclass(frozen=True, slots=True)
+class PolygonCondition:
+    """``DENTRO(columna, POLYGON(...))``: puntos dentro del poligono o en su borde."""
+
+    column: ColumnReference
+    polygon: PolygonLiteral
+    span: Span
+
+
+Condition: TypeAlias = (
+    ComparisonCondition | BetweenCondition | DistanceCondition | PolygonCondition
+)
 
 
 class OrderDirection(StrEnum):

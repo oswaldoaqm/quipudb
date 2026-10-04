@@ -112,6 +112,17 @@ std::vector<RID> RTreeIndex::k_nearest(const GeoPoint& center, std::size_t k, Me
   return out;
 }
 
+std::vector<RID> RTreeIndex::search_polygon(const std::vector<GeoPoint>& vertices) {
+  std::vector<Point> poligono;
+  poligono.reserve(vertices.size());
+  for (const auto& vertex : vertices) poligono.push_back(to_point(vertex));
+  const auto entries = tree_.search_polygon(poligono);
+  std::vector<RID> out;
+  out.reserve(entries.size());
+  for (const auto& entry : entries) out.push_back(entry.rid);
+  return out;
+}
+
 void RTreeIndex::build() {
   auto cursor = data_->cursor();
   Record record;

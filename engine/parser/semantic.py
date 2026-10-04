@@ -28,6 +28,7 @@ from engine.parser.ast import (
     IntegerLiteral,
     Literal,
     PointLiteral,
+    PolygonCondition,
     SelectStatement,
     SqlTypeName,
     StorageKind,
@@ -52,6 +53,7 @@ from engine.parser.bound_ast import (
     BoundInsertStatement,
     BoundJoinRef,
     BoundOrderBy,
+    BoundPolygonCondition,
     BoundProjection,
     BoundSchema,
     BoundSelectStatement,
@@ -513,7 +515,9 @@ def _bind_projection(
 
 
 def _bind_condition(
-    condition: ComparisonCondition | BetweenCondition | DistanceCondition | None,
+    condition: (
+        ComparisonCondition | BetweenCondition | DistanceCondition | PolygonCondition | None
+    ),
     scope: _Scope,
     source: str | None,
 ) -> BoundCondition | None:
@@ -521,6 +525,25 @@ def _bind_condition(
         return None
 
     column = _resolve_column(condition.column, scope, source)
+    if isinstance(condition, PolygonCondition):
+        if column.column.data_type is not SqlTypeName.POINT:
+            _fail(
+                f"DENTRO requiere una columna POINT; {column.column.name} es "
+                f"{column.column.data_type.value}",
+                condition.column.span,
+                source,
+            )
+        vertex_column = BoundColumn("vertice", SqlTypeName.POINT, None)
+        vertices = tuple(
+            _bind_point(vertex, vertex_column, source) for vertex in condition.polygon.vertices
+        )
+        if len(set(vertices)) < 3:
+            _fail(
+                "POLYGON necesita al menos 3 vertices distintos",
+                condition.polygon.span,
+                source,
+            )
+        return BoundPolygonCondition(column, vertices, condition.span)
     if isinstance(condition, DistanceCondition):
         if column.column.data_type is not SqlTypeName.POINT:
             _fail(

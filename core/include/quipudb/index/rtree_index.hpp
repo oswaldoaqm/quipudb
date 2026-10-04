@@ -40,6 +40,10 @@ class RTreeIndex final : public Index {
   /// puntos devuelve los que hay, y con empates cual entra es indistinto.
   [[nodiscard]] std::vector<RID> k_nearest(const GeoPoint& center, std::size_t k,
                                            Metric metric);
+  /// Los RID de los puntos que caen dentro del poligono, bordes incluidos.
+  /// Mismo contrato que `RTree::search_polygon`: los vertices van en orden, sin
+  /// repetir el primero al final, y con menos de tres lanza InvalidRecord.
+  [[nodiscard]] std::vector<RID> search_polygon(const std::vector<GeoPoint>& vertices);
   void build();
   void flush();
 

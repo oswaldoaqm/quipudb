@@ -181,8 +181,20 @@ class BoundDistanceCondition:
     span: Span
 
 
+@dataclass(frozen=True, slots=True)
+class BoundPolygonCondition:
+    """Puntos dentro de un poligono (bordes incluidos), con vertices validados."""
+
+    column: BoundColumnReference
+    vertices: tuple[PointValue, ...]
+    span: Span
+
+
 BoundCondition: TypeAlias = (
-    BoundComparisonCondition | BoundBetweenCondition | BoundDistanceCondition
+    BoundComparisonCondition
+    | BoundBetweenCondition
+    | BoundDistanceCondition
+    | BoundPolygonCondition
 )
 
 
@@ -306,6 +318,7 @@ __all__ = [
     "BoundInsertStatement",
     "BoundJoinRef",
     "BoundOrderBy",
+    "BoundPolygonCondition",
     "BoundProjection",
     "BoundSchema",
     "BoundSelectStatement",

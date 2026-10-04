@@ -178,5 +178,40 @@ TEST_F(SpatialScanTest, RechazaCentroORadioNoFinitos) {
                InvalidRecord);
 }
 
+// Un poligono en forma de L alrededor de Lima: no convexo a proposito, para
+// que la caja de poda deje pasar puntos del hueco que el poligono descarta.
+const std::vector<GeoPoint> kEle{
+    {-12.20, -77.20}, {-12.20, -76.90}, {-12.10, -76.90},
+    {-12.10, -77.05}, {-11.90, -77.05}, {-11.90, -77.20},
+};
+
+TEST_F(SpatialScanTest, PoligonoDevuelveLoMismoQueElRTree) {
+  const auto secuencial = scan_polygon(*tabla_, "ubicacion", kEle);
+  EXPECT_EQ(ordenados(secuencial), ordenados(indice_->search_polygon(kEle)));
+  EXPECT_GT(secuencial.size(), 20u);  // la prueba no es trivial
+}
+
+TEST_F(SpatialScanTest, PoligonoCoincideConElOraculoIndependiente) {
+  std::vector<Point> ele;
+  for (const auto& v : kEle) ele.push_back({v.longitude, v.latitude});
+  std::size_t esperados = 0;
+  std::size_t en_la_caja = 0;
+  const Rect caja = bounding_box_of(ele);
+  for (const auto& p : puntos_) {
+    if (contains_point(ele, {p.longitude, p.latitude})) ++esperados;
+    if (caja.contains(Point{p.longitude, p.latitude})) ++en_la_caja;
+  }
+  EXPECT_EQ(indice_->search_polygon(kEle).size(), esperados);
+  // Si la caja no tuviera mas puntos que el poligono, la L no probaria nada.
+  EXPECT_GT(en_la_caja, esperados);
+}
+
+TEST_F(SpatialScanTest, PoligonoRechazaMenosDeTresVerticesYColumnasInvalidas) {
+  const std::vector<GeoPoint> segmento{{-12.0, -77.0}, {-12.1, -77.1}};
+  EXPECT_THROW((void)indice_->search_polygon(segmento), InvalidRecord);
+  EXPECT_THROW((void)scan_polygon(*tabla_, "ubicacion", segmento), InvalidRecord);
+  EXPECT_THROW((void)scan_polygon(*tabla_, "nombre", kEle), SchemaError);
+}
+
 }  // namespace
 }  // namespace quipudb

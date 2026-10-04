@@ -21,6 +21,7 @@ from engine.parser.bound_ast import (
     BoundDistanceCondition,
     BoundDistanceOrderBy,
     BoundJoinRef,
+    BoundPolygonCondition,
     BoundSelectStatement,
     BoundSource,
     BoundTableRef,
@@ -38,6 +39,7 @@ class AccessRoute(StrEnum):
     INDEX_RANGE = "index_range"
     RTREE_RADIUS = "rtree_radius"
     RTREE_KNN = "rtree_knn"
+    RTREE_POLYGON = "rtree_polygon"
 
 
 class JoinStrategy(StrEnum):
@@ -133,6 +135,7 @@ class PhysicalTableAccess:
             AccessRoute.INDEX_RANGE,
             AccessRoute.RTREE_RADIUS,
             AccessRoute.RTREE_KNN,
+            AccessRoute.RTREE_POLYGON,
         }
         if self.route is AccessRoute.RTREE_KNN:
             if self.nearest is None or self.nearest_limit is None or self.nearest_limit < 0:
@@ -149,7 +152,11 @@ class PhysicalTableAccess:
             raise ValueError("el indice elegido no pertenece a la metadata de la tabla")
         if self.route is AccessRoute.INDEX_RANGE and not self.index.supports_range:
             raise ValueError("INDEX_RANGE necesita un indice que soporte rangos")
-        if self.route in {AccessRoute.RTREE_RADIUS, AccessRoute.RTREE_KNN}:
+        if self.route in {
+            AccessRoute.RTREE_RADIUS,
+            AccessRoute.RTREE_KNN,
+            AccessRoute.RTREE_POLYGON,
+        }:
             if self.index.structure is not Structure.RTREE:
                 raise ValueError("una ruta espacial necesita un indice R-Tree")
         elif self.index.structure is Structure.RTREE:
@@ -511,7 +518,7 @@ def optimize_delete(
     secundario exacto.
     """
 
-    if isinstance(statement.where, BoundDistanceCondition):
+    if isinstance(statement.where, (BoundDistanceCondition, BoundPolygonCondition)):
         choice = _AccessChoice(AccessRoute.SCAN, residual_filter=True)
     else:
         choice = _choose_access(
@@ -546,6 +553,15 @@ def _choose_access(
 
     if where is None:
         return _AccessChoice(AccessRoute.SCAN)
+
+    if isinstance(where, BoundPolygonCondition):
+        # El R-Tree y el filtro en memoria deciden el borde con el mismo
+        # criterio (borde incluido), asi que la ruta indexada no necesita
+        # filtro residual.
+        index = _best_spatial_index(table, column)
+        if index is None:
+            return _AccessChoice(AccessRoute.SCAN, residual_filter=True)
+        return _AccessChoice(AccessRoute.RTREE_POLYGON, index=index)
 
     if isinstance(where, BoundDistanceCondition):
         index = _best_spatial_index(table, column)
@@ -664,6 +680,7 @@ def _validate_access(
         AccessRoute.INDEX_SEARCH,
         AccessRoute.INDEX_RANGE,
         AccessRoute.RTREE_RADIUS,
+        AccessRoute.RTREE_POLYGON,
     }
     if index_route != (index is not None):
         raise ValueError("las rutas de indice necesitan exactamente un indice")

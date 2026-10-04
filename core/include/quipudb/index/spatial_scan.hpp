@@ -54,4 +54,11 @@ namespace quipudb {
                                               const GeoPoint& center, std::size_t k,
                                               Metric metric);
 
+/// RIDs de los registros cuya columna POINT `column` cae dentro del poligono,
+/// bordes incluidos, con el mismo criterio que `contains_point`. Lanza
+/// SchemaError si la columna no existe o no es POINT, e InvalidRecord con menos
+/// de tres vertices o alguno no finito.
+[[nodiscard]] std::vector<RID> scan_polygon(TableFile& table, std::string_view column,
+                                            const std::vector<GeoPoint>& vertices);
+
 }  // namespace quipudb

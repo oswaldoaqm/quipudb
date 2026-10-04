@@ -24,6 +24,7 @@ import type {
   Structure,
 } from "@/api/types";
 import { type TablaFalsa } from "@/api/mock/datos";
+import { containsPoint } from "@/lib/spatial";
 
 const REGISTROS_POR_PAGINA = 128;
 const MS_POR_PAGINA = 0.035;
@@ -40,7 +41,8 @@ export type Condicion =
       operador: "<" | "<=";
       radio: number;
       metrica: "HAVERSINE" | "EUCLIDEAN";
-    };
+    }
+  | { tipo: "poligono"; columna: string; vertices: PointValue[] };
 
 export type Funcion = "COUNT" | "SUM" | "MIN" | "MAX" | "AVG";
 
@@ -100,6 +102,12 @@ const DISTANCIA = new RegExp(
     `(?:\\s*,\\s*(HAVERSINE|EUCLIDEAN))?\\s*\\)\\s*(<=|<)\\s*(${NUMERO})`,
   "i",
 );
+const DENTRO = new RegExp(
+  `\\bWHERE\\s+DENTRO\\s*\\(\\s*(${REFERENCIA})\\s*,\\s*POLYGON\\s*\\(` +
+    `((?:\\s*${PUNTO}\\s*,)*\\s*${PUNTO})\\s*\\)\\s*\\)`,
+  "i",
+);
+const PUNTO_GLOBAL = new RegExp(PUNTO, "gi");
 const ORDEN = new RegExp(
   `\\bORDER\\s+BY\\s+(${REFERENCIA})(?:\\s+(ASC|DESC))?`,
   "i",
@@ -126,6 +134,14 @@ function valorDe(texto: string): CellValue {
 
 /** La condicion del WHERE, la use un SELECT o un DELETE. */
 export function leerCondicion(sql: string): Condicion | null {
+  const dentro = DENTRO.exec(sql);
+  if (dentro) {
+    const vertices = (dentro[2].match(PUNTO_GLOBAL) ?? []).map(valorDe).filter(esPoint);
+    if (vertices.length >= 3) {
+      return { tipo: "poligono", columna: dentro[1].toLowerCase(), vertices };
+    }
+  }
+
   const distancia = DISTANCIA.exec(sql);
   if (distancia) {
     const centro = valorDe(distancia[2]);
@@ -241,6 +257,9 @@ function esPoint(value: CellValue): value is PointValue {
 }
 
 export function cumple(valor: CellValue, condicion: Condicion): boolean {
+  if (condicion.tipo === "poligono") {
+    return esPoint(valor) && containsPoint(condicion.vertices, valor);
+  }
   if (condicion.tipo === "distancia") {
     if (!esPoint(valor)) return false;
     const distancia = distanciaEntre(valor, condicion.centro, condicion.metrica);
@@ -350,6 +369,10 @@ function describir(condicion: Condicion): string {
   if (condicion.tipo === "between") {
     return `${condicion.columna} en [${condicion.desde}, ${condicion.hasta}]`;
   }
+  if (condicion.tipo === "poligono") {
+    const vertices = condicion.vertices.map(v => `POINT(${v.latitude}, ${v.longitude})`).join(", ");
+    return `DENTRO(${condicion.columna}, POLYGON(${vertices}))`;
+  }
   if (condicion.tipo === "distancia") {
     return `DISTANCIA(${condicion.columna}, POINT(${condicion.centro.latitude}, ${condicion.centro.longitude}), ${condicion.metrica}) ${condicion.operador} ${condicion.radio}`;
   }
@@ -378,6 +401,40 @@ export function rutaDeAcceso(
       null,
       "recorre la tabla entera",
       stats(paginasTabla, total, total),
+    );
+  }
+
+  if (where.tipo === "poligono") {
+    const indice = tabla.info.indexes.find(
+      (i) => i.column === where.columna && i.structure === "rtree",
+    );
+    if (indice) {
+      const busqueda = paso(
+        "polygon_search",
+        "rtree",
+        nombre,
+        where.columna,
+        describir(where),
+        stats(Math.max(1, paginas(coincidencias)), coincidencias, coincidencias),
+      );
+      return paso(
+        "fetch",
+        tabla.info.storage,
+        nombre,
+        null,
+        `lee ${coincidencias} registros por RID`,
+        stats(coincidencias, coincidencias, coincidencias),
+        [busqueda],
+      );
+    }
+    return paso(
+      "filter",
+      "memory",
+      nombre,
+      where.columna,
+      describir(where),
+      stats(0, total, coincidencias),
+      [paso("scan", tabla.info.storage, nombre, null, "recorre la tabla entera", stats(paginasTabla, total, total))],
     );
   }
 

@@ -189,6 +189,7 @@ def _access_step(
         AccessRoute.INDEX_SEARCH: Op.INDEX_SEARCH,
         AccessRoute.INDEX_RANGE: Op.INDEX_RANGE,
         AccessRoute.RTREE_RADIUS: Op.RADIUS_SEARCH,
+        AccessRoute.RTREE_POLYGON: Op.POLYGON_SEARCH,
     }[access.route]
     index_step = Step(
         op=operation,

@@ -40,7 +40,7 @@ no equivale a haber iniciado una modificación protegida por undo.
 | `INSERT INTO ... VALUES (...)` | Una tupla posicional por sentencia |
 | `SELECT` | `*` o proyección de columnas; filtro simple opcional |
 | `EXPLAIN [ANALYZE] SELECT` | Plan físico sin ejecutar, o plan medido después de ejecutar el SELECT |
-| `WHERE` | Una comparación `=`, `<`, `<=`, `>`, `>=`, `BETWEEN` inclusivo o búsqueda por radio con `DISTANCIA` |
+| `WHERE` | Una comparación `=`, `<`, `<=`, `>`, `>=`, `BETWEEN` inclusivo, búsqueda por radio con `DISTANCIA` o puntos dentro de un polígono con `DENTRO(columna, POLYGON(...))` |
 | `ORDER BY` | Una columna o DISTANCIA sobre POINT, ASC o DESC; k-NN con R-Tree para ASC con LIMIT sobre una tabla sin filtros |
 | `LIMIT` | Un entero no negativo; se aplica al resultado final, despues de ordenar o agrupar |
 | `GROUP BY` | Una columna; agregados `COUNT(*)`, `SUM`, `MIN`, `MAX`, `AVG`, sujetos a validación semántica |

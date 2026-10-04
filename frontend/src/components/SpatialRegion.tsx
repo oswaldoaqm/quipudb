@@ -1,12 +1,12 @@
 import type { Circle as LeafletCircle } from "leaflet";
 import { latLngBounds } from "leaflet";
 import { useEffect, useRef } from "react";
-import { Circle, CircleMarker, Pane, Popup, useMap } from "react-leaflet";
-import type { RadiusContext } from "@/api/types";
+import { Circle, CircleMarker, Pane, Polygon, Popup, useMap } from "react-leaflet";
+import type { PolygonContext, RadiusContext } from "@/api/types";
 import type { SpatialView } from "@/lib/spatial";
 
 interface SpatialRegionProps {
-  context: RadiusContext | null;
+  context: RadiusContext | PolygonContext | null;
   view: SpatialView;
 }
 
@@ -20,6 +20,8 @@ export function SpatialRegion({ context, view }: SpatialRegionProps) {
       if (view.kind === "circle") {
         const circle = circleRef.current;
         if (circle) map.fitBounds(circle.getBounds(), { padding: [24, 24], maxZoom: 18, animate: false });
+      } else if (view.kind === "polygon") {
+        map.fitBounds(latLngBounds(view.vertices), { padding: [24, 24], maxZoom: 18, animate: false });
       } else if (view.kind === "points" && view.positions.length) {
         if (view.positions.length === 1) map.setView(view.positions[0], 15, { animate: false });
         else map.fitBounds(latLngBounds(view.positions), { padding: [35, 45], maxZoom: 15, animate: false });
@@ -43,10 +45,17 @@ export function SpatialRegion({ context, view }: SpatialRegionProps) {
           center={view.center}
           radius={view.radius}
           interactive={false}
-          pathOptions={{ color: "#2563eb", weight: 2, fillOpacity: 0.09, dashArray: context?.operator === "<" ? "5 5" : undefined }}
+          pathOptions={{ color: "#2563eb", weight: 2, fillOpacity: 0.09, dashArray: context?.kind === "radius" && context.operator === "<" ? "5 5" : undefined }}
         />
       )}
-      {context && (
+      {view.kind === "polygon" && (
+        <Polygon
+          positions={view.vertices}
+          interactive={false}
+          pathOptions={{ color: "#2563eb", weight: 2, fillOpacity: 0.09 }}
+        />
+      )}
+      {context?.kind === "radius" && (
         <Pane name="search-reference" style={{ zIndex: 650 }}>
           <CircleMarker
             center={[context.center.latitude, context.center.longitude]}

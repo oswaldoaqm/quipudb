@@ -29,6 +29,22 @@ class RadiusContext:
 
 
 @dataclass(frozen=True, slots=True)
+class PolygonContext:
+    """Poligono de una condicion ``DENTRO``, con los vertices en el orden del SQL.
+
+    ``table`` sigue la misma regla que en ``RadiusContext``.
+    """
+
+    table: str | None
+    column: str
+    vertices: tuple[PointValue, ...]
+    kind: Literal["polygon"] = "polygon"
+
+
+SpatialContext = RadiusContext | PolygonContext
+
+
+@dataclass(frozen=True, slots=True)
 class QueryResult:
     """Filas, metadatos y plan producidos por el ejecutor.
 
@@ -48,7 +64,7 @@ class QueryResult:
     rows: tuple[tuple[object, ...], ...] = ()
     affected_rows: int = 0
     plan: Plan | None = None
-    spatial_context: RadiusContext | None = None
+    spatial_context: SpatialContext | None = None
     is_explain: bool = False
 
     def __post_init__(self) -> None:

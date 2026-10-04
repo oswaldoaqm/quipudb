@@ -473,6 +473,9 @@ export async function mockListTables(): Promise<TableInfo[]> {
 /** Metadata del simulador desde su condicion resuelta, sin volver a leer SQL. */
 function contextoRadio(consulta: ConsultaLeida, table: string | null): QueryResult["spatial_context"] {
   const condition = consulta.where;
+  if (condition?.tipo === "poligono") {
+    return { kind: "polygon", table, column: condition.columna, vertices: condition.vertices };
+  }
   if (condition?.tipo !== "distancia") return null;
   return {
     kind: "radius", table, column: condition.columna, center: condition.centro,

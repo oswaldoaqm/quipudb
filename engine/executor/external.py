@@ -15,6 +15,7 @@ from engine.executor.predicates import (
     distance_between,
     equality_key,
     matches,
+    polygon_search_args,
     range_values,
     spatial_search_args,
 )
@@ -541,6 +542,10 @@ def _index_pipeline(
             lambda: index.search_radius(center, radius, metric),
         )
         operation = Op.RADIUS_SEARCH
+    elif plan.route is AccessRoute.RTREE_POLYGON:
+        vertices = polygon_search_args(condition, native)
+        measured = measure_native(index, lambda: index.search_polygon(vertices))
+        operation = Op.POLYGON_SEARCH
     else:
         raise ValueError(f"ruta externa desconocida: {plan.route!r}")
 

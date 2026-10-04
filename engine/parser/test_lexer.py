@@ -48,6 +48,8 @@ KEYWORDS = (
     ("between", TokenKind.BETWEEN),
     ("and", TokenKind.AND),
     ("distancia", TokenKind.DISTANCIA),
+    ("dentro", TokenKind.DENTRO),
+    ("polygon", TokenKind.POLYGON),
     ("haversine", TokenKind.HAVERSINE),
     ("euclidean", TokenKind.EUCLIDEAN),
     ("int", TokenKind.INT),
