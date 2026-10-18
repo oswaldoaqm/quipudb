@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include "quipudb/index/text_stemmer.hpp"
 #include "quipudb/index/text_stopwords.hpp"
 #include "texto_utf8.hpp"
 
@@ -78,6 +79,13 @@ std::vector<Palabra> separar(const std::u32string& cps) {
   return palabras;
 }
 
+bool tiene_digito(const std::u32string& s) noexcept {
+  for (const char32_t c : s) {
+    if (texto::es_digito(c)) return true;
+  }
+  return false;
+}
+
 bool es_letra_suelta(const Palabra& p) noexcept {
   return p.letras.size() == 1 && !texto::es_digito(p.letras[0]);
 }
@@ -139,6 +147,13 @@ std::vector<std::string> TextTokenizer::tokenize(std::string_view text) const {
     std::string termino = texto::codificar(texto::sin_acentos(p.letras));
     if (termino.size() > options_.max_term_bytes) continue;
     if (stopwords_.contains(termino)) continue;
+    if (options_.stemmer && !tiene_digito(p.letras)) {
+      const std::string palabra =
+          options_.unaccent_before_stem ? termino : texto::codificar(p.letras);
+      termino = texto::codificar(
+          texto::sin_acentos(texto::decodificar(stem(palabra, *options_.stemmer))));
+      if (termino.empty()) continue;
+    }
     terminos.push_back(std::move(termino));
   }
   return terminos;

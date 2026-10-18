@@ -39,8 +39,28 @@
 //      tildes, asi que "esta" y "está" se descartan las dos aunque alguien
 //      escriba sin acentos.
 //
-//   5. Quitar los acentos: tildes, dieresis, circunflejos y cedilla. La enie
+//   5. Reducir cada palabra a su raiz con el stemmer de Snowball del idioma
+//      elegido: "amigas" y "amigos" dan "amig" (ver `text_stemmer.hpp`). Las
+//      palabras con digitos no se stemmean: "covid19" no tiene sufijo que
+//      quitar, y "2020" tampoco.
+//
+//   6. Quitar los acentos: tildes, dieresis, circunflejos y cedilla. La enie
 //      se conserva: "año" y "ano" no son la misma palabra.
+//
+//   Los acentos se quitan AL FINAL y no antes del stemmer porque Snowball los
+//   necesita: el sufijo "-ación" lleva tilde en sus reglas, y sin ella
+//   "información" no se reduce a "inform". Asi lo hace tambien
+//   to_tsvector('spanish', ...), y con las opciones por defecto el
+//   tokenizador produce los mismos terminos que PostgreSQL.
+//
+//   El costo de ese orden: una consulta escrita sin tildes no siempre
+//   encuentra la palabra con tilde. "camion" y "camión" coinciden, porque
+//   Snowball quita la tilde de la raiz, pero "informacion" se queda entera
+//   mientras "información" da "inform". Quien prefiera que las tildes no
+//   importen nunca puede pedir `unaccent_before_stem`, que es la receta de
+//   PostgreSQL con el diccionario unaccent delante del stemmer: las dos
+//   formas coinciden siempre, a cambio de que los sufijos con tilde ya no se
+//   reduzcan.
 //
 // Que NO hace
 // -----------
@@ -86,6 +106,14 @@ struct TokenizerOptions {
   /// normalizan igual que el texto, asi que "Artículo" y "articulo" valen lo
   /// mismo.
   std::vector<std::string> extra_stopwords{};
+
+  /// El stemmer de Snowball que se aplica, o ninguno. Por defecto el
+  /// espanol, por la misma razon que las stopwords. Sin stemmer, "amigas" y
+  /// "amigos" son terminos distintos.
+  std::optional<TextLanguage> stemmer{TextLanguage::kSpanish};
+
+  /// Quitar las tildes ANTES del stemmer y no despues. Ver la etapa 5.
+  bool unaccent_before_stem{false};
 
   std::size_t max_term_bytes{kMaxTermBytes};
 
