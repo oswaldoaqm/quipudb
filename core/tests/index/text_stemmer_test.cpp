@@ -2,19 +2,26 @@
 //
 // El oraculo es PostgreSQL 17: cada par (palabra, raiz) de las tablas salio de
 //
-//   SELECT p, ts_lexize('spanish_stem', p) FROM palabras;
+//   SELECT p, ts_lexize('spanish_stem', p) FROM palabras;   -- o english_stem
 //
 // Esa es la raiz que guarda el indice GIN con to_tsvector('spanish', ...), y
 // la comparacion del 2.3.2 (#174) solo es justa si el indice propio produce
 // la misma.
 //
-// La tabla es una muestra fija. Antes de fijarla se comparo el stemmer contra
-// PostgreSQL sobre 21 646 palabras -- todo el texto de las diapositivas del
-// curso, del enunciado y de docs/, mas formas sinteticas que combinan raices
-// con cada sufijo de cada paso del algoritmo y con cada pronombre enclitico --
-// y coincidieron todas. De ahi salen los 201 pares de abajo: los ejemplos de
-// las diapositivas, palabras elegidas para cubrir cada paso, y 160 tomadas al
-// azar con semilla fija.
+// Las tablas son muestras fijas. Antes de fijarlas se comparo cada stemmer
+// contra PostgreSQL sobre un vocabulario grande y coincidieron todas las
+// palabras:
+//
+//   - espanol: 21 646 palabras -- todo el texto de las diapositivas del
+//     curso, del enunciado y de docs/, mas formas sinteticas que combinan
+//     raices con cada sufijo de cada paso y con cada pronombre enclitico;
+//   - ingles: 26 263 palabras -- el texto de la documentacion de las
+//     dependencias del frontend, mas formas sinteticas con cada sufijo de
+//     cada paso y las palabras de las listas de excepciones.
+//
+// De ahi salen los pares de abajo: los ejemplos de las diapositivas y de la
+// pagina de Snowball, palabras elegidas para cubrir cada paso, y una muestra
+// al azar con semilla fija.
 //
 // Las stopwords no estan: el diccionario spanish_stem de PostgreSQL las
 // descarta antes de stemmear y devuelve vacio, asi que no hay contra que
@@ -101,6 +108,66 @@ constexpr Par kEspanol[] = {
     {"detectado", "detect"},
 };
 
+constexpr Par kIngles[] = {
+    {"ponies", "poni"}, {"ties", "tie"}, {"cats", "cat"}, {"gas", "gas"}, {"gaps", "gap"},
+    {"kiwis", "kiwi"}, {"agreed", "agre"}, {"feed", "feed"}, {"sing", "sing"},
+    {"hoping", "hope"}, {"tanned", "tan"}, {"falling", "fall"}, {"hissing", "hiss"},
+    {"fizzed", "fizz"}, {"failing", "fail"}, {"filing", "file"}, {"happy", "happi"},
+    {"sky", "sky"}, {"say", "say"}, {"boy", "boy"}, {"toy", "toy"}, {"enjoying", "enjoy"},
+    {"conditional", "condit"}, {"hesitanci", "hesit"}, {"digitizer", "digit"},
+    {"conformabli", "conform"}, {"radicalli", "radic"}, {"differentli", "differ"},
+    {"vileli", "vile"}, {"analogousli", "analog"}, {"vietnamization", "vietnam"},
+    {"predication", "predic"}, {"operator", "oper"}, {"hopefulness", "hope"},
+    {"electriciti", "electr"}, {"electrical", "electr"}, {"hopeful", "hope"},
+    {"inference", "infer"}, {"adjustable", "adjust"}, {"replacement", "replac"},
+    {"adjustment", "adjust"}, {"dependent", "depend"}, {"adoption", "adopt"},
+    {"communism", "communism"}, {"activate", "activ"}, {"effective", "effect"}, {"rate", "rate"},
+    {"controll", "control"}, {"roll", "roll"}, {"generous", "generous"}, {"general", "general"},
+    {"communication", "communic"}, {"arsenal", "arsenal"}, {"dying", "die"}, {"lying", "lie"},
+    {"tying", "tie"}, {"skies", "sky"}, {"skis", "ski"}, {"news", "news"}, {"early", "earli"},
+    {"singly", "singl"}, {"idly", "idl"}, {"gently", "gentl"}, {"ugly", "ugli"},
+    {"atlas", "atlas"}, {"inning", "inning"}, {"proceed", "proceed"}, {"exceed", "exceed"},
+    {"succeed", "succeed"}, {"information", "inform"}, {"retrieval", "retriev"},
+    {"ranking", "rank"}, {"documents", "document"}, {"queries", "queri"},
+    {"clonebasenameplugin", "clonebasenameplugin"}, {"openai", "openai"},
+    {"honorific", "honorif"}, {"jrfolk", "jrfolk"}, {"dark", "dark"},
+    {"renderelement", "renderel"}, {"howeiz", "howeiz"}, {"tiancheng", "tiancheng"},
+    {"performed", "perform"}, {"oauth", "oauth"}, {"pppconfig", "pppconfig"},
+    {"dualstack", "dualstack"}, {"ucs", "uc"}, {"loginfoplugin", "loginfoplugin"},
+    {"mulderbaba", "mulderbaba"}, {"agarwal", "agarw"}, {"flattenerror", "flattenerror"},
+    {"cipher", "cipher"}, {"hardware", "hardwar"},
+    {"asyncserieswaterfallhook", "asyncserieswaterfallhook"}, {"electrive", "electr"},
+    {"atlasbli", "atlasbl"}, {"luego", "luego"}, {"licensee", "license"}, {"orbin", "orbin"},
+    {"increments", "increment"}, {"mergereactprops", "mergereactprop"}, {"freshest", "freshest"},
+    {"flowing", "flow"}, {"generousness", "generous"}, {"underscorejs", "underscorej"},
+    {"strictslashes", "strictslash"}, {"disablemonospaceoptimizations", "disablemonospaceoptim"},
+    {"algorithms", "algorithm"}, {"unescaping", "unescap"}, {"scrollbar", "scrollbar"},
+    {"throught", "throught"}, {"folds", "fold"}, {"deepfilter", "deepfilt"},
+    {"michael", "michael"}, {"tyingization", "tyingiz"}, {"troublnli", "troubln"},
+    {"stated", "state"}, {"bingmapsplugin", "bingmapsplugin"}, {"destructuring", "destructur"},
+    {"contextmenuradioitemstate", "contextmenuradioitemst"}, {"converts", "convert"},
+    {"krizalys", "krizali"}, {"minimistjs", "minimistj"},
+    {"getcontainerdomnode", "getcontainerdomnod"}, {"thisentli", "thisent"},
+    {"suddenly", "sudden"}, {"absent", "absent"}, {"jblarsen", "jblarsen"},
+    {"releaselock", "releaselock"}, {"forrest", "forrest"}, {"indexof", "indexof"},
+    {"allowunknownoption", "allowunknownopt"}, {"thegotoguy", "thegotoguy"},
+    {"predicer", "predic"}, {"thisize", "thisiz"}, {"vertigo", "vertigo"},
+    {"amilajack", "amilajack"}, {"zfy", "zfi"}, {"unreasonable", "unreason"},
+    {"remotehost", "remotehost"}, {"switzerland", "switzerland"},
+    {"drawerrootchangeeventreason", "drawerrootchangeeventreason"}, {"typescript", "typescript"},
+    {"atlasiciti", "atlas"}, {"sdk", "sdk"}, {"maybeglobstring", "maybeglobstr"},
+    {"proceedenci", "proceed"}, {"ision", "ision"}, {"derks", "derk"}, {"pkgjs", "pkgjs"},
+    {"pm", "pm"}, {"fromversion", "fromvers"}, {"reward", "reward"},
+    {"codeblockwriter", "codeblockwrit"}, {"valuemissing", "valuemiss"}, {"sequence", "sequenc"},
+    {"runy", "runi"}, {"circumstances", "circumst"}, {"invalidate", "invalid"},
+    {"analogization", "analog"}, {"unbalanced", "unbalanc"}, {"popovers", "popov"},
+    {"fuzzy", "fuzzi"}, {"forcing", "forc"}, {"compactqueue", "compactqueu"},
+    {"chyzwar", "chyzwar"}, {"w", "w"}, {"appendconst", "appendconst"}, {"optimizely", "optim"},
+    {"daniele", "daniel"}, {"defensive", "defens"}, {"eastasianwidth", "eastasianwidth"},
+    {"snappointchangeeventdetails", "snappointchangeeventdetail"},
+    {"setprototypeof", "setprototypeof"},
+};
+
 TEST(TextStemmer, EspanolCoincideConPostgres) {
   for (const auto& [palabra, raiz] : kEspanol) {
     EXPECT_EQ(stem_spanish(palabra), raiz) << palabra;
@@ -132,6 +199,31 @@ TEST(TextStemmer, EspanolPalabrasCortasYVacia) {
   EXPECT_EQ(stem_spanish(""), "");
   EXPECT_EQ(stem_spanish("x"), "x");
   EXPECT_EQ(stem_spanish("sol"), "sol");
+}
+
+TEST(TextStemmer, InglesCoincideConPostgres) {
+  for (const auto& [palabra, raiz] : kIngles) {
+    EXPECT_EQ(stem_english(palabra), raiz) << palabra;
+  }
+}
+
+TEST(TextStemmer, InglesLasVariantesDanLaMismaRaiz) {
+  EXPECT_EQ(stem_english("connection"), stem_english("connected"));
+  EXPECT_EQ(stem_english("connecting"), stem_english("connections"));
+  EXPECT_EQ(stem_english("generous"), "generous");  // R1 fijo tras "gener"
+  EXPECT_NE(stem_english("general"), stem_english("gene"));
+}
+
+TEST(TextStemmer, InglesPalabrasCortasYExcepciones) {
+  EXPECT_EQ(stem_english(""), "");
+  EXPECT_EQ(stem_english("is"), "is");
+  EXPECT_EQ(stem_english("skies"), "sky");
+  EXPECT_EQ(stem_english("news"), "news");
+}
+
+TEST(TextStemmer, ElIdiomaSeEligeEnEjecucion) {
+  EXPECT_EQ(stem("estudiosos", TextLanguage::kSpanish), "estudi");
+  EXPECT_EQ(stem("studies", TextLanguage::kEnglish), "studi");
 }
 
 }  // namespace
