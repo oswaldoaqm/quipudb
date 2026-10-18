@@ -34,7 +34,12 @@
 //      junta letras sueltas separadas por un punto exacto, para no pegar
 //      "3.14" en "314" ni el final de una oracion con el inicio de otra.
 //
-//   4. Quitar los acentos: tildes, dieresis, circunflejos y cedilla. La enie
+//   4. Descartar las stopwords: las listas de Snowball del idioma elegido
+//      mas las propias del corpus (ver `TokenizerOptions`). Se comparan SIN
+//      tildes, asi que "esta" y "está" se descartan las dos aunque alguien
+//      escriba sin acentos.
+//
+//   5. Quitar los acentos: tildes, dieresis, circunflejos y cedilla. La enie
 //      se conserva: "año" y "ano" no son la misma palabra.
 //
 // Que NO hace
@@ -48,7 +53,10 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
+
+#include "quipudb/index/text_language.hpp"
 
 namespace quipudb {
 
@@ -64,6 +72,21 @@ inline constexpr std::size_t kMaxTermBytes = 64;
 /// Como se tokeniza. Dos tokenizadores con opciones iguales producen
 /// exactamente los mismos terminos para el mismo texto.
 struct TokenizerOptions {
+  /// Idiomas cuyas listas de stopwords se descartan. Por defecto solo el
+  /// espanol, que es lo que hace to_tsvector('spanish', ...) en PostgreSQL:
+  /// la comparacion del 2.3.2 mide los dos indices sobre los mismos terminos.
+  ///
+  /// Con un corpus mezclado se pueden pedir los dos idiomas, sabiendo que la
+  /// lista inglesa descarta palabras que en espanol si significan algo, como
+  /// "once" o "don". Una lista vacia no descarta nada.
+  std::vector<TextLanguage> stopword_languages{TextLanguage::kSpanish};
+
+  /// Stopwords propias del corpus, una palabra por entrada: por ejemplo
+  /// "articulo" en una coleccion de articulos, donde aparece en todos. Se
+  /// normalizan igual que el texto, asi que "Artículo" y "articulo" valen lo
+  /// mismo.
+  std::vector<std::string> extra_stopwords{};
+
   std::size_t max_term_bytes{kMaxTermBytes};
 
   bool operator==(const TokenizerOptions&) const = default;
@@ -82,10 +105,16 @@ class TextTokenizer {
   /// Es determinista: el mismo texto da siempre la misma lista.
   [[nodiscard]] std::vector<std::string> tokenize(std::string_view text) const;
 
+  /// Si la palabra se descarta como stopword. Acepta la palabra en
+  /// cualquier forma -- mayusculas, con o sin tildes --, igual que el texto.
+  [[nodiscard]] bool is_stopword(std::string_view word) const;
+
   [[nodiscard]] const TokenizerOptions& options() const noexcept { return options_; }
 
  private:
   TokenizerOptions options_;
+  /// Las stopwords ya normalizadas: en minusculas y sin tildes.
+  std::unordered_set<std::string> stopwords_;
 };
 
 }  // namespace quipudb

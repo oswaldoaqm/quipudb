@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include "quipudb/index/text_stopwords.hpp"
 #include "texto_utf8.hpp"
 
 namespace quipudb {
@@ -107,9 +108,29 @@ std::vector<Palabra> juntar_siglas(std::vector<Palabra> palabras, const std::u32
   return out;
 }
 
+/// Minusculas y sin tildes: la forma en que se comparan las stopwords.
+std::string normalizar(std::string_view palabra) {
+  std::u32string cps = texto::decodificar(palabra);
+  for (char32_t& c : cps) c = texto::sin_acento(texto::minuscula(c));
+  return texto::codificar(cps);
+}
+
 }  // namespace
 
-TextTokenizer::TextTokenizer(TokenizerOptions options) : options_(std::move(options)) {}
+TextTokenizer::TextTokenizer(TokenizerOptions options) : options_(std::move(options)) {
+  for (const TextLanguage idioma : options_.stopword_languages) {
+    for (const std::string_view palabra : stopword_list(idioma)) {
+      stopwords_.insert(normalizar(palabra));
+    }
+  }
+  for (const std::string& palabra : options_.extra_stopwords) {
+    stopwords_.insert(normalizar(palabra));
+  }
+}
+
+bool TextTokenizer::is_stopword(std::string_view word) const {
+  return stopwords_.contains(normalizar(word));
+}
 
 std::vector<std::string> TextTokenizer::tokenize(std::string_view text) const {
   const std::u32string cps = texto::decodificar(text);
@@ -117,6 +138,7 @@ std::vector<std::string> TextTokenizer::tokenize(std::string_view text) const {
   for (const Palabra& p : juntar_siglas(separar(cps), cps)) {
     std::string termino = texto::codificar(texto::sin_acentos(p.letras));
     if (termino.size() > options_.max_term_bytes) continue;
+    if (stopwords_.contains(termino)) continue;
     terminos.push_back(std::move(termino));
   }
   return terminos;

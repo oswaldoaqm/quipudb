@@ -9,8 +9,11 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
+
+#include "quipudb/index/text_stopwords.hpp"
 
 namespace quipudb {
 namespace {
@@ -18,7 +21,7 @@ namespace {
 using Terminos = std::vector<std::string>;
 
 /// Sin stopwords ni stemmer: solo separar, minusculas, siglas y acentos.
-TextTokenizer crudo() { return TextTokenizer(TokenizerOptions{}); }
+TextTokenizer crudo() { return TextTokenizer(TokenizerOptions{.stopword_languages = {}}); }
 
 TEST(TextTokenizer, SeparaPorTodoLoQueNoEsLetraNiDigito) {
   EXPECT_EQ(crudo().tokenize("Hola, mundo! (base_de-datos)  2026;fin"),
@@ -93,8 +96,67 @@ TEST(TextTokenizer, DescartaLosTerminosDemasiadoLargos) {
   EXPECT_EQ(crudo().tokenize("antes " + largo + " " + justo + " despues"),
             (Terminos{"antes", justo, "despues"}));
 
-  TextTokenizer corto(TokenizerOptions{.max_term_bytes = 4});
+  TextTokenizer corto(TokenizerOptions{.stopword_languages = {}, .max_term_bytes = 4});
   EXPECT_EQ(corto.tokenize("sol luna estrella"), (Terminos{"sol", "luna"}));
+}
+
+TEST(TextStopwords, SonLasListasDeSnowball) {
+  // Los tamanos de spanish.stop y english.stop de PostgreSQL 17.
+  EXPECT_EQ(stopword_list(TextLanguage::kSpanish).size(), 313U);
+  EXPECT_EQ(stopword_list(TextLanguage::kEnglish).size(), 127U);
+
+  const auto contiene = [](TextLanguage idioma, std::string_view palabra) {
+    const auto lista = stopword_list(idioma);
+    return std::find(lista.begin(), lista.end(), palabra) != lista.end();
+  };
+  EXPECT_TRUE(contiene(TextLanguage::kSpanish, "de"));
+  EXPECT_TRUE(contiene(TextLanguage::kSpanish, "estábamos"));
+  EXPECT_TRUE(contiene(TextLanguage::kEnglish, "the"));
+  EXPECT_FALSE(contiene(TextLanguage::kSpanish, "the"));
+  EXPECT_FALSE(contiene(TextLanguage::kEnglish, "de"));
+}
+
+TEST(TextTokenizer, PorDefectoDescartaLasStopwordsEnEspanol) {
+  // El ejemplo de la diapositiva de Bag of Words: "La casa es grande" queda
+  // en ["casa", "grande"].
+  const TextTokenizer t;
+  EXPECT_EQ(t.tokenize("La casa es grande"), (Terminos{"casa", "grande"}));
+  EXPECT_EQ(t.tokenize("El gato está en la casa"), (Terminos{"gato", "casa"}));
+  EXPECT_EQ(t.tokenize("La casa es bonita y grande"), (Terminos{"casa", "bonita", "grande"}));
+  EXPECT_EQ(t.tokenize("El sol brilla sobre la casa"), (Terminos{"sol", "brilla", "casa"}));
+  // La lista inglesa no se aplica si no se pide.
+  EXPECT_EQ(t.tokenize("the house"), (Terminos{"the", "house"}));
+}
+
+TEST(TextTokenizer, LasStopwordsSeComparanSinTildesNiMayusculas) {
+  const TextTokenizer t;
+  EXPECT_EQ(t.tokenize("ESTÁ esta Esta está"), Terminos{});
+  EXPECT_EQ(t.tokenize("Él dijo que si, sí"), (Terminos{"dijo"}));
+  EXPECT_TRUE(t.is_stopword("TAMBIÉN"));
+  EXPECT_TRUE(t.is_stopword("tambien"));
+  EXPECT_FALSE(t.is_stopword("casa"));
+}
+
+TEST(TextTokenizer, LosIdiomasDeStopwordsSeEligen) {
+  const TextTokenizer ingles(TokenizerOptions{.stopword_languages = {TextLanguage::kEnglish}});
+  EXPECT_EQ(ingles.tokenize("The house of the rising sun"), (Terminos{"house", "rising", "sun"}));
+  EXPECT_EQ(ingles.tokenize("la casa"), (Terminos{"la", "casa"}));
+
+  const TextTokenizer ambos(
+      TokenizerOptions{.stopword_languages = {TextLanguage::kSpanish, TextLanguage::kEnglish}});
+  EXPECT_EQ(ambos.tokenize("the house y la casa"), (Terminos{"house", "casa"}));
+}
+
+TEST(TextTokenizer, StopwordsPropiasDelCorpus) {
+  const TextTokenizer t(TokenizerOptions{.extra_stopwords = {"Artículo", "ADEMÁS"}});
+  EXPECT_EQ(t.tokenize("El articulo dice, ademas, que el artículo es largo"),
+            (Terminos{"dice", "largo"}));
+}
+
+TEST(TextTokenizer, OpcionesIgualesSeReconocen) {
+  EXPECT_EQ(TokenizerOptions{}, TokenizerOptions{});
+  EXPECT_NE(TokenizerOptions{}, TokenizerOptions{.stopword_languages = {}});
+  EXPECT_NE(TokenizerOptions{}, TokenizerOptions{.extra_stopwords = {"x"}});
 }
 
 TEST(TextTokenizer, EsDeterminista) {
