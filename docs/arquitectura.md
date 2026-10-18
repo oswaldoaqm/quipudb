@@ -1119,3 +1119,57 @@ por separado:
 Se quedan en los tres igual: lo que protege a los otros dos no es una garantia
 del contrato sino una casualidad de como estan implementados hoy, y el propio
 #21 dice que la salida del group by deberia dejar de materializarse.
+
+## Busqueda de texto (Parte 3)
+
+### Tokenizacion: del texto a los terminos (#160)
+
+Todo lo que entra al indice invertido y todo lo que se busca pasa por
+`TextTokenizer` (`core/include/quipudb/index/text_tokenizer.hpp`). Es el
+preprocesamiento de la diapositiva de Bag of Words, en este orden:
+
+| Etapa | Que hace | Ejemplo |
+|---|---|---|
+| Separar | corridas de letras o digitos; lo demas corta | `"base_de-datos"` -> `base`, `de`, `datos` |
+| Minusculas | ASCII y Latin-1 | `ÁRBOL` -> `árbol` |
+| Siglas | letras sueltas con un punto exacto entre ellas | `O.N.U.` -> `onu` |
+| Stopwords | listas de Snowball, comparadas sin tildes | `la`, `está`, `esta` fuera |
+| Stemming | Snowball del idioma; no a palabras con digitos | `amigas`, `amigos` -> `amig` |
+| Acentos | se quitan al final; la enie se queda | `camión` -> `camion` |
+
+El indice y la consulta tienen que tokenizar con las mismas
+`TokenizerOptions`: si no, la palabra esta en el documento y la busqueda no la
+encuentra. Por eso las opciones se comparan con `==` y viajaran con el indice.
+
+#### Igual que PostgreSQL, a proposito
+
+Las stopwords son las de `spanish.stop` y `english.stop` de PostgreSQL 17, y
+los stemmers implementan Snowball, que es lo que usa `to_tsvector`. Con las
+opciones por defecto (`spanish`) el tokenizador produce los mismos lexemas
+que `to_tsvector('spanish', ...)`: la comparacion contra GIN del 2.3.2 (#174)
+mide estructura y ranking, no dos preprocesamientos distintos.
+
+No se supuso, se midio. Cada stemmer se comparo con `ts_lexize` sobre un
+vocabulario grande y coincidieron todas las palabras:
+
+| Stemmer | Palabras comparadas | Distintas | De donde salen |
+|---|---|---|---|
+| `spanish_stem` | 21 646 | 0 | diapositivas, enunciado, `docs/` y formas sinteticas con cada sufijo y pronombre enclitico |
+| `english_stem` | 26 263 | 0 | documentacion de las dependencias del frontend y formas sinteticas con cada sufijo |
+
+Las pruebas fijan una muestra de esos pares y, ademas, comparan el
+tokenizador completo con `to_tsvector` sobre los ejemplos de las diapositivas.
+
+#### Por que las tildes se quitan al final
+
+Snowball las necesita: "-ación" lleva tilde en sus reglas, y sin ella
+"información" no se reduce a "inform". El costo es que una consulta escrita
+sin tildes no siempre encuentra la palabra con tilde: `camion` y `camión`
+coinciden (la raiz pierde la tilde igual), pero `informacion` no se reduce y
+`información` si. PostgreSQL tiene el mismo comportamiento.
+
+`unaccent_before_stem` invierte el orden, que es la receta de PostgreSQL con
+`unaccent` delante del stemmer: las dos formas coinciden siempre, a cambio de
+que los sufijos con tilde ya no se reduzcan. Que opcion usa el indice se
+decide en el ADR de la Parte 3 (#175), con los datos del benchmark de
+relevancia (#173).
