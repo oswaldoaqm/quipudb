@@ -951,3 +951,100 @@ Con los bindings, ademas, cargan un corpus y comprueban que cada consulta larga
 encuentra su duplicado entre los 10 primeros, y que la lista de stopwords es la
 del core. La que compara los hashes de referencia se salta si `quora.zip` no se
 descargo.
+
+## TF-IDF + coseno vs BM25 (issue #172)
+
+`--suite texto` mide las dos tecnicas de ranking propias sobre el corpus de #171
+con el mismo banco de #38 (calentamiento, repeticiones, aislamiento y los tres
+CSV de resultados sin cambios de cabecera).
+
+```bash
+python benchmarks/scripts/generar_documentos.py
+PYTHONPATH=build-py/bindings python -B benchmarks/scripts/ejecutar_benchmarks.py \
+  --suite texto --tamanos 1000 10000 100000 --calentamientos 1 --repeticiones 5 \
+  --entorno proposito=experimento_oficial --entorno compilacion_core=Release
+python benchmarks/scripts/resumir_texto.py <ejecucion>
+```
+
+`--consultas` (100 por defecto, el maximo) fija cuantas consultas de cada
+longitud entran al lote. La suite usa el page-size del binding.
+
+### Una construccion, dos rankings
+
+TF-IDF y BM25 **no tienen construcciones distintas**. SPIMI arma un solo indice
+invertido, y en ese indice estan las estadisticas que necesitan los dos: la
+norma de cada documento para el coseno y su longitud para BM25 (#163). Lo que
+cambia es como se puntua una consulta. Por eso la suite tiene:
+
+| Caso | Tecnica | Que mide |
+|---|---|---|
+| `spimi_construccion_indice` | `spimi` | Tiempo, paginas, espacio y memoria de construir el indice |
+| `<ranking>_consulta_<L>_palabras` | `tf_idf`, `bm25` | Lote de consultas de `L` = 1, 3 o 5+ palabras, top-10 |
+
+Son 7 casos por tamano. El tiempo y el espacio de la construccion valen para
+las dos tecnicas, y el informe lo pone asi en una sola tabla.
+
+- **Construccion.** Fuera del reloj se carga el Heap y `create_index` registra
+  el indice. El reloj mide solo `build` con las opciones inglesas (SPIMI, la
+  mezcla de bloques y el archivo de RIDs) mas un flush.
+- **Consultas.** `TextIndex.search_text(consulta, ranking, 10)`. Devuelve
+  **RID** sin leer los registros, igual que en #131. El tiempo por consulta es
+  `mediana_tiempo_ns / n_operaciones`, el promedio de las 100 consultas de esa
+  longitud, e incluye el cruce Python/binding.
+
+### Metricas
+
+- `paginas_leidas` / `paginas_escritas`: suma del Heap y del indice. La
+  construccion lee el Heap y los bloques, y escribe bloques, indice y RIDs. Una
+  consulta solo lee el indice. Los dos rankings leen **las mismas paginas**:
+  recorren las mismas listas de postings y la misma estadistica por documento.
+- `datos_bytes` / `indices_bytes`: el Heap, y el indice mas su archivo de RIDs.
+- En el entorno, por consulta: `terminos_por_consulta` (lo que queda despues de
+  stopwords y stemmer) y `coincidentes_por_consulta`, los documentos con algun
+  termino de la consulta. El ranking los puntua a todos antes de quedarse con
+  10, asi que explican como crece el tiempo con N.
+
+**Memoria de SPIMI.** El criterio pide medir la memoria durante la
+construccion. El banco no mide RAM del proceso: esa cifra mezcla el interprete,
+las paginas de la tabla y el asignador, y no se repite entre corridas. Se
+reporta en cambio la cuenta que lleva el propio SPIMI (`TextIndex.last_build`,
+ver "Cuando se llena la memoria" en `spimi.hpp`), que es determinista:
+
+- `memoria_pico_spimi_bytes`: lo maximo que ocupo el diccionario del bloque en
+  construccion. Nunca pasa de `memoria_presupuesto_spimi_bytes` (1 MiB): ahi
+  SPIMI vuelca el bloque y empieza otro. Las listas se cuentan exactas; la
+  sobrecarga por termino es una estimacion fija de 72 bytes;
+- `bloques_spimi` y `pasadas_mezcla`: cuantos bloques se volcaron y cuantas
+  pasadas hizo la mezcla (fan-in 64);
+- `memoria_lectores_mezcla_bytes`: una pagina por bloque abierto en la mezcla;
+- `memoria_rids_bytes`: el mapeo de documentos a RID, 8 bytes por documento.
+
+Como son deterministas, el banco comprueba que se repiten identicos en cada
+repeticion. Por eso lee la configuracion de un caso al terminar cada repeticion
+y no antes de medir: es el unico cambio en `banco_pruebas.py`.
+
+### Validacion
+
+Fuera del reloj, cada top-10 tiene que tener a lo sumo 10 documentos ordenados
+por puntaje de mayor a menor. Ademas, la respuesta de la primera repeticion
+queda como referencia: las siguientes tienen que devolver exactamente los
+mismos ids con los mismos puntajes. Ese chequeo no es circular, porque cada
+repeticion reconstruye el indice en una carpeta nueva. Que los puntajes sean los
+correctos lo prueban las pruebas de #164 y #165 contra un oraculo; que los
+resultados sirvan lo mide #173.
+
+### Pruebas
+
+```bash
+python -B -m pytest benchmarks/test_casos_texto.py benchmarks/test_banco_pruebas.py \
+  -q -rs -p no:cacheprovider
+PYTHONPATH=build-py/bindings python -B -m pytest benchmarks/test_casos_texto.py \
+  engine/test_text_index.py -q -rs -p no:cacheprovider
+```
+
+Las unitarias comprueban la lista de casos (una sola construccion), la
+seleccion de consultas por longitud y la CLI. La integracion corre la suite
+sobre un corpus sintetico de 1k con dos repeticiones: las respuestas y la cuenta
+de SPIMI se repiten, los dos rankings leen las mismas paginas y comparten el
+espacio del indice. Los resultados oficiales y su analisis estan en
+[comparacion_tfidf_bm25.md](comparacion_tfidf_bm25.md).
