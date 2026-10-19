@@ -41,8 +41,9 @@ class IndiceInvertido : public ::testing::Test {
   void TearDown() override { fs::remove_all(dir_); }
 
   /// Construye el indice de `docs` en `nombre` y devuelve lo que costo.
-  OpStats construir(const std::vector<std::string>& docs, const std::string& nombre,
-                    TokenizerOptions tok = {}, SpimiOptions spimi_opt = {}) {
+  InvertedIndexBuild construir(const std::vector<std::string>& docs, const std::string& nombre,
+                               TokenizerOptions tok = {}, SpimiOptions spimi_opt = {},
+                               std::size_t fan_in = kSpimiDefaultFanIn) {
     spimi_opt.dir = dir_;
     SpimiIndexer spimi(std::move(tok), spimi_opt);
     for (std::size_t i = 0; i < docs.size(); ++i) {
@@ -50,7 +51,7 @@ class IndiceInvertido : public ::testing::Test {
     }
     spimi.finish();
     bloques_ = spimi.blocks().size();
-    return InvertedIndex::build(spimi, dir_ / nombre);
+    return InvertedIndex::build(spimi, dir_ / nombre, fan_in);
   }
 
   /// Todo el indice, leido con for_each.
@@ -226,12 +227,78 @@ TEST_F(IndiceInvertido, ReportaLoQueCostoElMerge) {
     entradas_bloques += SpimiBlockReader(b).entries();
   }
 
-  const OpStats s = InvertedIndex::build(spimi, dir_ / "stats.idx");
+  const InvertedIndexBuild r = InvertedIndex::build(spimi, dir_ / "stats.idx");
+  const OpStats& s = r.stats;
+  EXPECT_EQ(r.blocks, spimi.blocks().size());
+  EXPECT_EQ(r.passes, 1U);
   InvertedIndex indice(dir_ / "stats.idx");
   EXPECT_EQ(s.pages_read, paginas_bloques);  // cada pagina de bloque, una vez
   EXPECT_EQ(s.pages_written, DiskManager(dir_ / "stats.idx").page_count());
   EXPECT_EQ(s.records_examined, entradas_bloques);
   EXPECT_EQ(s.records_returned, indice.terms());
+}
+
+/// Pasadas que predice la teoria: niveles intermedios hasta que quedan
+/// `fan_in` bloques o menos, mas la pasada final.
+std::size_t pasadas_esperadas(std::size_t bloques, std::size_t fan_in) {
+  std::size_t pasadas = 1;
+  while (bloques > fan_in) {
+    bloques = (bloques + fan_in - 1) / fan_in;
+    ++pasadas;
+  }
+  return pasadas;
+}
+
+TEST_F(IndiceInvertido, MezclarPorNivelesDaElMismoArchivo) {
+  const auto docs = corpus(300);
+  construir(docs, "uno.idx");
+  ASSERT_EQ(bloques_, 1U);
+  const auto referencia = bytes(dir_ / "uno.idx");
+
+  // fan-in 2 es la mezcla binaria de la diapositiva de BSBI: un arbol de
+  // log2(bloques) niveles.
+  for (const std::size_t fan_in : {2U, 3U, 7U}) {
+    const std::string nombre = "k" + std::to_string(fan_in) + ".idx";
+    const auto r = construir(docs, nombre, TokenizerOptions{},
+                             SpimiOptions{.memory_budget = 8192}, fan_in);
+    ASSERT_GT(r.blocks, fan_in);
+    EXPECT_EQ(r.passes, pasadas_esperadas(r.blocks, fan_in)) << "fan-in " << fan_in;
+    EXPECT_GT(r.passes, 1U);
+    EXPECT_EQ(bytes(dir_ / nombre), referencia) << "fan-in " << fan_in;
+  }
+}
+
+TEST_F(IndiceInvertido, LosBloquesIntermediosSeBorran) {
+  const auto r = construir(corpus(150), "niveles.idx", TokenizerOptions{},
+                           SpimiOptions{.memory_budget = 8192}, 2);
+  ASSERT_GT(r.passes, 2U);
+  std::vector<fs::path> archivos(fs::directory_iterator(dir_), {});
+  ASSERT_EQ(archivos.size(), 1U);
+  EXPECT_EQ(archivos[0].filename(), "niveles.idx");
+}
+
+TEST_F(IndiceInvertido, LosNivelesReleenLosIntermedios) {
+  // Con niveles, cada pasada vuelve a leer todo: se leen mas paginas que las
+  // de los bloques originales, y se escriben mas que las del indice.
+  const auto docs = corpus(200);
+  const auto una = construir(docs, "una.idx", TokenizerOptions{},
+                             SpimiOptions{.memory_budget = 8192});
+  const auto varias = construir(docs, "varias.idx", TokenizerOptions{},
+                                SpimiOptions{.memory_budget = 8192}, 2);
+  ASSERT_EQ(una.passes, 1U);
+  ASSERT_GT(varias.passes, 1U);
+  EXPECT_GT(varias.stats.pages_read, una.stats.pages_read);
+  EXPECT_GT(varias.stats.pages_written, una.stats.pages_written);
+  EXPECT_GT(varias.stats.records_examined, una.stats.records_examined);
+  EXPECT_EQ(varias.stats.records_returned, una.stats.records_returned);
+}
+
+TEST_F(IndiceInvertido, ElFanInEsAlMenosDos) {
+  SpimiIndexer spimi(TokenizerOptions{}, SpimiOptions{.dir = dir_});
+  spimi.add_document(1, "sol");
+  spimi.finish();
+  EXPECT_THROW(InvertedIndex::build(spimi, dir_ / "x.idx", 1), SchemaError);
+  EXPECT_FALSE(fs::exists(dir_ / "x.idx"));
 }
 
 TEST_F(IndiceInvertido, BuscarLeeUnaPaginaDelDiccionario) {

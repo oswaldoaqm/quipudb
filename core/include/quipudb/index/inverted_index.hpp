@@ -23,6 +23,14 @@
 //   Lo unico que se tiene en memoria a la vez es la entrada actual de cada
 //   bloque y la lista del termino que se esta escribiendo.
 //
+//   Abrir todos los bloques tiene un limite: cada uno es un archivo abierto y
+//   una pagina de memoria. Con un presupuesto chico y un corpus grande salen
+//   cientos de bloques, mas de los que el sistema deja abrir. Por eso se
+//   mezclan a lo sumo `fan_in` a la vez: si hay mas, se mezclan por grupos en
+//   bloques intermedios -- los MergeBlocks (L1), (L2) de la diapositiva -- y
+//   se repite hasta que quedan `fan_in` o menos, que van al indice. Es la
+//   misma cuenta de pasadas del External Sorting (#20): ceil(log_k(bloques)).
+//
 // El archivo: postings, diccionario y un indice disperso
 // ------------------------------------------------------
 //
@@ -76,21 +84,39 @@
 
 namespace quipudb {
 
+/// Cuantos bloques se mezclan a la vez por omision: 64 archivos abiertos y 64
+/// paginas de lectura, 256 KB con paginas de 4 KB. Es el mismo numero de
+/// buffers que usa el External Sorting por omision.
+inline constexpr std::size_t kSpimiDefaultFanIn = 64;
+
+/// Lo que costo construir un indice.
+struct InvertedIndexBuild {
+  /// - `pages_read`: paginas de bloque leidas, intermedios incluidos;
+  /// - `pages_written`: paginas escritas, intermedios incluidos;
+  /// - `records_examined`: entradas de bloque leidas;
+  /// - `records_returned`: terminos del indice.
+  OpStats stats;
+  /// Bloques que dejo el SPIMI.
+  std::size_t blocks = 0;
+  /// Pasadas de mezcla: 1 si los bloques cabian en una sola, mas los niveles
+  /// intermedios si no.
+  std::size_t passes = 0;
+};
+
 class InvertedIndex {
  public:
   /// Mezcla los bloques de `spimi` en un indice nuevo en `path`, con el tamano
-  /// de pagina de los bloques. Devuelve lo que costo:
-  ///   - `pages_read`: paginas de bloque leidas;
-  ///   - `pages_written`: paginas escritas;
-  ///   - `records_examined`: entradas de bloque leidas;
-  ///   - `records_returned`: terminos del indice.
+  /// de pagina de los bloques, abriendo a lo sumo `fan_in` bloques a la vez.
   ///
   /// El indice se escribe con otro nombre y se renombra al final: si algo
-  /// falla a medias, en `path` no queda un indice a medio escribir.
+  /// falla a medias, en `path` no queda un indice a medio escribir. Los
+  /// bloques intermedios se borran al terminar, falle o no.
   ///
-  /// Lanza Unsupported si `spimi` no termino (`finish()`), IoError si `path`
-  /// ya existe -- no se pisa un indice -- o si un bloque esta fuera de orden.
-  static OpStats build(const SpimiIndexer& spimi, const std::filesystem::path& path);
+  /// Lanza SchemaError si `fan_in` es menor que 2, Unsupported si `spimi` no
+  /// termino (`finish()`), IoError si `path` ya existe -- no se pisa un
+  /// indice -- o si un bloque esta fuera de orden.
+  static InvertedIndexBuild build(const SpimiIndexer& spimi, const std::filesystem::path& path,
+                                  std::size_t fan_in = kSpimiDefaultFanIn);
 
   /// Abre un indice existente. Lanza IoError si no existe, si no es un indice
   /// invertido o si es de otra version del formato.

@@ -258,7 +258,38 @@ void fusionar(const std::vector<std::filesystem::path>& bloques, std::size_t pag
 // Construccion
 // ---------------------------------------------------------------------------
 
-OpStats InvertedIndex::build(const SpimiIndexer& spimi, const std::filesystem::path& path) {
+namespace {
+
+/// Borra los bloques intermedios al salir, tambien si algo lanza. Los bloques
+/// del SPIMI no se tocan: son de el.
+class Intermedios {
+ public:
+  Intermedios() = default;
+  Intermedios(const Intermedios&) = delete;
+  Intermedios& operator=(const Intermedios&) = delete;
+  ~Intermedios() {
+    for (const auto& p : rutas_) borrar(p);
+  }
+
+  void agregar(const std::filesystem::path& p) { rutas_.push_back(p); }
+
+  static void borrar(const std::filesystem::path& p) noexcept {
+    std::error_code ec;
+    std::filesystem::remove(p, ec);
+  }
+
+ private:
+  std::vector<std::filesystem::path> rutas_;
+};
+
+}  // namespace
+
+InvertedIndexBuild InvertedIndex::build(const SpimiIndexer& spimi,
+                                        const std::filesystem::path& path, std::size_t fan_in) {
+  if (fan_in < 2) {
+    throw SchemaError("indice invertido: el fan-in es " + std::to_string(fan_in) +
+                      "; con menos de 2 bloques a la vez no hay mezcla");
+  }
   if (!spimi.finished()) {
     throw Unsupported("indice invertido: el SPIMI tiene que terminar (finish) antes del merge");
   }
@@ -269,7 +300,55 @@ OpStats InvertedIndex::build(const SpimiIndexer& spimi, const std::filesystem::p
   const auto temporal = path.parent_path() /
                         (path.filename().string() + ".tmp_" + detail::etiqueta_unica());
 
-  OpStats stats;
+  InvertedIndexBuild reporte;
+  reporte.blocks = spimi.blocks().size();
+  OpStats& stats = reporte.stats;
+
+  // Los niveles intermedios: mientras haya mas bloques de los que se pueden
+  // abrir a la vez, se mezclan de a `fan_in` en bloques del mismo formato.
+  std::vector<std::filesystem::path> bloques = spimi.blocks();
+  Intermedios intermedios;
+  std::vector<std::filesystem::path> del_nivel_anterior;
+  while (bloques.size() > fan_in) {
+    std::vector<std::filesystem::path> siguientes;
+    std::vector<std::filesystem::path> de_este_nivel;
+    for (std::size_t i = 0; i < bloques.size(); i += fan_in) {
+      const std::size_t fin = std::min(i + fan_in, bloques.size());
+      const std::vector<std::filesystem::path> grupo(
+          bloques.begin() + static_cast<std::ptrdiff_t>(i),
+          bloques.begin() + static_cast<std::ptrdiff_t>(fin));
+      if (grupo.size() == 1) {
+        // Un bloque suelto al final pasa tal cual al nivel siguiente.
+        siguientes.push_back(grupo.front());
+        continue;
+      }
+      const auto ruta = spimi.options().dir / ("quipudb_spimi_nivel_" +
+                                               detail::etiqueta_unica() + ".blk");
+      intermedios.agregar(ruta);
+      de_este_nivel.push_back(ruta);
+      detail::EscritorDeBloque bloque(ruta, page_size);
+      fusionar(
+          grupo, page_size,
+          [&](const std::string& termino, const std::vector<Posting>& lista) {
+            bloque.agregar(termino, lista);
+          },
+          stats);
+      stats.pages_written += bloque.cerrar().pages_written;
+      siguientes.push_back(ruta);
+    }
+    // Los intermedios del nivel anterior ya se mezclaron en los de este; un
+    // bloque suelto que paso tal cual sigue en `siguientes` y no se borra.
+    for (const auto& p : del_nivel_anterior) {
+      if (std::find(siguientes.begin(), siguientes.end(), p) == siguientes.end()) {
+        Intermedios::borrar(p);
+      }
+    }
+    del_nivel_anterior = std::move(de_este_nivel);
+    bloques = std::move(siguientes);
+    ++reporte.passes;
+  }
+  ++reporte.passes;  // la pasada final, que escribe el indice
+
   try {
     {
       DiskManager disco(temporal, page_size);
@@ -278,7 +357,7 @@ OpStats InvertedIndex::build(const SpimiIndexer& spimi, const std::filesystem::p
       MetaIndice meta;
 
       fusionar(
-          spimi.blocks(), page_size,
+          bloques, page_size,
           [&](const std::string& termino, const std::vector<Posting>& lista) {
             const PosicionFlujo inicio = postings.posicion();
             postings.escribir(std::as_bytes(std::span(lista)));
@@ -319,7 +398,7 @@ OpStats InvertedIndex::build(const SpimiIndexer& spimi, const std::filesystem::p
     std::filesystem::remove(temporal, ec);
     throw;
   }
-  return stats;
+  return reporte;
 }
 
 // ---------------------------------------------------------------------------
