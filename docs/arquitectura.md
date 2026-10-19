@@ -1370,3 +1370,58 @@ tf (normalizacion por longitud), y 9 apariciones de "perro" ganan a 1 solo por
 1.137 contra 0.967 (saturacion). Ademas, `b = 0`, `k1 = 0` y `k1 = 2, b = 1`
 con sus valores exactos, y un BM25 por fuerza bruta sobre 400 documentos con
 tres combinaciones de parametros.
+
+### El indice de texto en el catalogo y en Python (#166)
+
+El indice invertido entra al motor como un indice secundario mas, con
+`kind::kInvertedIndex = "inverted_index"`. El catalogo lo registra, `Database`
+lo crea, lo reabre y lo borra, y el motor Python lo usa por los bindings. Es
+el mismo camino que siguio el R-Tree.
+
+#### Firmas
+
+C++ (`core/include/quipudb/index/text_index.hpp`):
+
+```cpp
+// Crear: registra en el catalogo y construye con SPIMI sobre lo que la tabla ya tiene.
+Index& Database::create_index(tabla, nombre, columna, kind::kInvertedIndex);
+// Reabrir: siempre el mismo objeto, como los demas indices.
+Index& Database::index(tabla, nombre);
+
+class TextIndex final : public Index {
+  std::vector<std::pair<RID, double>> search_text(std::string_view query,
+                                                  TextRankingKind ranking,  // kTfIdf | kBm25
+                                                  std::size_t k);           // kAllResults = sin LIMIT
+  void build(const TokenizerOptions& = {});  // reconstruir (datos nuevos u otro idioma)
+  const TokenizerOptions& tokenizer_options() const;
+  std::uint64_t terms() const noexcept;
+  std::size_t size() const;                  // documentos indexados
+  InvertedIndex& inverted_index();           // df, N, avgdl... para el benchmark
+};
+```
+
+Python (`quipudb_native`):
+
+```python
+ix = db.create_index("documentos", "por_contenido", "contenido", kind.INVERTED_INDEX)
+ix.search_text("base de datos vectorial", TextRanking.BM25, 10)  # [(RID, puntaje), ...]
+ix.search_text("machine learning", TextRanking.TF_IDF)           # sin k: todos
+ix.build(opciones)                    # TokenizerOptions: idioma, stopwords, stemmer
+ix.documents, ix.terms, ix.tokenizer_options
+tokenize("texto", opciones)           # lo que ve el indice, para depurar
+```
+
+#### Decisiones
+
+| Decision | Por que |
+|---|---|
+| El texto vive en una columna `VARCHAR` | Es un dato mas de la tabla. `VARCHAR` es de largo fijo y el registro cabe en una pagina, asi que documentos largos piden una tabla con paginas mas grandes (hasta 64 KB). Leer el texto de archivos referenciados por la tabla queda para cuando un corpus no quepa |
+| Documentos numerados 1..N, mapeo a RID en `<indice>.rids` | El indice invertido usa ids densos. Meter el RID en un id de 32 bits limitaria la tabla a 65 535 paginas, y con `VARCHAR` de largo fijo un corpus de 100 000 documentos se acerca |
+| `insert`/`remove` lanzan `Unsupported` | El indice no se actualiza incrementalmente (#163): se reconstruye con `build()` |
+| `search(key)`, `range_search`, `scan` lanzan `Unsupported` | Igualdad u orden sobre textos no es lo que hace este indice; el mensaje dice que usar |
+| Solo sobre `VARCHAR` de un heap file | Como los demas indices secundarios: el RID tiene que ser estable |
+| `build()` construye al lado y reemplaza al final | Si falla a medias, el indice anterior sigue sirviendo |
+
+`Database::drop_index` y `drop_table` borran tambien el archivo de RIDs, y el
+SPIMI escribe sus bloques temporales en el directorio del catalogo y los borra
+al terminar.
