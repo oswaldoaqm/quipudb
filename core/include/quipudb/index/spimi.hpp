@@ -40,6 +40,31 @@
 //   indice invertido marca como crucial -- intersecciones en O(n + m) -- y la
 //   que hace que mezclar bloques sea concatenar listas en vez de ordenarlas.
 //
+// Cuando se llena la memoria
+// --------------------------
+//
+//   El "while (free memory available)" de la diapositiva necesita una medida
+//   de memoria. Medir la del proceso no sirve: depende del asignador y del
+//   sistema, y las pruebas no podrian fijar cuantos bloques salen. En su lugar
+//   el diccionario lleva la cuenta de lo que reserva, de forma determinista:
+//
+//     termino nuevo        kSpimiEntryOverhead + sus bytes
+//                          + la lista inicial de kSpimiInitialPostings postings
+//     lista llena          se duplica (DoublePostingsList): cuesta lo que ya
+//                          tenia, otra vez
+//
+//   Las listas se reservan exactamente asi, asi que la cuenta no es una
+//   aproximacion de lo que hacen: es lo que hacen. La sobrecarga por entrada
+//   si es una estimacion -- el nodo del hash, el std::string y el std::vector
+//   de libstdc++ en 64 bits --, y es la misma en todas las corridas.
+//
+//   Antes de agregar un posting se mira si cabe. Si no, el bloque se vuelca
+//   ANTES de agregarlo y el posting va al bloque siguiente: ningun bloque
+//   supera el presupuesto. Eso puede partir un documento entre dos bloques
+//   -- unos terminos en uno, otros en el siguiente --, y no estorba: cada
+//   posting (termino, documento) queda entero en un solo bloque, y por
+//   termino los documentos siguen creciendo de un bloque al siguiente.
+//
 // El formato de un bloque
 // -----------------------
 //
@@ -93,7 +118,30 @@ struct PostingEntry {
   bool operator==(const PostingEntry&) const = default;
 };
 
+/// Lo que cuesta una entrada del diccionario aparte de su termino y su lista:
+/// el nodo del hash con su hash cacheado (16), el std::string (32) y el
+/// std::vector (24), en libstdc++ de 64 bits.
+inline constexpr std::size_t kSpimiEntryOverhead = 72;
+
+/// Capacidad con la que nace una lista de postings. Al llenarse se duplica.
+inline constexpr std::size_t kSpimiInitialPostings = 4;
+
+/// Presupuesto por omision: 1 MiB. Con el corpus de 100 000 documentos del
+/// 2.3.2 eso da varias decenas de bloques, que es justo lo que el merge de
+/// #162 tiene que saber manejar.
+inline constexpr std::size_t kSpimiDefaultMemory = std::size_t{1} << 20;
+
 struct SpimiOptions {
+  /// Bytes que puede ocupar el diccionario del bloque en construccion, segun
+  /// la cuenta descrita arriba. Al no caber el siguiente posting, se vuelca el
+  /// bloque.
+  ///
+  /// Bajarlo es lo que permite que las pruebas generen muchos bloques con
+  /// pocos documentos, igual que el orden configurable del B+ Tree (#14). Lo
+  /// minimo es lo que cuesta un termino nuevo del largo maximo que deja pasar
+  /// el tokenizador: con menos, ese termino no cabria en ningun bloque.
+  std::size_t memory_budget{kSpimiDefaultMemory};
+
   /// Tamano de pagina de los archivos de bloque.
   std::size_t page_size{kDefaultPageSize};
 
@@ -111,7 +159,14 @@ class SpimiIndexer {
  public:
   /// `tokenizer` decide que terminos salen de cada documento. Tiene que ser el
   /// mismo con el que despues se tokenicen las consultas.
+  ///
+  /// Lanza SchemaError si `options.memory_budget` es menor que
+  /// `min_memory_budget(tokenizer)`.
   explicit SpimiIndexer(TokenizerOptions tokenizer = {}, SpimiOptions options = {});
+
+  /// El presupuesto minimo con estas opciones de tokenizacion: un termino nuevo
+  /// del largo maximo, con su lista inicial.
+  [[nodiscard]] static std::size_t min_memory_budget(const TokenizerOptions& tokenizer) noexcept;
   ~SpimiIndexer();
 
   SpimiIndexer(const SpimiIndexer&) = delete;
@@ -141,7 +196,13 @@ class SpimiIndexer {
   [[nodiscard]] const TextTokenizer& tokenizer() const noexcept { return tokenizer_; }
   [[nodiscard]] const SpimiOptions& options() const noexcept { return options_; }
 
+  /// Lo maximo que llego a ocupar el diccionario, segun la cuenta. Nunca pasa
+  /// de `options().memory_budget`.
+  [[nodiscard]] std::size_t peak_memory() const noexcept { return pico_; }
+
  private:
+  /// Agrega un posting, volcando el bloque antes si no cabe.
+  void agregar(std::string_view termino, Posting posting);
   void volcar_bloque();
 
   TextTokenizer tokenizer_;
@@ -150,6 +211,9 @@ class SpimiIndexer {
   /// El diccionario LOCAL del bloque en construccion. Se vacia en cada
   /// volcado.
   std::unordered_map<std::string, std::vector<Posting>> diccionario_;
+  /// Lo que ocupa `diccionario_`, segun la cuenta.
+  std::size_t usado_ = 0;
+  std::size_t pico_ = 0;
 
   std::vector<std::filesystem::path> bloques_;
   std::size_t documentos_ = 0;

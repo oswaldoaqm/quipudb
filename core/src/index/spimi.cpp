@@ -37,8 +37,28 @@ constexpr std::uint16_t kVersion = 1;
 // SpimiIndexer
 // ---------------------------------------------------------------------------
 
+namespace {
+
+/// Lo que cuesta, segun la cuenta del header, un termino nuevo con su lista
+/// inicial.
+constexpr std::size_t costo_termino_nuevo(std::size_t bytes_termino) noexcept {
+  return kSpimiEntryOverhead + bytes_termino + kSpimiInitialPostings * sizeof(Posting);
+}
+
+}  // namespace
+
+std::size_t SpimiIndexer::min_memory_budget(const TokenizerOptions& tokenizer) noexcept {
+  return costo_termino_nuevo(tokenizer.max_term_bytes);
+}
+
 SpimiIndexer::SpimiIndexer(TokenizerOptions tokenizer, SpimiOptions options)
     : tokenizer_(std::move(tokenizer)), options_(std::move(options)) {
+  const std::size_t minimo = min_memory_budget(tokenizer_.options());
+  if (options_.memory_budget < minimo) {
+    throw SchemaError("SPIMI: el presupuesto de memoria es de " +
+                      std::to_string(options_.memory_budget) + " bytes; el minimo es " +
+                      std::to_string(minimo) + ", lo que cuesta un termino del largo maximo");
+  }
   if (options_.dir.empty()) options_.dir = std::filesystem::temp_directory_path();
 }
 
@@ -76,11 +96,41 @@ void SpimiIndexer::add_document(DocId doc, std::string_view text) {
     }
   }
 
-  // Los documentos llegan en orden, asi que agregar al final deja cada lista
-  // ordenada por docID.
-  for (const auto& [termino, tf] : frecuencias) {
-    diccionario_[std::string(termino)].push_back(Posting{doc, tf});
+  for (const auto& [termino, tf] : frecuencias) agregar(termino, Posting{doc, tf});
+}
+
+void SpimiIndexer::agregar(std::string_view termino, Posting posting) {
+  // AddToDictionary / GetPostingsList, con la cuenta de memoria. Lo que cuesta
+  // depende de si el termino es nuevo en ESTE bloque y de si su lista esta
+  // llena.
+  const auto costo = [&](const std::vector<Posting>* lista) -> std::size_t {
+    if (lista == nullptr) return costo_termino_nuevo(termino.size());
+    if (lista->size() == lista->capacity()) return lista->capacity() * sizeof(Posting);
+    return 0;
+  };
+
+  auto it = diccionario_.find(std::string(termino));
+  std::size_t necesita = costo(it == diccionario_.end() ? nullptr : &it->second);
+  if (usado_ + necesita > options_.memory_budget) {
+    // No cabe: el bloque se vuelca y el posting empieza el siguiente. Ahi el
+    // termino ya es nuevo, y el minimo del constructor garantiza que cabe.
+    volcar_bloque();
+    it = diccionario_.end();
+    necesita = costo(nullptr);
   }
+
+  if (it == diccionario_.end()) {
+    it = diccionario_.try_emplace(std::string(termino)).first;
+    it->second.reserve(kSpimiInitialPostings);
+  } else if (it->second.size() == it->second.capacity()) {
+    // DoublePostingsList.
+    it->second.reserve(it->second.capacity() * 2);
+  }
+  // Los documentos llegan en orden, asi que agregar al final deja la lista
+  // ordenada por docID.
+  it->second.push_back(posting);
+  usado_ += necesita;
+  pico_ = std::max(pico_, usado_);
 }
 
 void SpimiIndexer::finish() {
@@ -124,6 +174,7 @@ void SpimiIndexer::volcar_bloque() {
   }
   bloques_.push_back(ruta);
   diccionario_.clear();
+  usado_ = 0;
 }
 
 // ---------------------------------------------------------------------------
