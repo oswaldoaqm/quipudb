@@ -91,6 +91,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "quipudb/catalog/table.hpp"
 #include "quipudb/catalog/types.hpp"
 #include "quipudb/index/text_tokenizer.hpp"
 #include "quipudb/storage/disk_manager.hpp"
@@ -200,6 +201,18 @@ class SpimiIndexer {
   /// de `options().memory_budget`.
   [[nodiscard]] std::size_t peak_memory() const noexcept { return pico_; }
 
+  /// Bloques escritos. `OpStats` es el contrato comun de todas las
+  /// estructuras y no tiene ese campo, asi que va aparte.
+  [[nodiscard]] std::size_t blocks_written() const noexcept { return bloques_.size(); }
+
+  /// Lo que costo la construccion:
+  ///   - `pages_written`: paginas de datos de todos los bloques;
+  ///   - `pages_read`: 0, porque SPIMI no relee nada -- es una sola pasada,
+  ///     de ahi el nombre. Lo que se lee de los bloques lo cuenta el merge;
+  ///   - `records_examined`: documentos procesados;
+  ///   - `records_returned`: postings escritos.
+  [[nodiscard]] const OpStats& stats() const noexcept { return stats_; }
+
  private:
   /// Agrega un posting, volcando el bloque antes si no cabe.
   void agregar(std::string_view termino, Posting posting);
@@ -214,6 +227,7 @@ class SpimiIndexer {
   /// Lo que ocupa `diccionario_`, segun la cuenta.
   std::size_t usado_ = 0;
   std::size_t pico_ = 0;
+  OpStats stats_;
 
   std::vector<std::filesystem::path> bloques_;
   std::size_t documentos_ = 0;
@@ -239,6 +253,10 @@ class SpimiBlockReader {
 
   /// Entradas del bloque, segun su area meta.
   [[nodiscard]] std::uint64_t entries() const noexcept { return entradas_; }
+
+  /// Paginas leidas hasta ahora y entradas devueltas (`records_returned`).
+  /// Leer el bloque entero lee cada pagina exactamente una vez.
+  [[nodiscard]] OpStats stats() const noexcept;
 
  private:
   class Impl;

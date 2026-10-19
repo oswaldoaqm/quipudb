@@ -80,6 +80,7 @@ void SpimiIndexer::add_document(DocId doc, std::string_view text) {
   hay_documento_ = true;
   ultimo_ = doc;
   ++documentos_;
+  ++stats_.records_examined;
 
   // Frecuencia de cada termino en ESTE documento, en el orden en que aparecen
   // por primera vez. El orden no cambia el resultado -- el bloque se ordena
@@ -171,6 +172,8 @@ void SpimiIndexer::volcar_bloque() {
     meta.bytes = escritor.bytes();
     disco.write_meta(std::as_bytes(std::span<const MetaBloque, 1>(&meta, 1)));
     disco.flush();
+    stats_.pages_written += disco.writes();
+    stats_.records_returned += meta.postings;
   }
   bloques_.push_back(ruta);
   diccionario_.clear();
@@ -214,6 +217,13 @@ SpimiBlockReader::SpimiBlockReader(const std::filesystem::path& path, std::size_
 }
 
 SpimiBlockReader::~SpimiBlockReader() = default;
+
+OpStats SpimiBlockReader::stats() const noexcept {
+  OpStats s;
+  s.pages_read = impl_->disco.reads();
+  s.records_returned = leidas_;
+  return s;
+}
 
 bool SpimiBlockReader::next(PostingEntry& out) {
   if (leidas_ == entradas_) return false;

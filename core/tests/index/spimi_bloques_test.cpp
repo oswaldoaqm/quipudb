@@ -343,6 +343,49 @@ TEST_F(SpimiBloques, LasListasDuplicanSuCapacidad) {
   EXPECT_EQ(spimi.peak_memory(), kSpimiEntryOverhead + 3 + 16 * sizeof(Posting));
 }
 
+TEST_F(SpimiBloques, ReportaLoQueCostoLaConstruccion) {
+  const auto docs = corpus(150);
+  SpimiIndexer spimi(TokenizerOptions{}, SpimiOptions{.memory_budget = 4096, .dir = dir_});
+  for (std::size_t i = 0; i < docs.size(); ++i) {
+    spimi.add_document(static_cast<DocId>(i + 1), docs[i]);
+  }
+  spimi.finish();
+
+  std::uint64_t paginas = 0;
+  for (const auto& b : spimi.blocks()) paginas += DiskManager(b).page_count();
+
+  std::uint64_t postings = 0;
+  for (const auto& [termino, lista] : oraculo(docs, TokenizerOptions{})) postings += lista.size();
+
+  EXPECT_EQ(spimi.blocks_written(), spimi.blocks().size());
+  EXPECT_GT(spimi.blocks_written(), 1U);
+  EXPECT_EQ(spimi.stats().pages_written, paginas);
+  EXPECT_EQ(spimi.stats().pages_read, 0U);  // una sola pasada: no relee nada
+  EXPECT_EQ(spimi.stats().records_examined, docs.size());
+  EXPECT_EQ(spimi.stats().records_returned, postings);
+}
+
+TEST_F(SpimiBloques, ElLectorLeeCadaPaginaUnaSolaVez) {
+  // Paginas chicas para que el bloque ocupe varias.
+  constexpr std::size_t kPagina = 256;
+  const auto docs = corpus(60);
+  SpimiIndexer spimi(TokenizerOptions{}, SpimiOptions{.page_size = kPagina, .dir = dir_});
+  for (std::size_t i = 0; i < docs.size(); ++i) {
+    spimi.add_document(static_cast<DocId>(i + 1), docs[i]);
+  }
+  spimi.finish();
+  ASSERT_EQ(spimi.blocks().size(), 1U);
+  const PageId paginas = DiskManager(spimi.blocks()[0], kPagina).page_count();
+  ASSERT_GT(paginas, 10U);
+
+  SpimiBlockReader lector(spimi.blocks()[0], kPagina);
+  PostingEntry e;
+  while (lector.next(e)) {
+  }
+  EXPECT_EQ(lector.stats().pages_read, paginas);
+  EXPECT_EQ(lector.stats().records_returned, lector.entries());
+}
+
 TEST_F(SpimiBloques, ElLectorPideElMismoTamanoDePagina) {
   SpimiIndexer spimi(sin_stemmer(), opciones(512));
   spimi.add_document(1, "sol");
