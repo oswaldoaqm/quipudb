@@ -315,6 +315,40 @@ def test_no_sobrescribe_ejecuciones(control, datasets, tmp_path):
     assert all(ruta.read_bytes() == contenido for ruta, contenido in originales.items())
 
 
+def _caso_que_anota(valores):
+    """Un caso que agrega a su configuracion algo que solo sabe al ejecutar."""
+    siguiente = iter(valores)
+
+    @contextmanager
+    def preparar(directorio, dataset):
+        configuracion = {"tipo": "solo_prueba_unitaria"}
+
+        def ejecutar():
+            configuracion["bloques"] = next(siguiente)
+
+        yield banco.Operacion(
+            1, ejecutar, lambda: None, lambda: (0, 0), lambda: (0, 0), lambda: None, configuracion
+        )
+
+    return banco.Caso("anota", "ficticia", "construccion", preparar)
+
+
+def test_la_configuracion_puede_anotar_lo_que_se_sabe_al_terminar(datasets, tmp_path, monkeypatch):
+    monkeypatch.setattr(banco, "registrar_entorno", lambda: {"prueba_unitaria": True})
+    rutas = banco.ejecutar_banco(
+        [_caso_que_anota([7, 7, 7])], [datasets[1000]], salida=tmp_path, repeticiones=2
+    )
+    _, filas = leer_csv(rutas["entorno"])
+    entorno = {fila["clave"]: fila["valor"] for fila in filas}
+    assert entorno["caso.anota.1000.bloques"] == "7"
+
+    # Y si lo anotado cambia entre repeticiones, no es configuracion.
+    with pytest.raises(ValueError, match="cambio entre repeticiones"):
+        banco.ejecutar_banco(
+            [_caso_que_anota([7, 8])], [datasets[1000]], salida=tmp_path, repeticiones=2
+        )
+
+
 @pytest.mark.parametrize("opciones", [{"calentamientos": -1}, {"repeticiones": 0}])
 def test_rechaza_configuracion_invalida(control, datasets, tmp_path, opciones):
     with pytest.raises(ValueError, match="calentamientos.*repeticiones"):
