@@ -44,7 +44,12 @@ from engine.parser import (
     TableRef,
     parse_sql_script,
 )
-from engine.parser.bound_ast import BoundSchema, BoundSelectStatement
+from engine.parser.bound_ast import (
+    BoundMatchCondition,
+    BoundSchema,
+    BoundSelectStatement,
+    BoundTableRef,
+)
 from engine.parser.semantic import (
     bind_create_index,
     bind_create_table,
@@ -61,7 +66,7 @@ from engine.planner.optimizer import (
     optimize_delete,
     optimize_select,
 )
-from engine.planner.plan import Plan
+from engine.planner.plan import Plan, Structure
 from engine.transactions import (
     DEFAULT_LOCK_TIMEOUT,
     LockManager,
@@ -583,8 +588,41 @@ class QueryProcessor:
             metadata[referencia.table.name] = from_native_table_info(table_info, rows=filas)
 
         bound = bind_select(statement, esquemas, source)
+        self._require_text_index(bound, metadata, source)
         physical_plan = optimize_select(bound, metadata)
         return bound, physical_plan, referencias, esquemas
+
+    @staticmethod
+    def _require_text_index(
+        bound: BoundSelectStatement,
+        metadata: dict[str, TableMetadata],
+        source: str,
+    ) -> None:
+        """MATCH necesita un indice de texto sobre su columna (#168).
+
+        No hay alternativa que recorra y filtre: sin el corpus indexado no hay
+        df, ni N, ni ranking. El error apunta a la columna, que es lo que hay
+        que indexar.
+        """
+
+        where = bound.where
+        if not isinstance(where, BoundMatchCondition):
+            return
+        if not isinstance(bound.source, BoundTableRef):  # protegido por bind_select
+            raise TypeError("MATCH sobre un JOIN no deberia llegar al planner")
+        tabla = bound.source.schema.table_name
+        columna = where.column.column.name
+        if any(
+            index.structure is Structure.INVERTED_INDEX and index.column == where.column.index
+            for index in metadata[tabla].indexes
+        ):
+            return
+        raise SQLSemanticError(
+            f"la columna {columna!r} no tiene un indice de texto; crealo con "
+            f"CREATE INDEX ... ON {tabla} ({columna}) USING FULLTEXT",
+            where.column.span,
+            source,
+        )
 
     def _explain(
         self,

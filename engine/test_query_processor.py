@@ -5,7 +5,7 @@ from datetime import date
 import pytest
 
 from engine.executor import QueryProcessor, QueryResult
-from engine.parser import SQLSemanticError, SqlTypeName
+from engine.parser import SQLParseError, SQLSemanticError, SqlTypeName
 from engine.transactions import TransactionError
 
 quipudb = pytest.importorskip(
@@ -976,3 +976,167 @@ def test_drop_table_borra_el_indice_de_texto_y_su_marca(db, tmp_path):
     processor.execute("DROP TABLE docs")
 
     assert sorted(p.name for p in tmp_path.iterdir()) == ["catalogo.txt"]
+
+
+# ---------------------------------------------------------------------------
+# MATCH ... USING TF_IDF | BM25 (#168)
+# ---------------------------------------------------------------------------
+
+_CORPUS = (
+    "INSERT INTO arts VALUES (1, 'ana', 'Cargamento de oro dañado por el fuego');"
+    "INSERT INTO arts VALUES (2, 'ana', 'La entrega de la plata llegó en el camión color plata');"
+    "INSERT INTO arts VALUES (3, 'luis', 'El cargamento de oro llegó en un camión');"
+    "INSERT INTO arts VALUES (4, 'luis', 'Bases de datos vectoriales y búsqueda de texto');"
+    "INSERT INTO arts VALUES (5, 'eva', 'El índice invertido acelera la búsqueda en bases de datos')"
+)
+
+
+def _arts(db) -> QueryProcessor:
+    processor = QueryProcessor(db)
+    processor.execute(
+        "CREATE TABLE arts (id INT PRIMARY KEY, autor VARCHAR(20), texto VARCHAR(160)) USING HEAP"
+    )
+    processor.execute(_CORPUS)
+    processor.execute("CREATE INDEX por_texto ON arts (texto) USING FULLTEXT")
+    return processor
+
+
+def _ranking_nativo(db, consulta: str, ranking) -> list[int]:
+    """El orden que da el indice directamente, sin pasar por SQL."""
+
+    tabla = db.table("arts")
+    resultado = db.index("arts", "por_texto").search_text(consulta, ranking)
+    return [tabla.read(rid)[0] for rid, _ in resultado]
+
+
+def test_match_la_consulta_del_enunciado(db):
+    processor = _arts(db)
+
+    result = processor.execute(
+        "SELECT * FROM arts WHERE MATCH(texto, 'base de datos vectorial') USING TF_IDF LIMIT 10"
+    )
+
+    # Los dos documentos sobre bases de datos, el que ademas dice "vectoriales" primero.
+    assert [row[0] for row in result.rows] == [4, 5]
+    assert result.rows[0] == (4, "luis", "Bases de datos vectoriales y búsqueda de texto")
+    assert [row[0] for row in result.rows] == _ranking_nativo(
+        db, "base de datos vectorial", quipudb.TextRanking.TF_IDF
+    )
+
+
+@pytest.mark.parametrize("ranking", ["TF_IDF", "BM25"])
+def test_match_sigue_el_orden_del_ranking_elegido(db, ranking):
+    processor = _arts(db)
+
+    result = processor.execute(f"SELECT id FROM arts WHERE MATCH(texto, 'oro camión') USING {ranking}")
+
+    assert [row[0] for row in result.rows] == _ranking_nativo(
+        db, "oro camión", getattr(quipudb.TextRanking, ranking)
+    )
+    assert sorted(row[0] for row in result.rows) == [1, 2, 3]
+
+
+def test_sin_using_el_ranking_es_bm25(db):
+    processor = _arts(db)
+
+    sin_using = processor.execute("SELECT id FROM arts WHERE MATCH(texto, 'oro plata camión')")
+    con_bm25 = processor.execute(
+        "SELECT id FROM arts WHERE MATCH(texto, 'oro plata camión') USING BM25"
+    )
+
+    assert sin_using.rows == con_bm25.rows
+
+
+def test_limit_corta_y_sin_limit_salen_todos(db):
+    processor = _arts(db)
+
+    todos = processor.execute("SELECT id FROM arts WHERE MATCH(texto, 'oro camión')").rows
+    dos = processor.execute("SELECT id FROM arts WHERE MATCH(texto, 'oro camión') LIMIT 2").rows
+    ninguno = processor.execute("SELECT id FROM arts WHERE MATCH(texto, 'helicóptero')").rows
+
+    assert len(todos) == 3
+    assert dos == todos[:2]
+    assert ninguno == ()
+
+
+def test_match_proyecta_columnas(db):
+    processor = _arts(db)
+
+    result = processor.execute(
+        "SELECT autor FROM arts WHERE MATCH(texto, 'índice invertido') USING BM25 LIMIT 1"
+    )
+
+    assert result.columns == ("autor",)
+    assert result.rows == (("eva",),)
+
+
+def test_match_con_order_by_trae_todos_y_ordena(db):
+    processor = _arts(db)
+
+    result = processor.execute(
+        "SELECT id FROM arts WHERE MATCH(texto, 'oro camión') ORDER BY id DESC LIMIT 2"
+    )
+
+    assert result.rows == ((3,), (2,))
+
+
+def test_match_con_group_by(db):
+    processor = _arts(db)
+
+    result = processor.execute(
+        "SELECT autor, COUNT(*) FROM arts WHERE MATCH(texto, 'oro camión') GROUP BY autor"
+    )
+
+    assert sorted(result.rows) == [("ana", 2), ("luis", 1)]
+
+
+def test_match_queda_en_el_plan(db):
+    processor = _arts(db)
+
+    result = processor.execute("SELECT id FROM arts WHERE MATCH(texto, 'oro') USING TF_IDF")
+    plan = result.plan.to_dict()
+    explicado = processor.execute("EXPLAIN SELECT id FROM arts WHERE MATCH(texto, 'oro')")
+
+    assert "text_search" in str(plan)
+    assert "inverted_index" in str(plan)
+    assert "text_search" in str(explicado.plan.to_dict())
+
+
+def test_match_ve_las_filas_insertadas_despues_de_crear_el_indice(db):
+    processor = _arts(db)
+    processor.execute("INSERT INTO arts VALUES (6, 'eva', 'Una mina de oro en la sierra')")
+
+    result = processor.execute("SELECT id FROM arts WHERE MATCH(texto, 'mina')")
+
+    assert result.rows == ((6,),)
+
+
+def test_match_sin_indice_de_texto_es_error_ubicado(db):
+    processor = _arts(db)
+    sql = "SELECT id FROM arts WHERE MATCH(autor, 'ana')"
+
+    with pytest.raises(SQLSemanticError, match="no tiene un indice de texto") as caught:
+        processor.execute(sql)
+
+    assert sql[caught.value.span.start : caught.value.span.end] == "autor"
+    assert (caught.value.span.line, caught.value.span.column) == (1, 33)
+
+
+def test_match_sobre_columna_que_no_es_texto_es_error_ubicado(db):
+    processor = _arts(db)
+    sql = "SELECT id FROM arts WHERE MATCH(id, 'ana')"
+
+    with pytest.raises(SQLSemanticError, match="VARCHAR") as caught:
+        processor.execute(sql)
+
+    assert sql[caught.value.span.start : caught.value.span.end] == "id"
+
+
+def test_match_con_ranking_desconocido_es_error_de_sintaxis(db):
+    processor = _arts(db)
+    sql = "SELECT id FROM arts\nWHERE MATCH(texto, 'oro') USING COSENO"
+
+    with pytest.raises(SQLParseError, match="TF_IDF o BM25") as caught:
+        processor.execute(sql)
+
+    assert (caught.value.span.line, caught.value.span.column) == (2, 33)

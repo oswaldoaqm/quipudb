@@ -12,6 +12,7 @@ from engine.parser.bound_ast import (
     BoundComparisonCondition,
     BoundCondition,
     BoundDistanceCondition,
+    BoundMatchCondition,
     BoundPolygonCondition,
     BoundValue,
     PointValue,
@@ -62,6 +63,10 @@ def range_values(condition: BoundCondition, native: Any) -> tuple[object, object
 def matches(row: tuple[BoundValue, ...], condition: BoundCondition) -> bool:
     """Evalua en memoria un predicado sobre una fila ya convertida."""
 
+    if isinstance(condition, BoundMatchCondition):
+        # No hay un "coincide" sin el corpus: que documentos coinciden y en que
+        # orden lo decide el indice de texto con sus estadisticas (#168).
+        raise TypeError("MATCH no se evalua en memoria: lo resuelve el indice de texto")
     value = row[condition.column.index]
     if isinstance(condition, BoundPolygonCondition):
         if not isinstance(value, PointValue):
@@ -96,6 +101,24 @@ def spatial_search_args(condition: BoundCondition, native: Any) -> tuple[object,
         raise TypeError("una busqueda por radio necesita DISTANCIA")
     metric = native_metric(condition.metric, native)
     return to_native_value(condition.center, native), condition.radius, metric
+
+
+def text_search_args(
+    condition: BoundCondition,
+    native: Any,
+    limit: int | None,
+) -> tuple[str, Any, int]:
+    """Traduce MATCH a los argumentos de ``TextIndex.search_text`` (#168).
+
+    ``limit`` es el top-k que el optimizador bajo al indice, o ``None`` para
+    pedir todos los documentos que coinciden.
+    """
+
+    if not isinstance(condition, BoundMatchCondition):
+        raise TypeError("una busqueda de texto necesita MATCH")
+    ranking = getattr(native.TextRanking, condition.ranking.value)
+    k = native.ALL_RESULTS if limit is None else limit
+    return condition.query, ranking, k
 
 
 def polygon_search_args(condition: BoundCondition, native: Any) -> list[object]:
