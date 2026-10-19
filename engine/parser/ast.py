@@ -130,7 +130,15 @@ class AggregateCall:
     span: Span
 
 
-Projection: TypeAlias = Wildcard | ColumnReference | AggregateCall
+@dataclass(frozen=True, slots=True)
+class ScoreCall:
+    """``SCORE() [AS alias]``: el puntaje de MATCH de cada fila (#169)."""
+
+    alias: Identifier | None
+    span: Span
+
+
+Projection: TypeAlias = Wildcard | ColumnReference | AggregateCall | ScoreCall
 
 
 class ComparisonOperator(StrEnum):
@@ -229,6 +237,19 @@ class OrderBy:
 
 
 @dataclass(frozen=True, slots=True)
+class ScoreOrderBy:
+    """``ORDER BY SCORE() [ASC | DESC]`` (#169).
+
+    ``ORDER BY alias`` llega como ``OrderBy`` sobre una columna con ese nombre:
+    la semantica lo reconoce como el puntaje si coincide con el alias de
+    ``SCORE()``.
+    """
+
+    direction: OrderDirection
+    span: Span
+
+
+@dataclass(frozen=True, slots=True)
 class DistanceOrderBy:
     column: ColumnReference
     center: PointLiteral
@@ -307,7 +328,7 @@ class SelectStatement:
     source: FromSource
     where: Condition | None
     group_by: GroupBy | None
-    order_by: OrderBy | DistanceOrderBy | None
+    order_by: OrderBy | DistanceOrderBy | ScoreOrderBy | None
     span: Span
     limit: Limit | None = None
 

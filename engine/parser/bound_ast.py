@@ -123,6 +123,29 @@ BoundProjection: TypeAlias = BoundColumnReference | BoundAggregateCall
 
 
 @dataclass(frozen=True, slots=True)
+class BoundScoreProjection:
+    """``SCORE()`` resuelto (#169): el nombre de la columna y donde va.
+
+    No esta en ``projections`` a proposito: todo lo que recorre las
+    proyecciones supone columnas o agregados de la tabla, y el puntaje no sale
+    de la tabla sino del indice de texto. ``position`` es su lugar entre las
+    columnas de salida (con ``*``, despues de todas las de la tabla).
+    """
+
+    name: str
+    position: int
+    span: Span
+
+
+@dataclass(frozen=True, slots=True)
+class BoundScoreOrderBy:
+    """``ORDER BY`` sobre el puntaje: el alias de ``SCORE()`` o ``SCORE()`` (#169)."""
+
+    direction: OrderDirection
+    span: Span
+
+
+@dataclass(frozen=True, slots=True)
 class BoundGroupBy:
     """Unica clave de agrupacion resuelta contra el esquema de entrada."""
 
@@ -283,6 +306,11 @@ class BoundSelectStatement:
     group_by: BoundGroupBy | None = None
     order_by: BoundOrderBy | BoundDistanceOrderBy | None = None
     limit: int | None = None
+    score: BoundScoreProjection | None = None
+    """``SCORE()`` en la proyeccion (#169). Solo con ``MATCH`` en el WHERE."""
+    score_order: BoundScoreOrderBy | None = None
+    """``ORDER BY`` sobre el puntaje (#169). Va aparte de ``order_by`` porque no
+    usa el External Sorting: el indice ya entrega los documentos por relevancia."""
 
     @property
     def schema(self) -> BoundSchema:
@@ -335,6 +363,8 @@ __all__ = [
     "BoundPolygonCondition",
     "BoundProjection",
     "BoundSchema",
+    "BoundScoreOrderBy",
+    "BoundScoreProjection",
     "BoundSelectStatement",
     "BoundSource",
     "BoundTableRef",
