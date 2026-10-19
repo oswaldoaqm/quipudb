@@ -1,37 +1,16 @@
 #include "quipudb/index/spimi.hpp"
 
 #include <algorithm>
-#include <cstring>
 #include <span>
 #include <string>
 #include <system_error>
 #include <utility>
 
 #include "../external/temporales.hpp"
-#include "flujo_paginas.hpp"
 #include "quipudb/error.hpp"
+#include "spimi_bloque.hpp"
 
 namespace quipudb {
-namespace {
-
-/// Lo que va en el area meta de un bloque. Sin la cantidad de bytes, el
-/// lector no sabria donde termina la ultima pagina, que casi siempre queda a
-/// medias.
-struct MetaBloque {
-  char magic[4] = {'S', 'P', 'M', 'B'};
-  std::uint16_t version = 1;
-  std::uint16_t reservado = 0;
-  std::uint64_t entradas = 0;
-  std::uint64_t postings = 0;
-  std::uint64_t bytes = 0;
-};
-static_assert(sizeof(MetaBloque) <= DiskManager::kMetaSize);
-static_assert(sizeof(Posting) == 8, "los postings se escriben como bytes crudos");
-
-constexpr char kMagic[4] = {'S', 'P', 'M', 'B'};
-constexpr std::uint16_t kVersion = 1;
-
-}  // namespace
 
 // ---------------------------------------------------------------------------
 // SpimiIndexer
@@ -154,27 +133,9 @@ void SpimiIndexer::volcar_bloque() {
 
   const auto ruta = options_.dir / ("quipudb_spimi_" + detail::etiqueta_unica() + "_" +
                                     std::to_string(bloques_.size()) + ".blk");
-  {
-    DiskManager disco(ruta, options_.page_size);
-    detail::EscritorDePaginas escritor(disco);
-    MetaBloque meta;
-    for (const auto* entrada : orden) {
-      const std::string& termino = entrada->first;
-      const std::vector<Posting>& postings = entrada->second;
-      escritor.escribir(static_cast<std::uint16_t>(termino.size()));
-      escritor.escribir(std::as_bytes(std::span(termino.data(), termino.size())));
-      escritor.escribir(static_cast<std::uint32_t>(postings.size()));
-      escritor.escribir(std::as_bytes(std::span(postings)));
-      ++meta.entradas;
-      meta.postings += postings.size();
-    }
-    escritor.cerrar();
-    meta.bytes = escritor.bytes();
-    disco.write_meta(std::as_bytes(std::span<const MetaBloque, 1>(&meta, 1)));
-    disco.flush();
-    stats_.pages_written += disco.writes();
-    stats_.records_returned += meta.postings;
-  }
+  detail::EscritorDeBloque bloque(ruta, options_.page_size);
+  for (const auto* entrada : orden) bloque.agregar(entrada->first, entrada->second);
+  stats_ += bloque.cerrar();
   bloques_.push_back(ruta);
   diccionario_.clear();
   usado_ = 0;
@@ -186,32 +147,15 @@ void SpimiIndexer::volcar_bloque() {
 
 class SpimiBlockReader::Impl {
  public:
-  Impl(const std::filesystem::path& path, std::size_t page_size, const MetaBloque& meta)
-      : disco(path, page_size), lector(disco, meta.bytes) {}
+  Impl(const std::filesystem::path& path, std::size_t page_size, const detail::MetaBloque& meta)
+      : disco(path, page_size), lector(disco, {meta.primera, 0}, meta.bytes) {}
 
   DiskManager disco;
   detail::LectorDePaginas lector;
 };
 
 SpimiBlockReader::SpimiBlockReader(const std::filesystem::path& path, std::size_t page_size) {
-  // DiskManager CREA el archivo si no existe; un bloque que falta es un error,
-  // no un bloque vacio.
-  if (!std::filesystem::exists(path)) {
-    throw IoError("SPIMI: no existe el bloque " + path.string());
-  }
-  MetaBloque meta;
-  {
-    DiskManager disco(path, page_size);
-    disco.read_meta(std::as_writable_bytes(std::span<MetaBloque, 1>(&meta, 1)));
-  }
-  if (std::memcmp(meta.magic, kMagic, sizeof kMagic) != 0) {
-    throw IoError("SPIMI: " + path.string() + " no es un bloque de SPIMI");
-  }
-  if (meta.version != kVersion) {
-    throw IoError("SPIMI: el bloque " + path.string() + " es de la version " +
-                  std::to_string(meta.version) + " del formato; se esperaba la " +
-                  std::to_string(kVersion));
-  }
+  const detail::MetaBloque meta = detail::leer_meta_bloque(path, page_size);
   entradas_ = meta.entradas;
   impl_ = std::make_unique<Impl>(path, page_size, meta);
 }
