@@ -57,6 +57,8 @@ _KEYWORDS = {
         TokenKind.MATCH,
         TokenKind.TF_IDF,
         TokenKind.BM25,
+        TokenKind.SCORE,
+        TokenKind.AS,
         TokenKind.HAVERSINE,
         TokenKind.EUCLIDEAN,
         TokenKind.INT,

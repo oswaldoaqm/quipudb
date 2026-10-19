@@ -55,6 +55,8 @@ KEYWORDS = (
     ("match", TokenKind.MATCH),
     ("tf_idf", TokenKind.TF_IDF),
     ("bm25", TokenKind.BM25),
+    ("score", TokenKind.SCORE),
+    ("as", TokenKind.AS),
     ("haversine", TokenKind.HAVERSINE),
     ("euclidean", TokenKind.EUCLIDEAN),
     ("int", TokenKind.INT),

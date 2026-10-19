@@ -28,8 +28,11 @@ from engine.parser.ast import (
     IntegerLiteral,
     Literal,
     MatchCondition,
+    OrderBy,
     PointLiteral,
     PolygonCondition,
+    ScoreCall,
+    ScoreOrderBy,
     SelectStatement,
     SqlTypeName,
     StorageKind,
@@ -58,6 +61,8 @@ from engine.parser.bound_ast import (
     BoundPolygonCondition,
     BoundProjection,
     BoundSchema,
+    BoundScoreOrderBy,
+    BoundScoreProjection,
     BoundSelectStatement,
     BoundSource,
     BoundTableRef,
@@ -343,10 +348,18 @@ def bind_select(
     if not statement.projections:
         _fail("SELECT requiere al menos una proyeccion", statement.span, source)
 
+    # SCORE() (#169) no es una columna de la tabla: se separa aqui y todo lo
+    # demas trabaja con las proyecciones de siempre.
+    score_calls = [p for p in statement.projections if isinstance(p, ScoreCall)]
+    if len(score_calls) > 1:
+        _fail("SCORE() solo puede aparecer una vez", score_calls[1].span, source)
+    score_call = score_calls[0] if score_calls else None
+    table_projections = tuple(p for p in statement.projections if not isinstance(p, ScoreCall))
+
     first_aggregate = next(
         (
             projection
-            for projection in statement.projections
+            for projection in table_projections
             if isinstance(projection, AggregateCall)
         ),
         None,
@@ -365,12 +378,12 @@ def bind_select(
             statement.group_by.span,
         )
 
-    wildcard = any(isinstance(projection, Wildcard) for projection in statement.projections)
+    wildcard = any(isinstance(projection, Wildcard) for projection in table_projections)
     if wildcard:
-        if len(statement.projections) != 1:
+        if len(table_projections) != 1:
             wildcard_projection = next(
                 projection
-                for projection in statement.projections
+                for projection in table_projections
                 if isinstance(projection, Wildcard)
             )
             _fail(
@@ -381,17 +394,17 @@ def bind_select(
         if group_by is not None:
             _fail(
                 "'*' no se admite en una consulta con GROUP BY",
-                statement.projections[0].span,
+                table_projections[0].span,
                 source,
             )
-        wildcard_span = statement.projections[0].span
+        wildcard_span = table_projections[0].span
         projections: tuple[BoundProjection, ...] = tuple(
             BoundColumnReference(index, column, wildcard_span)
             for index, column in enumerate(schema.columns)
         )
     else:
         projections = tuple(
-            _bind_projection(projection, scope, source) for projection in statement.projections
+            _bind_projection(projection, scope, source) for projection in table_projections
         )
 
     if group_by is not None:
@@ -413,7 +426,20 @@ def bind_select(
                 )
 
     order_by = None
-    if statement.order_by is not None:
+    score_order = None
+    if isinstance(statement.order_by, ScoreOrderBy):
+        score_order = BoundScoreOrderBy(statement.order_by.direction, statement.order_by.span)
+    elif (
+        isinstance(statement.order_by, OrderBy)
+        and score_call is not None
+        and score_call.alias is not None
+        and statement.order_by.column.qualifier is None
+        and statement.order_by.column.name.name == score_call.alias.name
+    ):
+        # El alias de SCORE() gana sobre una columna con el mismo nombre: es lo
+        # que ORDER BY hace con los alias de la proyeccion en SQL.
+        score_order = BoundScoreOrderBy(statement.order_by.direction, statement.order_by.span)
+    elif statement.order_by is not None:
         order_column = _resolve_column(statement.order_by.column, scope, source)
         if group_by is not None and order_column.index != group_by.column.index:
             _fail(
@@ -462,6 +488,19 @@ def bind_select(
         ):
             _fail("LIMIT requiere un entero no negativo", statement.limit.span, source)
         limit = statement.limit.value
+
+    score = None
+    if score_call is not None or score_order is not None:
+        _validate_score(score_call, score_order, statement, where, group_by, order_by, source)
+    if score_call is not None:
+        posicion = 0
+        for projection in statement.projections:
+            if projection is score_call:
+                break
+            posicion += len(schema.columns) if isinstance(projection, Wildcard) else 1
+        nombre = score_call.alias.name if score_call.alias is not None else "score"
+        score = BoundScoreProjection(nombre, posicion, score_call.span)
+
     return BoundSelectStatement(
         source=bound_source,
         projections=projections,
@@ -471,7 +510,45 @@ def bind_select(
         order_by=order_by,
         limit=limit,
         span=statement.span,
+        score=score,
+        score_order=score_order,
     )
+
+
+def _validate_score(
+    score_call: ScoreCall | None,
+    score_order: BoundScoreOrderBy | None,
+    statement: SelectStatement,
+    where: BoundCondition | None,
+    group_by: BoundGroupBy | None,
+    order_by: BoundOrderBy | BoundDistanceOrderBy | None,
+    source: str | None,
+) -> None:
+    """Donde tiene sentido el puntaje de MATCH (#169)."""
+
+    span = score_call.span if score_call is not None else score_order.span  # type: ignore[union-attr]
+    if not isinstance(where, BoundMatchCondition):
+        _fail(
+            "SCORE() es el puntaje de MATCH: la consulta necesita MATCH en el WHERE",
+            span,
+            source,
+        )
+    if group_by is not None:
+        raise SQLUnsupportedError(
+            "SCORE() con GROUP BY no esta soportado: el puntaje es de cada documento, "
+            "no de un grupo",
+            span,
+            source,
+        )
+    if order_by is not None:
+        assert statement.order_by is not None
+        raise SQLUnsupportedError(
+            "SCORE() con ORDER BY sobre otra columna no esta soportado: el External "
+            "Sorting ordena registros de la tabla y el puntaje no viaja con ellos. "
+            "Ordena por el puntaje, o quita SCORE()",
+            statement.order_by.span,
+            source,
+        )
 
 
 def bind_delete(

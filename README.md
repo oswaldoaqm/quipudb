@@ -480,6 +480,20 @@ igual que los documentos: mayúsculas, tildes, stopwords y plurales no
 importan. `MATCH` exige un índice de texto sobre la columna, se combina con
 `ORDER BY` y `GROUP BY`, y no se admite en `DELETE` ni con `JOIN`.
 
+`SCORE()` devuelve el puntaje de cada fila como una columna `DOUBLE`, con el
+alias que se le dé (`score` si no lleva), y se puede ordenar por él:
+
+```sql
+SELECT *, SCORE() as relevancia FROM articulos
+WHERE MATCH(texto, 'machine learning') USING BM25
+ORDER BY relevancia DESC;
+```
+
+`ORDER BY relevancia` (o `ORDER BY SCORE()`) no usa external sorting: el índice
+ya entrega los documentos de mayor a menor puntaje, así que `DESC` es ese
+orden y `ASC` su inverso. `SCORE()` necesita `MATCH` en el `WHERE` y no se
+combina con `GROUP BY` ni con un `ORDER BY` sobre otra columna.
+
 ### API REST
 
 | Ruta | Qué hace |

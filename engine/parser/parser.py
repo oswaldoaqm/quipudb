@@ -42,6 +42,8 @@ from engine.parser.ast import (
     PolygonCondition,
     PolygonLiteral,
     Projection,
+    ScoreCall,
+    ScoreOrderBy,
     SelectStatement,
     SqlType,
     SqlTypeName,
@@ -418,13 +420,17 @@ class _Parser:
 
     def _projection_list(self) -> list[Projection]:
         if self._match(TokenKind.STAR):
-            wildcard = Wildcard(self._previous().span)
-            if self._check(TokenKind.COMMA):
-                raise self._error(
-                    self._peek(),
-                    "'*' no se puede combinar con otras proyecciones",
-                )
-            return [wildcard]
+            projections: list[Projection] = [Wildcard(self._previous().span)]
+            # `*, SCORE() AS relevancia` es la consulta del enunciado (#169): el
+            # puntaje es lo unico que no esta en la tabla y se puede sumar a `*`.
+            while self._match(TokenKind.COMMA):
+                if not self._match(TokenKind.SCORE):
+                    raise self._error(
+                        self._peek(),
+                        "'*' no se puede combinar con otras proyecciones, salvo SCORE()",
+                    )
+                projections.append(self._score_call(self._previous()))
+            return projections
 
         projections = [self._projection()]
         while self._match(TokenKind.COMMA):
@@ -432,9 +438,24 @@ class _Parser:
         return projections
 
     def _projection(self) -> Projection:
+        if self._match(TokenKind.SCORE):
+            return self._score_call(self._previous())
         if self._peek().kind in _AGGREGATES:
             return self._aggregate()
         return self._column_reference("se esperaba una columna o funcion de agregado")
+
+    def _score_call(self, start: Token) -> ScoreCall:
+        """``SCORE() [AS alias]`` (#169)."""
+
+        self._expect(TokenKind.LPAREN, "se esperaba '(' despues de SCORE")
+        end = self._expect(TokenKind.RPAREN, "SCORE() no recibe argumentos")
+        alias = None
+        if self._match(TokenKind.AS):
+            alias = self._identifier("se esperaba un nombre despues de AS")
+            end_span = alias.span
+        else:
+            end_span = end.span
+        return ScoreCall(alias, combine_spans(start.span, end_span))
 
     def _aggregate(self) -> AggregateCall:
         function_token = self._advance()
@@ -472,8 +493,18 @@ class _Parser:
         column = self._column_reference("se esperaba una columna despues de GROUP BY")
         return GroupBy(column, combine_spans(start.span, column.span))
 
-    def _order_by(self, start: Token) -> OrderBy | DistanceOrderBy:
+    def _order_by(self, start: Token) -> OrderBy | DistanceOrderBy | ScoreOrderBy:
         self._expect(TokenKind.BY, "se esperaba BY despues de ORDER")
+        if self._match(TokenKind.SCORE):
+            self._expect(TokenKind.LPAREN, "se esperaba '(' despues de SCORE")
+            end_span = self._expect(TokenKind.RPAREN, "SCORE() no recibe argumentos").span
+            score_direction = OrderDirection.ASC
+            if self._match(TokenKind.ASC):
+                end_span = self._previous().span
+            elif self._match(TokenKind.DESC):
+                score_direction = OrderDirection.DESC
+                end_span = self._previous().span
+            return ScoreOrderBy(score_direction, combine_spans(start.span, end_span))
         spatial = self._match(TokenKind.DISTANCIA)
         if spatial:
             column, center, metric = self._distance_arguments()

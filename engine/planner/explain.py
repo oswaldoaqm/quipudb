@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from engine.parser.ast import AggregateFunction
+from engine.parser.ast import AggregateFunction, OrderDirection
 from engine.parser.bound_ast import (
     BoundAggregateCall,
     BoundColumnReference,
@@ -78,7 +78,16 @@ def explain_select(
             children=[root],
         )
 
-    if statement.group_by is not None or not statement.wildcard:
+    if statement.score_order is not None:
+        root = Step(
+            op=Op.SORT,
+            structure=Structure.MEMORY,
+            table=statement.schema.table_name,
+            detail=_score_order_detail(statement),
+            children=[root],
+        )
+
+    if statement.group_by is not None or not statement.wildcard or statement.score is not None:
         root = Step(
             op=Op.PROJECT,
             structure=Structure.MEMORY,
@@ -235,7 +244,26 @@ def _projection_names(statement: BoundSelectStatement) -> list[str]:
             names.append(projection.column.name)
             continue
         names.append(_aggregate_name(projection))
+    if statement.score is not None:
+        names.insert(statement.score.position, f"{statement.score.name} (SCORE)")
     return names
+
+
+def score_order_detail(statement: BoundSelectStatement) -> str:
+    """El detalle del paso que ordena por el puntaje de MATCH (#169).
+
+    Lo comparten EXPLAIN y la ejecucion, para que los dos planes digan lo mismo.
+    """
+
+    order = statement.score_order
+    if order is None:
+        raise ValueError("no hay ORDER BY sobre el puntaje")
+    if order.direction is OrderDirection.DESC:
+        return "por relevancia DESC: el indice ya entrega este orden; sin external sort"
+    return "por relevancia ASC: invierte en memoria el orden del indice; sin external sort"
+
+
+_score_order_detail = score_order_detail
 
 
 def _aggregate_name(aggregate: BoundAggregateCall) -> str:

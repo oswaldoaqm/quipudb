@@ -1140,3 +1140,107 @@ def test_match_con_ranking_desconocido_es_error_de_sintaxis(db):
         processor.execute(sql)
 
     assert (caught.value.span.line, caught.value.span.column) == (2, 33)
+
+
+# ---------------------------------------------------------------------------
+# SCORE() y ORDER BY relevancia (#169)
+# ---------------------------------------------------------------------------
+
+
+def _puntajes_nativos(db, consulta: str, ranking) -> list[tuple[int, float]]:
+    """(id, puntaje) en el orden del indice, sin pasar por SQL."""
+
+    tabla = db.table("arts")
+    resultado = db.index("arts", "por_texto").search_text(consulta, ranking)
+    return [(tabla.read(rid)[0], score) for rid, score in resultado]
+
+
+@pytest.mark.parametrize("ranking", ["TF_IDF", "BM25"])
+def test_score_la_consulta_del_enunciado(db, ranking):
+    processor = _arts(db)
+
+    result = processor.execute(
+        f"SELECT *, SCORE() as relevancia FROM arts WHERE MATCH(texto, 'oro camión') "
+        f"USING {ranking} ORDER BY relevancia DESC"
+    )
+
+    assert result.columns == ("id", "autor", "texto", "relevancia")
+    assert result.column_types == (
+        SqlTypeName.INT,
+        SqlTypeName.VARCHAR,
+        SqlTypeName.VARCHAR,
+        SqlTypeName.DOUBLE,
+    )
+    esperado = _puntajes_nativos(db, "oro camión", getattr(quipudb.TextRanking, ranking))
+    assert [(row[0], row[3]) for row in result.rows] == esperado
+    puntajes = [row[3] for row in result.rows]
+    assert puntajes == sorted(puntajes, reverse=True)
+    assert all(p > 0 for p in puntajes)
+
+
+@pytest.mark.parametrize("ranking", ["TF_IDF", "BM25"])
+def test_order_by_relevancia_asc_invierte_el_orden(db, ranking):
+    processor = _arts(db)
+    desc = processor.execute(
+        f"SELECT id, SCORE() AS r FROM arts WHERE MATCH(texto, 'oro camión') USING {ranking} "
+        "ORDER BY r DESC"
+    ).rows
+
+    asc = processor.execute(
+        f"SELECT id, SCORE() AS r FROM arts WHERE MATCH(texto, 'oro camión') USING {ranking} "
+        "ORDER BY r ASC"
+    ).rows
+
+    assert asc == tuple(reversed(desc))
+    assert [r for _, r in asc] == sorted(r for _, r in asc)
+
+
+def test_order_by_score_sin_proyectarlo_y_con_limit(db):
+    processor = _arts(db)
+
+    top = processor.execute(
+        "SELECT id FROM arts WHERE MATCH(texto, 'oro camión') ORDER BY SCORE() DESC LIMIT 2"
+    ).rows
+    peores = processor.execute(
+        "SELECT id FROM arts WHERE MATCH(texto, 'oro camión') ORDER BY SCORE() ASC LIMIT 2"
+    ).rows
+
+    todos = [doc for doc, _ in _puntajes_nativos(db, "oro camión", quipudb.TextRanking.BM25)]
+    assert [row[0] for row in top] == todos[:2]
+    assert [row[0] for row in peores] == list(reversed(todos))[:2]
+
+
+def test_score_sin_alias_se_llama_score_y_respeta_su_lugar(db):
+    processor = _arts(db)
+
+    result = processor.execute(
+        "SELECT id, SCORE(), autor FROM arts WHERE MATCH(texto, 'índice') USING TF_IDF"
+    )
+
+    assert result.columns == ("id", "score", "autor")
+    assert result.rows[0][0] == 5
+    assert result.rows[0][2] == "eva"
+    assert isinstance(result.rows[0][1], float)
+
+
+def test_order_by_relevancia_no_usa_external_sort(db):
+    processor = _arts(db)
+
+    result = processor.execute(
+        "SELECT *, SCORE() AS relevancia FROM arts WHERE MATCH(texto, 'oro') "
+        "ORDER BY relevancia DESC"
+    )
+
+    plan = str(result.plan.to_dict())
+    assert "external_sort" not in plan
+    assert "sin external sort" in plan
+
+
+def test_score_sin_match_es_error_ubicado(db):
+    processor = _arts(db)
+    sql = "SELECT id, SCORE() FROM arts WHERE id = 1"
+
+    with pytest.raises(SQLSemanticError, match="necesita MATCH") as caught:
+        processor.execute(sql)
+
+    assert sql[caught.value.span.start : caught.value.span.end] == "SCORE()"

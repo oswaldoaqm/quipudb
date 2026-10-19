@@ -63,6 +63,8 @@ class TokenKind(StrEnum):
     MATCH = "MATCH"
     TF_IDF = "TF_IDF"
     BM25 = "BM25"
+    SCORE = "SCORE"
+    AS = "AS"
     HAVERSINE = "HAVERSINE"
     EUCLIDEAN = "EUCLIDEAN"
     INT = "INT"
