@@ -76,6 +76,8 @@ inline constexpr std::string_view kBPlusClustered = "bplus_clustered";
 inline constexpr std::string_view kBPlusUnclustered = "bplus_unclustered";
 inline constexpr std::string_view kExtendibleHash = "extendible_hash";
 inline constexpr std::string_view kRTree = "rtree";
+/// Indice invertido de texto (#166): SPIMI con rankings TF-IDF y BM25.
+inline constexpr std::string_view kInvertedIndex = "inverted_index";
 }  // namespace kind
 
 // ---------------------------------------------------------------------------

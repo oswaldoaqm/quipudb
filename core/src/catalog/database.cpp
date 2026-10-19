@@ -7,6 +7,7 @@
 #include "quipudb/index/bplus_unclustered_index.hpp"
 #include "quipudb/index/extendible_hash_index.hpp"
 #include "quipudb/index/rtree_index.hpp"
+#include "quipudb/index/text_index.hpp"
 #include "quipudb/storage/heap_file.hpp"
 #include "quipudb/storage/sequential_file.hpp"
 
@@ -90,6 +91,14 @@ TableFile& Database::table(std::string_view name) {
 // Indices
 // ---------------------------------------------------------------------------
 
+std::vector<std::filesystem::path> Database::archivos_de(const IndexInfo& info) const {
+  std::vector<std::filesystem::path> rutas{catalog_.resolve(info.file)};
+  // El indice de texto guarda el mapeo de documentos a RIDs en un archivo
+  // aparte, que muere con el.
+  if (info.kind == kind::kInvertedIndex) rutas.push_back(TextIndex::rids_path(rutas.front()));
+  return rutas;
+}
+
 std::string Database::clave_indice(std::string_view table, std::string_view index_name) {
   return std::string(table) + "." + std::string(index_name);
 }
@@ -106,6 +115,9 @@ std::unique_ptr<Index> Database::abrir_indice(const TableInfo& tabla, const Inde
   }
   if (info.kind == kind::kRTree) {
     return std::make_unique<RTreeIndex>(ruta, col, datos, tabla.page_size);
+  }
+  if (info.kind == kind::kInvertedIndex) {
+    return std::make_unique<TextIndex>(ruta, col, datos, tabla.page_size);
   }
   throw Unsupported("el indice '" + info.name + "' de " + tabla.schema.table_name +
                     " es de tipo '" + info.kind + "', que no esta implementado");
@@ -127,6 +139,8 @@ Index& Database::create_index(std::string_view table, std::string_view index_nam
     h->build();
   } else if (auto* r = dynamic_cast<RTreeIndex*>(handle.get())) {
     r->build();
+  } else if (auto* t = dynamic_cast<TextIndex*>(handle.get())) {
+    t->build();
   }
   auto [it, _] = indices_.emplace(clave_indice(table, index_name), std::move(handle));
   return *it->second;
@@ -154,14 +168,16 @@ void Database::drop_index(std::string_view table, std::string_view index_name) {
     throw SchemaError("la tabla " + std::string(table) + " no tiene un indice llamado " +
                       std::string(index_name));
   }
-  const auto ruta = catalog_.resolve(info->file);
+  const auto rutas = archivos_de(*info);
   if (const auto it = indices_.find(clave_indice(table, index_name)); it != indices_.end()) {
     indices_.erase(it);  // soltar el archivo antes de borrarlo
   }
   catalog_.drop_index(table, index_name);
-  std::error_code ec;
-  std::filesystem::remove(ruta, ec);
-  if (ec) throw IoError("no se pudo borrar '" + ruta.string() + "': " + ec.message());
+  for (const auto& r : rutas) {
+    std::error_code ec;
+    std::filesystem::remove(r, ec);
+    if (ec) throw IoError("no se pudo borrar '" + r.string() + "': " + ec.message());
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -188,7 +204,9 @@ void Database::drop_table(std::string_view name) {
   const TableInfo& info = catalog_.table(name);
   std::vector<std::filesystem::path> rutas{catalog_.resolve(info.file)};
   // Los indices de una tabla mueren con ella: sus RID no apuntan a nada.
-  for (const auto& ix : info.indexes) rutas.push_back(catalog_.resolve(ix.file));
+  for (const auto& ix : info.indexes) {
+    for (const auto& r : archivos_de(ix)) rutas.push_back(r);
+  }
 
   close(name);  // hay que soltar los archivos antes de borrarlos
   catalog_.drop_table(name);
@@ -209,6 +227,8 @@ void Database::flush() {
       h->flush();
     } else if (auto* r = dynamic_cast<RTreeIndex*>(handle.get())) {
       r->flush();
+    } else if (auto* t = dynamic_cast<TextIndex*>(handle.get())) {
+      t->flush();
     }
   }
   for (auto& [nombre, handle] : abiertas_) {

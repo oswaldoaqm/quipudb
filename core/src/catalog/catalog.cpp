@@ -22,7 +22,8 @@ bool is_table_storage(std::string_view s) noexcept {
 }
 
 bool is_index_kind(std::string_view s) noexcept {
-  return s == kind::kBPlusUnclustered || s == kind::kExtendibleHash || s == kind::kRTree;
+  return s == kind::kBPlusUnclustered || s == kind::kExtendibleHash || s == kind::kRTree ||
+         s == kind::kInvertedIndex;
 }
 
 std::optional<DataType> parse_type(std::string_view s) noexcept {
@@ -186,12 +187,18 @@ IndexInfo Catalog::create_index(std::string_view table, std::string_view index_n
     throw SchemaError("'" + std::string(kind) + "' no es un indice secundario (" +
                       std::string(kind::kBPlusUnclustered) + ", " +
                       std::string(kind::kExtendibleHash) + ", " +
-                      std::string(kind::kRTree) + ")");
+                      std::string(kind::kRTree) + ", " + std::string(kind::kInvertedIndex) +
+                      ")");
   }
   const bool point_column = info.schema.columns[*col].type == DataType::Point;
   if (kind == kind::kRTree && !point_column) {
     throw SchemaError("la columna " + std::string(column) +
                       " no es POINT: un indice R-Tree requiere coordenadas");
+  }
+  const bool texto = info.schema.columns[*col].type == DataType::Varchar;
+  if (kind == kind::kInvertedIndex && !texto) {
+    throw SchemaError("la columna " + std::string(column) +
+                      " no es VARCHAR: un indice de texto requiere texto");
   }
   if (kind != kind::kRTree && point_column) {
     throw SchemaError("la columna " + std::string(column) +
