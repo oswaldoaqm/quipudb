@@ -14,6 +14,7 @@ from engine.parser.ast import (
     OrderDirection,
     SqlTypeName,
     StorageKind,
+    TextRanking,
 )
 from engine.parser.span import Span
 
@@ -190,11 +191,23 @@ class BoundPolygonCondition:
     span: Span
 
 
+@dataclass(frozen=True, slots=True)
+class BoundMatchCondition:
+    """``MATCH`` sobre una columna VARCHAR, con su ranking ya decidido (#168)."""
+
+    column: BoundColumnReference
+    query: str
+    ranking: TextRanking
+    ranking_explicit: bool
+    span: Span
+
+
 BoundCondition: TypeAlias = (
     BoundComparisonCondition
     | BoundBetweenCondition
     | BoundDistanceCondition
     | BoundPolygonCondition
+    | BoundMatchCondition
 )
 
 
@@ -317,6 +330,7 @@ __all__ = [
     "BoundGroupBy",
     "BoundInsertStatement",
     "BoundJoinRef",
+    "BoundMatchCondition",
     "BoundOrderBy",
     "BoundPolygonCondition",
     "BoundProjection",

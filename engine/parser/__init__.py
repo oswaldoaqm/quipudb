@@ -31,6 +31,7 @@ from engine.parser.ast import (
     JoinRef,
     Limit,
     Literal,
+    MatchCondition,
     OrderBy,
     OrderDirection,
     PointLiteral,
@@ -44,6 +45,7 @@ from engine.parser.ast import (
     StorageKind,
     StringLiteral,
     TableRef,
+    TextRanking,
     Wildcard,
 )
 from engine.parser.errors import (
@@ -89,6 +91,7 @@ __all__ = [
     "JoinRef",
     "Limit",
     "Literal",
+    "MatchCondition",
     "OrderBy",
     "OrderDirection",
     "PointLiteral",
@@ -108,6 +111,7 @@ __all__ = [
     "StorageKind",
     "StringLiteral",
     "TableRef",
+    "TextRanking",
     "Token",
     "TokenKind",
     "TokenValue",

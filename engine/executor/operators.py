@@ -21,6 +21,7 @@ from engine.executor.predicates import (
     polygon_search_args,
     range_values,
     spatial_search_args,
+    text_search_args,
 )
 from engine.parser.ast import SqlTypeName
 from engine.parser.bound_ast import (
@@ -440,6 +441,15 @@ def _read_candidates(
         vertices = polygon_search_args(condition, native)
         index_measurement = measure_native(index, lambda: index.search_polygon(vertices))
         index_op = Op.POLYGON_SEARCH
+    elif plan.route is AccessRoute.TEXT_SEARCH:
+        # Los RID salen por relevancia, de mayor a menor, y el fetch conserva
+        # ese orden: sin ORDER BY, es el orden del resultado.
+        query, ranking, k = text_search_args(condition, native, plan.text_limit)
+        index_measurement = measure_native(
+            index,
+            lambda: [rid for rid, _ in index.search_text(query, ranking, k)],
+        )
+        index_op = Op.TEXT_SEARCH
     else:
         raise ValueError(f"ruta de SELECT desconocida: {plan.route!r}")
 

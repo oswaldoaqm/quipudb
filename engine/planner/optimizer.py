@@ -21,6 +21,7 @@ from engine.parser.bound_ast import (
     BoundDistanceCondition,
     BoundDistanceOrderBy,
     BoundJoinRef,
+    BoundMatchCondition,
     BoundPolygonCondition,
     BoundSelectStatement,
     BoundSource,
@@ -40,6 +41,7 @@ class AccessRoute(StrEnum):
     RTREE_RADIUS = "rtree_radius"
     RTREE_KNN = "rtree_knn"
     RTREE_POLYGON = "rtree_polygon"
+    TEXT_SEARCH = "text_search"
 
 
 class JoinStrategy(StrEnum):
@@ -129,6 +131,13 @@ class PhysicalTableAccess:
     residual_filter: bool = False
     nearest: BoundDistanceOrderBy | None = None
     nearest_limit: int | None = None
+    text_limit: int | None = None
+    """Cuantos documentos pedirle al indice de texto (#168). ``None`` es todos.
+
+    Solo se fija cuando el LIMIT de la consulta es el top-k de la relevancia: sin
+    ORDER BY ni GROUP BY. Con ellos hay que traer todos los que coinciden y
+    cortar despues de ordenar o agrupar.
+    """
 
     def __post_init__(self) -> None:
         index_route = self.route in {
@@ -137,7 +146,15 @@ class PhysicalTableAccess:
             AccessRoute.RTREE_RADIUS,
             AccessRoute.RTREE_KNN,
             AccessRoute.RTREE_POLYGON,
+            AccessRoute.TEXT_SEARCH,
         }
+        if self.text_limit is not None:
+            if self.route is not AccessRoute.TEXT_SEARCH:
+                raise ValueError("solo TEXT_SEARCH admite un limite de documentos")
+            if self.text_limit < 0:
+                raise ValueError("el limite de documentos no puede ser negativo")
+        if self.route is AccessRoute.TEXT_SEARCH and self.residual_filter:
+            raise ValueError("TEXT_SEARCH no tiene filtro residual: el indice decide que coincide")
         if self.route is AccessRoute.RTREE_KNN:
             if self.nearest is None or self.nearest_limit is None or self.nearest_limit < 0:
                 raise ValueError("RTREE_KNN necesita un orden espacial y un limite no negativo")
@@ -162,6 +179,9 @@ class PhysicalTableAccess:
                 raise ValueError("una ruta espacial necesita un indice R-Tree")
         elif self.index.structure is Structure.RTREE:
             raise ValueError("un R-Tree solo se usa con una ruta espacial")
+        elif self.route is AccessRoute.TEXT_SEARCH:
+            if self.index.structure is not Structure.INVERTED_INDEX:
+                raise ValueError("TEXT_SEARCH necesita un indice de texto")
         elif self.index.structure is Structure.INVERTED_INDEX:
             raise ValueError("un indice de texto no es una ruta de igualdad ni de rango")
         if self.nearest is not None and self.index.column != self.nearest.column.index:
@@ -236,6 +256,15 @@ class PhysicalSelectPlan:
             raise ValueError("ORDER BY y external_sort deben aparecer juntos")
         if (self.group_strategy is not None) != (self.statement.group_by is not None):
             raise ValueError("GROUP BY necesita exactamente una estrategia de agrupacion")
+        empuja_limite = (
+            isinstance(self.source, PhysicalTableAccess) and self.source.text_limit is not None
+        )
+        if empuja_limite and (
+            self.source.text_limit != self.statement.limit
+            or self.statement.order_by is not None
+            or self.statement.group_by is not None
+        ):
+            raise ValueError("solo el LIMIT sin ORDER BY ni GROUP BY baja al indice de texto")
         _validate_source(self.source, self.statement.source, self.statement.where)
 
     @property
@@ -351,6 +380,19 @@ def optimize_select(
                 nearest=order,
                 nearest_limit=statement.limit,
             )
+    if (
+        isinstance(source, PhysicalTableAccess)
+        and source.route is AccessRoute.TEXT_SEARCH
+        and statement.limit is not None
+        and statement.order_by is None
+        and statement.group_by is None
+    ):
+        # Sin ORDER BY, las filas de MATCH salen por relevancia, asi que el
+        # LIMIT es el top-k del ranking y el indice lo resuelve con un heap de
+        # k elementos, en vez de devolver todo y cortar despues.
+        source = PhysicalTableAccess(
+            source.table, source.route, source.index, text_limit=statement.limit
+        )
     return PhysicalSelectPlan(
         statement=statement,
         source=source,
@@ -557,6 +599,17 @@ def _choose_access(
     if where is None:
         return _AccessChoice(AccessRoute.SCAN)
 
+    if isinstance(where, BoundMatchCondition):
+        # Sin indice de texto no hay ranking posible: no existe un "recorrer y
+        # filtrar" que rankee. El procesador lo rechaza antes con un error
+        # ubicado; esto protege a quien llame al optimizador directo.
+        index = _best_text_index(table, column)
+        if index is None:
+            raise ValueError(
+                f"MATCH necesita un indice de texto sobre {where.column.column.name!r}"
+            )
+        return _AccessChoice(AccessRoute.TEXT_SEARCH, index=index)
+
     if isinstance(where, BoundPolygonCondition):
         # El R-Tree y el filtro en memoria deciden el borde con el mismo
         # criterio (borde incluido), asi que la ruta indexada no necesita
@@ -684,6 +737,7 @@ def _validate_access(
         AccessRoute.INDEX_RANGE,
         AccessRoute.RTREE_RADIUS,
         AccessRoute.RTREE_POLYGON,
+        AccessRoute.TEXT_SEARCH,
     }
     if index_route != (index is not None):
         raise ValueError("las rutas de indice necesitan exactamente un indice")
@@ -730,6 +784,15 @@ def _best_index(
             Structure.BPLUS_UNCLUSTERED: 1,
         }
     return min(candidates, key=lambda index: (ranking[index.structure], index.name), default=None)
+
+
+def _best_text_index(table: TableMetadata, column: int) -> IndexMetadata | None:
+    candidates = [
+        index
+        for index in table.indexes
+        if index.column == column and index.structure is Structure.INVERTED_INDEX
+    ]
+    return min(candidates, key=lambda index: index.name, default=None)
 
 
 def _best_spatial_index(table: TableMetadata, column: int) -> IndexMetadata | None:

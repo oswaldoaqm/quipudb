@@ -18,6 +18,7 @@ from engine.executor.predicates import (
     polygon_search_args,
     range_values,
     spatial_search_args,
+    text_search_args,
 )
 from engine.parser.ast import AggregateFunction, OrderDirection, SqlTypeName
 from engine.parser.bound_ast import (
@@ -546,6 +547,15 @@ def _index_pipeline(
         vertices = polygon_search_args(condition, native)
         measured = measure_native(index, lambda: index.search_polygon(vertices))
         operation = Op.POLYGON_SEARCH
+    elif plan.route is AccessRoute.TEXT_SEARCH:
+        # Con ORDER BY o GROUP BY el optimizador no baja el LIMIT: se piden
+        # todos los documentos que coinciden y se ordenan o agrupan despues.
+        query, ranking, k = text_search_args(condition, native, plan.access.text_limit)
+        measured = measure_native(
+            index,
+            lambda: [rid for rid, _ in index.search_text(query, ranking, k)],
+        )
+        operation = Op.TEXT_SEARCH
     else:
         raise ValueError(f"ruta externa desconocida: {plan.route!r}")
 
