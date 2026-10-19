@@ -1,8 +1,9 @@
 #pragma once
 
 // Nombres de los archivos temporales que comparten los tres algoritmos
-// externos. Es una cabecera privada de `core/src/external/`: no se instala ni
-// se expone en `core/include/`, porque nadie fuera de estos tres la necesita.
+// externos y los bloques del SPIMI (#161). Es una cabecera privada del core:
+// no se instala ni se expone en `core/include/`, porque nadie fuera de ellos
+// la necesita.
 
 #include <atomic>
 #include <cstdint>
