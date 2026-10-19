@@ -376,8 +376,10 @@ utilizadas. `LIMIT n` acepta un entero no negativo y se aplica al final.
 
 `CREATE INDEX nombre ON tabla (columna) USING BPLUS` crea un B+ secundario no
 agrupado; `USING HASH` crea un hash extensible y `USING RTREE` un índice
-espacial sobre una columna `POINT`. También se aceptan los nombres explícitos
-`BPLUS_UNCLUSTERED` y `EXTENDIBLE_HASH`. El índice se construye sobre las filas
+espacial sobre una columna `POINT`. `USING FULLTEXT` crea el índice de texto
+(SPIMI, con rankings TF-IDF y BM25) sobre una columna `VARCHAR`. También se
+aceptan los nombres explícitos `BPLUS_UNCLUSTERED`, `EXTENDIBLE_HASH` e
+`INVERTED_INDEX`. El índice se construye sobre las filas
 existentes y queda disponible para el optimizador. `EXPLAIN` genera el plan sin
 recorrer filas; `EXPLAIN ANALYZE` ejecuta el `SELECT` para obtener estadísticas
 reales. Ambos devuelven el plan y no las filas de la consulta explicada.

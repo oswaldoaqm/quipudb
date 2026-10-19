@@ -109,8 +109,10 @@ Desde #107, `CREATE INDEX nombre ON tabla (columna) USING BPLUS|HASH` valida la
 tabla y la columna, toma un lock exclusivo y delega en
 `Database::create_index`. El core construye el B+ secundario no agrupado o el
 hash extensible sobre las filas que ya existen. Desde #128, `USING RTREE` hace
-lo mismo sobre una columna `POINT`. Solo se admite sobre tablas HEAP y, como
-los otros DDL, se rechaza dentro de una transacción explícita.
+lo mismo sobre una columna `POINT`, y desde #167 `USING FULLTEXT` (o
+`INVERTED_INDEX`) construye el índice de texto sobre una columna `VARCHAR`. Solo
+se admite sobre tablas HEAP y, como los otros DDL, se rechaza dentro de una
+transacción explícita.
 
 Desde #108, `EXPLAIN SELECT` transforma el IR físico a `Plan` sin ejecutar
 operadores: los pasos muestran la ruta elegida con tiempos y contadores en
@@ -1426,3 +1428,39 @@ tokenize("texto", opciones)           # lo que ve el indice, para depurar
 marca de desactualizado, y el
 SPIMI escribe sus bloques temporales en el directorio del catalogo y los borra
 al terminar.
+
+### Crear el indice de texto desde SQL (#167)
+
+El enunciado muestra las consultas `MATCH` pero no como se crea el indice. La
+sintaxis elegida es la misma de los indices secundarios de #107:
+
+```sql
+CREATE INDEX por_contenido ON documentos (contenido) USING FULLTEXT;
+-- equivalente: ... USING INVERTED_INDEX
+```
+
+`FULLTEXT` es la palabra de MySQL para lo mismo; `INVERTED_INDEX` es el nombre
+de la estructura, como `EXTENDIBLE_HASH` lo es de `HASH`. El indice se
+construye con las opciones de tokenizacion por omision (espanol, #160); para
+otro idioma se reconstruye desde los bindings con `TextIndex.build(opciones)`.
+
+| Caso | Resultado |
+|---|---|
+| Columna que no es `VARCHAR` | `SQLSemanticError` en la columna, con linea y columna |
+| La columna ya tiene un indice de texto | `SQLSemanticError` en la columna; no se crea otro ni se reconstruye el existente |
+| Nombre de indice repetido | el error de siempre del catalogo |
+| Tabla que no es HEAP o transaccion abierta | igual que los demas indices |
+
+#### Lo que tuvo que cambiar fuera del parser
+
+Un indice de texto es un indice secundario mas en el catalogo, y varias partes
+del motor recorren "todos los indices de la tabla". Sin estos cambios, crear
+uno dejaba la tabla inservible:
+
+| Donde | Que pasaba | Que se hizo |
+|---|---|---|
+| DML y transacciones | `INSERT`/`DELETE` y el deshacer llaman `insert`/`remove` de cada indice, que en #166 lanzaban `Unsupported` | ahora marcan el indice **desactualizado**; `search_text` lo reconstruye antes de buscar (ver #166) |
+| Planner (`native_catalog`) | un tipo de indice desconocido es `ValueError`: fallaba todo `SELECT` sobre la tabla | `Structure.INVERTED_INDEX` |
+| Optimizador | `WHERE texto = 'x'` lo tomaba como candidato de igualdad y fallaba | solo B+ y hash son candidatos de igualdad y rango; la consulta recorre y filtra |
+| API (`GET /tables`) | `structure` no aceptaba `inverted_index`: el Panel de Archivos se quedaba vacio | agregado al `Literal` |
+| Frontend | el indice se rotulaba "solo igualdad" y el simulador rechazaba la sintaxis | rotulo "busqueda de texto" y la misma sintaxis y errores que el motor |
