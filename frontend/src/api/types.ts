@@ -27,7 +27,7 @@ export type Op =
   | "remove"
   | "update";
 
-/** Las cinco primeras son las constantes `kind::` del core. */
+/** Las siete primeras son las constantes `kind::` del core. */
 export type Structure =
   | "heap"
   | "sequential"
@@ -35,6 +35,7 @@ export type Structure =
   | "bplus_unclustered"
   | "extendible_hash"
   | "rtree"
+  | "inverted_index"
   | "external_sort"
   | "external_hash"
   | "memory";
@@ -136,7 +137,7 @@ export interface IndexInfo {
   column: string;
   structure: Extract<
     Structure,
-    "bplus_unclustered" | "extendible_hash" | "rtree"
+    "bplus_unclustered" | "extendible_hash" | "rtree" | "inverted_index"
   >;
   supports_range: boolean;
 }
