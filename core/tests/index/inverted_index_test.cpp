@@ -220,7 +220,9 @@ TEST_F(IndiceInvertido, ReportaLoQueCostoElMerge) {
     spimi.add_document(static_cast<DocId>(i + 1), docs[i]);
   }
   spimi.finish();
-  std::uint64_t paginas_bloques = 0;
+  // Lo que se lee: cada pagina de bloque y del archivo de longitudes (#163),
+  // una vez.
+  std::uint64_t paginas_bloques = DiskManager(spimi.lengths_file()).page_count();
   std::uint64_t entradas_bloques = 0;
   for (const auto& b : spimi.blocks()) {
     paginas_bloques += DiskManager(b).page_count();
@@ -232,7 +234,7 @@ TEST_F(IndiceInvertido, ReportaLoQueCostoElMerge) {
   EXPECT_EQ(r.blocks, spimi.blocks().size());
   EXPECT_EQ(r.passes, 1U);
   InvertedIndex indice(dir_ / "stats.idx");
-  EXPECT_EQ(s.pages_read, paginas_bloques);  // cada pagina de bloque, una vez
+  EXPECT_EQ(s.pages_read, paginas_bloques);
   EXPECT_EQ(s.pages_written, DiskManager(dir_ / "stats.idx").page_count());
   EXPECT_EQ(s.records_examined, entradas_bloques);
   EXPECT_EQ(s.records_returned, indice.terms());

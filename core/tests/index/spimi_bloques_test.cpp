@@ -42,7 +42,15 @@ class SpimiBloques : public ::testing::Test {
     return SpimiOptions{.page_size = page_size, .dir = dir_};
   }
 
+  /// Archivos de bloque en el directorio. El de longitudes (#163) no cuenta.
   std::size_t archivos() const {
+    std::size_t n = 0;
+    for (const auto& e : fs::directory_iterator(dir_)) n += e.path().extension() == ".blk";
+    return n;
+  }
+
+  /// Todos los archivos del directorio.
+  std::size_t todos() const {
     return static_cast<std::size_t>(std::distance(fs::directory_iterator(dir_), {}));
   }
 
@@ -173,8 +181,26 @@ TEST_F(SpimiBloques, LosBloquesSeBorranConElIndexador) {
     spimi.add_document(1, "sol");
     spimi.finish();
     EXPECT_EQ(archivos(), 1U);
+    EXPECT_EQ(todos(), 2U);  // el bloque y las longitudes
   }
-  EXPECT_EQ(archivos(), 0U);
+  EXPECT_EQ(todos(), 0U);
+}
+
+TEST_F(SpimiBloques, CuentaLaLongitudDeCadaDocumento) {
+  // La longitud es la cantidad de terminos que deja el tokenizador, con
+  // repeticiones: la suma de los tf de los postings de cada documento.
+  const auto docs = corpus(150);
+  SpimiIndexer spimi(TokenizerOptions{}, SpimiOptions{.memory_budget = 4096, .dir = dir_});
+  for (std::size_t i = 0; i < docs.size(); ++i) {
+    spimi.add_document(static_cast<DocId>(i + 1), docs[i]);
+  }
+  spimi.finish();
+  std::uint64_t total = 0;
+  for (const auto& [termino, lista] : oraculo(docs, TokenizerOptions{})) {
+    for (const Posting& p : lista) total += p.tf;
+  }
+  EXPECT_EQ(spimi.total_length(), total);
+  EXPECT_TRUE(fs::exists(spimi.lengths_file()));
 }
 
 TEST_F(SpimiBloques, ElLectorRechazaLoQueNoEsUnBloque) {
@@ -316,7 +342,7 @@ TEST_F(SpimiBloques, ReportaLoQueCostoLaConstruccion) {
   }
   spimi.finish();
 
-  std::uint64_t paginas = 0;
+  std::uint64_t paginas = DiskManager(spimi.lengths_file()).page_count();
   for (const auto& b : spimi.blocks()) paginas += DiskManager(b).page_count();
 
   std::uint64_t postings = 0;
