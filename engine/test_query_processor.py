@@ -849,3 +849,130 @@ def test_cero_y_menos_cero_dan_lo_mismo_con_o_sin_indice(db, estructura) -> None
 
     assert processor.execute("DELETE FROM precios WHERE precio = 0").affected_rows == 2
     assert processor.execute("SELECT id FROM precios").rows == ((3,),)
+
+
+# ---------------------------------------------------------------------------
+# Indice de texto desde SQL (#167)
+# ---------------------------------------------------------------------------
+
+_DOCUMENTOS = (
+    "INSERT INTO docs VALUES (1, 'Cargamento de oro dañado por el fuego');"
+    "INSERT INTO docs VALUES (2, 'La entrega de la plata llegó en el camión color plata');"
+    "INSERT INTO docs VALUES (3, 'El cargamento de oro llegó en un camión')"
+)
+
+
+def _docs(db) -> QueryProcessor:
+    processor = QueryProcessor(db)
+    processor.execute("CREATE TABLE docs (id INT PRIMARY KEY, texto VARCHAR(120)) USING HEAP")
+    processor.execute(_DOCUMENTOS)
+    return processor
+
+
+def _ids_por_texto(db, consulta: str) -> list[int]:
+    ix = db.index("docs", "por_texto")
+    tabla = db.table("docs")
+    return [tabla.read(rid)[0] for rid, _ in ix.search_text(consulta, quipudb.TextRanking.TF_IDF)]
+
+
+@pytest.mark.parametrize("estructura", ["FULLTEXT", "INVERTED_INDEX"])
+def test_create_index_fulltext_construye_y_queda_en_el_catalogo(db, estructura):
+    processor = _docs(db)
+
+    result = processor.execute(f"CREATE INDEX por_texto ON docs (texto) USING {estructura}")
+
+    assert result == QueryResult()
+    info = db.table_info("docs")
+    assert [(index.name, index.column, index.kind) for index in info.indexes] == [
+        ("por_texto", 1, quipudb.kind.INVERTED_INDEX)
+    ]
+    ix = db.index("docs", "por_texto")
+    assert isinstance(ix, quipudb.TextIndex)
+    assert ix.documents == 3
+    assert _ids_por_texto(db, "oro plata camión") == [2, 3, 1]
+
+
+def test_create_index_fulltext_sobre_columna_que_no_es_texto_es_error_ubicado(db):
+    processor = _docs(db)
+    sql = "CREATE INDEX por_id ON docs (id) USING FULLTEXT"
+
+    with pytest.raises(SQLSemanticError, match="requiere una columna VARCHAR") as caught:
+        processor.execute(sql)
+
+    assert sql[caught.value.span.start : caught.value.span.end] == "id"
+    assert (caught.value.span.line, caught.value.span.column) == (1, 30)
+    assert db.table_info("docs").indexes == []
+
+
+def test_un_segundo_indice_de_texto_en_la_columna_es_error_y_no_reconstruye(db):
+    processor = _docs(db)
+    processor.execute("CREATE INDEX por_texto ON docs (texto) USING FULLTEXT")
+    processor.execute("INSERT INTO docs VALUES (4, 'mina de oro')")
+    assert db.index("docs", "por_texto").stale
+    sql = "CREATE INDEX otro ON docs (texto) USING FULLTEXT"
+
+    with pytest.raises(SQLSemanticError, match="ya tiene el indice de texto 'por_texto'") as caught:
+        processor.execute(sql)
+
+    assert sql[caught.value.span.start : caught.value.span.end] == "texto"
+    assert [index.name for index in db.table_info("docs").indexes] == ["por_texto"]
+    # No se reconstruyo en silencio: sigue desactualizado hasta la proxima busqueda.
+    assert db.index("docs", "por_texto").stale
+
+
+def test_el_mismo_nombre_de_indice_tambien_es_error(db):
+    processor = _docs(db)
+    processor.execute("CREATE INDEX por_texto ON docs (texto) USING FULLTEXT")
+
+    with pytest.raises(SQLSemanticError, match="por_texto"):
+        processor.execute("CREATE INDEX por_texto ON docs (id) USING HASH")
+
+
+def test_insert_y_delete_funcionan_con_indice_de_texto(db):
+    # El DML le avisa de cada fila al indice de texto, que se marca
+    # desactualizado; la busqueda lo reconstruye y ve los cambios.
+    processor = _docs(db)
+    processor.execute("CREATE INDEX por_texto ON docs (texto) USING FULLTEXT")
+
+    assert processor.execute("INSERT INTO docs VALUES (4, 'mina de oro')").affected_rows == 1
+    assert processor.execute("DELETE FROM docs WHERE id = 2").affected_rows == 1
+
+    assert _ids_por_texto(db, "mina") == [4]
+    assert _ids_por_texto(db, "plata") == []
+    assert db.index("docs", "por_texto").documents == 3
+
+
+def test_select_por_igualdad_sobre_la_columna_indexada_por_texto(db):
+    # El indice de texto no responde igualdad: la consulta recorre y filtra.
+    processor = _docs(db)
+    processor.execute("CREATE INDEX por_texto ON docs (texto) USING FULLTEXT")
+
+    result = processor.execute(
+        "SELECT id FROM docs WHERE texto = 'El cargamento de oro llegó en un camión'"
+    )
+
+    assert result.rows == ((3,),)
+    plan = processor.execute("EXPLAIN SELECT id FROM docs WHERE texto = 'x'").plan
+    assert "inverted_index" not in str(plan)
+
+
+def test_deshacer_una_transaccion_deja_el_indice_de_texto_coherente(db):
+    processor = _docs(db)
+    processor.execute("CREATE INDEX por_texto ON docs (texto) USING FULLTEXT")
+
+    processor.execute("BEGIN TRANSACTION")
+    processor.execute("INSERT INTO docs VALUES (4, 'mina de oro')")
+    processor.rollback()
+
+    assert _ids_por_texto(db, "mina") == []
+    assert db.index("docs", "por_texto").documents == 3
+
+
+def test_drop_table_borra_el_indice_de_texto_y_su_marca(db, tmp_path):
+    processor = _docs(db)
+    processor.execute("CREATE INDEX por_texto ON docs (texto) USING FULLTEXT")
+    processor.execute("INSERT INTO docs VALUES (4, 'mina')")  # deja la marca
+
+    processor.execute("DROP TABLE docs")
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["catalogo.txt"]
