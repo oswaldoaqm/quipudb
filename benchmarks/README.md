@@ -1048,3 +1048,66 @@ sobre un corpus sintetico de 1k con dos repeticiones: las respuestas y la cuenta
 de SPIMI se repiten, los dos rankings leen las mismas paginas y comparten el
 espacio del indice. Los resultados oficiales y su analisis estan en
 [comparacion_tfidf_bm25.md](comparacion_tfidf_bm25.md).
+
+## Precision@10 y Recall@10 (issue #173)
+
+Mide que tan buenos son los resultados de cada tecnica, no que tan rapidos.
+Son dos pasos separados, para que las tres tecnicas del 2.3.2 pasen por el
+mismo calculo:
+
+1. Cada tecnica escribe sus **rankings**: un CSV
+   `tecnica,n_documentos,consulta,posicion,documento,puntaje` con el top-10 de
+   cada consulta y, si el 10.o empata con los siguientes, todos los empatados.
+   `documento` es el `id` de `documentos_N.csv`. TF-IDF y BM25 los escribe
+   `rankings_texto.py`; el GIN de PostgreSQL los escribira #174.
+2. `relevancia_texto.py` lee uno o mas archivos de rankings y los compara con
+   `relevancia_N.csv`. No necesita los bindings ni PostgreSQL.
+
+```bash
+PYTHONPATH=build-py/bindings python -B benchmarks/scripts/rankings_texto.py
+python -B benchmarks/scripts/relevancia_texto.py benchmarks/results/<id>_rankings.csv
+```
+
+El primero escribe `<id>_rankings.csv` y `<id>_entorno.csv` en
+`benchmarks/results/`. Tarda unos 10 s y no mide tiempos: los rankings son
+deterministas. El segundo imprime las tablas del informe y escribe, junto al
+primer archivo, `<id>_relevancia_por_consulta.csv`, `_resumen.csv` y
+`_pareada.csv`. Nunca reemplaza un resultado existente.
+
+### Metricas
+
+- **Precision@10** = relevantes en el top-10 / 10. Si una tecnica devuelve
+  menos de 10, el denominador sigue siendo 10, como en trec_eval.
+- **Recall@10** = relevantes en el top-10 / relevantes de la consulta.
+- Las dos se promedian sobre las consultas, por tecnica, tamano y longitud.
+- **Techo de P@10**: la P@10 de un ranking perfecto. En Quora es 0,161, porque
+  cada consulta tiene pocos relevantes (#171).
+- **Empates promediados**: cuando el 10.o empata con el 11.o, el desempate
+  decide cual entra. La version con empates promediados (McSherry y Najork,
+  2008) usa el valor esperado sobre todos los ordenes del grupo empatado: si
+  quedan s lugares para g empatados con r relevantes, el grupo aporta
+  s * r / g aciertos.
+- **Prueba pareada**: para cada par de tecnicas, tamano, longitud y metrica,
+  la diferencia media sobre las mismas consultas y su p-valor bilateral por
+  permutacion de signos (10 000 permutaciones, semilla 20260906).
+
+### Pruebas
+
+```bash
+python -B -m pytest benchmarks/test_relevancia_texto.py -q -rs -p no:cacheprovider
+PYTHONPATH=build-py/bindings python -B -m pytest benchmarks/test_relevancia_texto.py \
+  -q -rs -p no:cacheprovider
+```
+
+Las pruebas calculan a mano:
+
+- Precision@10 y Recall@10, incluidos un ranking corto, uno vacio, el corte en
+  k y un documento repetido;
+- el techo y los aciertos esperados con empates;
+- la prueba pareada en sus extremos: sin diferencias da 1, una sola consulta
+  distinta da 1, y veinte a favor dan menos de 0,001.
+
+Tambien comprueban la validacion del archivo de rankings, que un ranking
+perfecto llega al techo y que la CLI no pisa resultados. Con los bindings,
+generan los rankings reales de un corpus sintetico. Los resultados y su
+analisis estan en [relevancia_tfidf_bm25.md](relevancia_tfidf_bm25.md).
