@@ -1,4 +1,5 @@
-"""Ejecuta el banco reproducible: Heap (#38), archivos (#39), indices (#40) o espacial (#131)."""
+"""Ejecuta el banco reproducible: Heap (#38), archivos (#39), indices (#40), espacial (#131)
+o texto (#172)."""
 
 from __future__ import annotations
 
@@ -8,17 +9,21 @@ from pathlib import Path
 
 if __package__:
     from .banco_pruebas import RESULTADOS, Caso, cargar_dataset, ejecutar_banco
+    from .cargar_documentos import leer_consultas, leer_documentos
     from .cargar_puntos import leer_puntos
     from .casos_archivos import caso_insercion, casos_archivos
     from .casos_espaciales import CONSULTAS, POBLACION_CENTROS, casos_espaciales
     from .casos_indices import casos_indices
+    from .casos_texto import CONSULTAS_POR_LONGITUD, casos_texto
     from .generar_datasets import SALIDA_PREDETERMINADA, TAMANOS
 else:
     from banco_pruebas import RESULTADOS, Caso, cargar_dataset, ejecutar_banco
+    from cargar_documentos import leer_consultas, leer_documentos
     from cargar_puntos import leer_puntos
     from casos_archivos import caso_insercion, casos_archivos
     from casos_espaciales import CONSULTAS, POBLACION_CENTROS, casos_espaciales
     from casos_indices import casos_indices
+    from casos_texto import CONSULTAS_POR_LONGITUD, casos_texto
     from generar_datasets import SALIDA_PREDETERMINADA, TAMANOS
 
 
@@ -52,12 +57,15 @@ def nota_entorno(texto: str) -> tuple[str, str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--suite", choices=("heap", "archivos", "indices", "espacial"), default="heap"
+        "--suite", choices=("heap", "archivos", "indices", "espacial", "texto"), default="heap"
     )
     parser.add_argument(
         "--consultas",
         type=int,
-        help=f"consultas por lote (por defecto 1000; {CONSULTAS} en la suite espacial)",
+        help=(
+            f"consultas por lote (por defecto 1000; {CONSULTAS} en la suite espacial y "
+            f"{CONSULTAS_POR_LONGITUD} por longitud en la de texto)"
+        ),
     )
     parser.add_argument(
         "--sin-cruce",
@@ -81,7 +89,9 @@ def main() -> None:
     )
     args = parser.parse_args()
     if args.consultas is None:
-        args.consultas = CONSULTAS if args.suite == "espacial" else 1000
+        args.consultas = {"espacial": CONSULTAS, "texto": CONSULTAS_POR_LONGITUD}.get(
+            args.suite, 1000
+        )
     if args.calentamientos < 0 or args.repeticiones < 1:
         parser.error("calentamientos debe ser >= 0 y repeticiones debe ser >= 1")
     if args.page_size is not None and args.page_size <= 0:
@@ -98,16 +108,25 @@ def main() -> None:
         n - n // 100 + 1 for n in args.tamanos
     ):
         parser.error("consultas-rango debe estar entre 1 y N - N//100 + 1 para todos los tamanos")
-    if args.suite == "espacial" and args.page_size is not None:
-        parser.error("la suite espacial usa el page-size del binding")
+    if args.suite == "texto" and not 1 <= args.consultas <= CONSULTAS_POR_LONGITUD:
+        parser.error(f"en la suite texto consultas debe estar entre 1 y {CONSULTAS_POR_LONGITUD}")
+    if args.suite in ("espacial", "texto") and args.page_size is not None:
+        parser.error(f"la suite {args.suite} usa el page-size del binding")
     try:
         if args.suite == "espacial":
             datasets = [leer_puntos(args.datasets / f"puntos_{n}.csv", n) for n in args.tamanos]
+        elif args.suite == "texto":
+            datasets = [
+                leer_documentos(args.datasets / f"documentos_{n}.csv", n) for n in args.tamanos
+            ]
+            consultas = leer_consultas(args.datasets / "consultas.csv")
         else:
             datasets = [cargar_dataset(args.datasets / f"alumnos_{n}.csv", n) for n in args.tamanos]
         nativo = cargar_bindings()
         if args.suite == "espacial":
             casos = casos_espaciales(nativo, args.consultas, cruce=not args.sin_cruce)
+        elif args.suite == "texto":
+            casos = casos_texto(nativo, consultas, args.consultas)
         elif args.suite == "indices":
             casos = casos_indices(nativo, args.consultas, args.consultas_rango, args.page_size)
         elif args.suite == "archivos":
