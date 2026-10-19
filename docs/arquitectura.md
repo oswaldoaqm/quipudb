@@ -1173,3 +1173,27 @@ coinciden (la raiz pierde la tilde igual), pero `informacion` no se reduce y
 que los sufijos con tilde ya no se reduzcan. Que opcion usa el indice se
 decide en el ADR de la Parte 3 (#175), con los datos del benchmark de
 relevancia (#173).
+
+### SPIMI: los bloques (#161)
+
+`SpimiIndexer` (`core/include/quipudb/index/spimi.hpp`) es el SPIMI-INVERT de
+la diapositiva: recorre los documentos una sola vez, acumula en un hash
+termino -> postings y, cuando la memoria se acaba, ordena los terminos y vuelca
+el bloque a disco. Mezclar los bloques en el indice final es el #162.
+
+| Decision | Por que |
+|---|---|
+| Diccionario **local** por bloque, sin termID | Es lo que distingue a SPIMI de BSBI: la memoria la acota el bloque, no el vocabulario. Un termino frecuente reaparece en varios bloques, y la prueba `NoHayDiccionarioGlobal` lo verifica |
+| Documentos con id **estrictamente creciente** | Las listas salen ordenadas por docID sin ordenar nada, y mezclar bloques es concatenar listas |
+| Presupuesto contado por el propio diccionario | La memoria del proceso depende del asignador; las pruebas no podrian fijar cuantos bloques salen. Un termino nuevo cuesta `72 + bytes + 4 postings`; una lista llena se duplica (`DoublePostingsList`) |
+| Se vuelca **antes** de agregar lo que no cabe | Ningun bloque supera el presupuesto (`peak_memory() <= memory_budget`). Un documento puede quedar repartido entre dos bloques, pero cada posting queda entero en uno |
+| Bloque = flujo de bytes sobre paginas | Una lista de postings puede ser mas grande que una pagina. El lector necesita una sola pagina en memoria, que es lo que permite al merge abrir todos los bloques a la vez |
+
+Formato de cada entrada, ordenadas por termino:
+`u16 largo | termino UTF-8 | u32 n | n x (u32 doc, u32 tf)`. El area meta
+guarda la version, las entradas y los bytes del flujo.
+
+`stats()` cuenta paginas escritas, documentos (`records_examined`) y postings
+(`records_returned`); `pages_read` es 0 porque SPIMI no relee nada. Los
+bloques se cuentan con `blocks_written()`, porque `OpStats` es el contrato
+comun y no tiene ese campo.
