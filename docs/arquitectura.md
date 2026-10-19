@@ -1325,3 +1325,48 @@ diapositiva dice 0.00801 para D1, pero es una errata: el producto escalar es
 los tres valores con 12 decimales, y ademas comparan el ranking contra un
 coseno calculado por fuerza bruta sobre todos los vectores de un corpus de 400
 documentos, con las dos variantes.
+
+### Ranking BM25 (#165)
+
+`Bm25Ranking` (`core/include/quipudb/index/bm25_ranking.hpp`) implementa la
+misma interfaz `TextRanking` que TF-IDF: consulta y k dentro, documentos con
+puntaje fuera. El parser elige uno u otro con `USING` (#168) sin ramificar.
+
+```
+                          tf(t,d) * (k1 + 1)
+score(q,d) = sum_t qtf * idf(t) * --------------------------------------------
+                                  tf(t,d) + k1 * (1 - b + b * |d| / avgdl)
+
+idf(t) = ln(1 + (N - df_t + 0.5) / (df_t + 0.5))          k1 = 1.2, b = 0.75 por omision
+```
+
+| Parametro | Que regula | Extremos |
+|---|---|---|
+| `k1` | saturacion del tf: el aporte de un termino tiende a `idf * (k1 + 1)` | `k1 = 0`: solo importa si el termino esta |
+| `b` | normalizacion por longitud contra `avgdl` | `b = 0`: la longitud no importa; `b = 1`: normaliza del todo |
+
+Usa la longitud de cada documento y `avgdl` que el indice guarda desde #163.
+Como TF-IDF, solo recorre las listas de los terminos de la consulta.
+
+#### El idf: la variante de Lucene
+
+El idf clasico de Robertson y Sparck Jones, `ln((N - df + 0.5) / (df + 0.5))`,
+es **negativo** cuando el termino esta en mas de la mitad de los documentos:
+con N = 4, df = 2 da 0 y df = 3 da -0.85. Un documento que contiene el termino
+puntuaria peor que uno que no lo tiene, y en una consulta de varios terminos
+uno comun le restaria puntos al mejor documento.
+
+Se usa la variante de Lucene, con `1 +` dentro del logaritmo: siempre
+positiva, decreciente con df, y practicamente igual a la clasica para
+terminos raros. Es la que usan Elasticsearch y MongoDB. Consecuencia
+documentada: a diferencia de TF-IDF, un termino que esta en todos los
+documentos todavia ordena (idf pequeno pero positivo).
+
+#### Las pruebas
+
+Un corpus de longitudes muy distintas (documentos de 1 y de 10 terminos) con
+los puntajes calculados aparte: el documento corto gana al largo con el mismo
+tf (normalizacion por longitud), y 9 apariciones de "perro" ganan a 1 solo por
+1.137 contra 0.967 (saturacion). Ademas, `b = 0`, `k1 = 0` y `k1 = 2, b = 1`
+con sus valores exactos, y un BM25 por fuerza bruta sobre 400 documentos con
+tres combinaciones de parametros.
