@@ -818,3 +818,136 @@ generado, que PostGIS cubra exactamente los casos de la suite espacial, la
 lectura de referencias, y el generador sobre fuentes sinteticas (tablas, hash
 alterado y conservacion del texto fuera de los marcadores). La que verifica los
 hashes oficiales se salta con motivo si los CSV no estan.
+
+## Dataset de texto (issue #171)
+
+La comparacion del 2.3.2 (TF-IDF vs BM25 vs GIN de PostgreSQL) mide las tres
+tecnicas sobre los mismos documentos y las mismas consultas, y la precision con
+Precision@10 y Recall@10 (#173). Para eso hacen falta **juicios de relevancia**:
+que documentos son relevantes para cada consulta. Se toman de un corpus publico
+que ya los trae en vez de inventarlos.
+
+```bash
+python benchmarks/scripts/generar_documentos.py
+python benchmarks/scripts/generar_documentos.py --tamanos 1000 --salida /tmp/quipudb-texto
+```
+
+La primera vez descarga `quora.zip` (15 MB) a `benchmarks/datasets/` y en
+adelante lo reutiliza; siempre comprueba su SHA-256 antes de usarlo. Todo queda
+fuera de Git (`benchmarks/datasets/*`). Con `--zip` se usa otra copia. Solo usa
+la biblioteca estandar y tarda unos 10 s.
+
+### Fuente: BEIR Quora
+
+[BEIR](https://github.com/beir-cellar/beir) (Thakur et al., *BEIR: A
+Heterogeneous Benchmark for Zero-shot Evaluation of Information Retrieval
+Models*, NeurIPS 2021) publica, a partir del *Quora Question Pairs*:
+
+- 522 931 preguntas de Quora, que aqui son los documentos;
+- 10 000 preguntas de prueba (split `test`) y, para cada una, cuales de las
+  demas son **la misma pregunta escrita de otra forma**, marcadas por personas.
+
+Un documento es relevante para una consulta si es un duplicado de su pregunta.
+Son juicios binarios. Se descarta el par de una pregunta consigo misma, como hace
+la evaluacion de BEIR. El texto esta en ingles, asi que el indice se construye
+con las stopwords y el stemmer ingleses, los de `to_tsvector('english', ...)`.
+
+Licencia y uso: los pares de Quora se publicaron para investigacion; aqui solo
+se descargan y no se redistribuyen.
+
+### Consultas de 1, 3 y 5+ palabras
+
+Casi no hay preguntas de una o de tres palabras (2 y 76 de las 10 000), asi que
+de cada **pregunta base** salen tres consultas:
+
+| Longitud | Consulta | Ejemplo |
+|---|---|---|
+| `5+` | la pregunta completa, en minusculas y sin puntuacion | `which are the best apps for learning chinese` |
+| `3` | sus tres palabras mas discriminativas, en el orden de la pregunta | `apps learning chinese` |
+| `1` | su palabra mas discriminativa | `apps` |
+
+La mas discriminativa es la de menor frecuencia de documento en todo Quora
+(la de mayor idf). No cuentan las stopwords inglesas, las palabras de una sola
+letra ni las que estan en un solo documento (no encontrarian ningun otro). A
+igual frecuencia gana la que aparece antes. Las tres consultas de una pregunta
+comparten sus juicios: al comparar longitudes solo cambia la longitud.
+
+Se eligen **100 preguntas base** al azar, con dos condiciones: que den para las
+tres consultas (al menos cinco palabras y tres discriminativas) y que todos sus
+relevantes quepan en la tabla. Son 300 consultas, 100 por longitud. Sin
+puntuacion ni comillas, cada consulta entra tal cual en `MATCH(col, '...')` y
+QuipuDB y PostgreSQL reciben exactamente el mismo texto.
+
+### Corpus de 1k, 10k y 100k
+
+Cada corpus tiene **todos los relevantes** de las 100 preguntas (161 documentos)
+mas preguntas de Quora elegidas al azar hasta completar el tamano. Las preguntas
+base no entran: se encontrarian a si mismas. Tampoco entran textos de mas de
+256 bytes, el largo de la columna (quedan fuera 0,2 % de Quora).
+
+Los relevantes quedan mezclados con el resto. Los ids no los favorecen: un
+empate de puntaje se rompe por id. Los corpus estan anidados (los documentos de
+1k estan en el de 10k, y estos en el de 100k), pero cada tamano tiene sus
+propios ids.
+
+| Archivo | Columnas | Contenido |
+|---|---|---|
+| `consultas.csv` | `id,longitud,pregunta,texto` | 300 consultas; `pregunta` es el id en Quora de la pregunta base |
+| `documentos_N.csv` | `id,quora_id,texto` | N documentos; `id` 1..N es la clave en QuipuDB |
+| `relevancia_N.csv` | `consulta,documento` | Pares relevantes, con los `id` de `documentos_N.csv` |
+
+Cada consulta tiene en promedio 1,61 relevantes (el 69 % tiene uno solo). Por
+eso el **techo de Precision@10 es 0,161**: aunque los relevantes salgan
+primeros, quedan menos de 10. Recall@10 si puede llegar a 1. #173 tiene que
+leer las dos metricas con eso en mente.
+
+### Reproducibilidad
+
+Semilla **20260906**, la de los otros datasets. Hay un generador nuevo por cada
+decision (preguntas, relleno, orden de cada tamano), asi que lo generado no
+depende de que tamanos se pidieron ni en que orden. Los SHA-256 de referencia,
+comprobados en Python 3.11 y 3.14, son:
+
+```text
+consultas.csv        9807a6280572c0c4345bc9d46839b274289da8f503f75e786f85a243aa011304
+documentos_1000.csv  63e0d9ccdf8d35065dc0f8ea909b9831b804103492fca9b1856dd239928ca88f
+```
+
+### Carga en QuipuDB
+
+`scripts/cargar_documentos.py` valida el CSV (ids 1..N en orden, textos que
+caben en `VARCHAR(256)`), crea la tabla Heap `documentos(id INT, texto
+VARCHAR(256))`, inserta en el orden del CSV y construye el indice invertido
+`documentos_texto` con las opciones inglesas. `create_index` lo construye con
+las de por omision (espanol) y `build` lo reconstruye en ingles: quien mida el
+tiempo de construccion mide solo el `build`.
+
+```bash
+PYTHONPATH=build-py/bindings python -B benchmarks/scripts/cargar_documentos.py \
+  benchmarks/datasets/documentos_100000.csv --catalogo /tmp/quipudb-texto-100k
+```
+
+`leer_documentos`, `leer_consultas`, `leer_relevancia` y `cargar_quipudb` son
+las que reutilizan #172, #173 y #174.
+
+```bash
+python -B -m pytest benchmarks/test_generar_documentos.py -q -rs -p no:cacheprovider
+PYTHONPATH=build-py/bindings python -B -m pytest benchmarks/test_generar_documentos.py \
+  -k integracion -q -rs -p no:cacheprovider
+```
+
+Las pruebas usan un zip sintetico con la estructura del de BEIR, asi que no
+necesitan la red. Comprueban:
+
+- las tres longitudes, y que las consultas cortas salen de la larga;
+- que se elige la palabra mas rara;
+- los casos que se descartan: pregunta corta, relevante demasiado largo, par
+  consigo misma y una pregunta relevante para otra;
+- que cada corpus tiene todos sus relevantes y ninguna pregunta base;
+- el anidamiento, los bytes identicos entre corridas, el hash del zip y la
+  validacion de los CSV.
+
+Con los bindings, ademas, cargan un corpus y comprueban que cada consulta larga
+encuentra su duplicado entre los 10 primeros, y que la lista de stopwords es la
+del core. La que compara los hashes de referencia se salta si `quora.zip` no se
+descargo.
