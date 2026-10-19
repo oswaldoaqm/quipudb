@@ -34,6 +34,11 @@ struct ScoredDocument {
 /// Pedir todos los resultados, sin cortar en k: la consulta sin LIMIT.
 inline constexpr std::size_t kAllResults = std::numeric_limits<std::size_t>::max();
 
+/// Deja en `resultado` los `k` de mayor puntaje, ordenados de mayor a menor
+/// y, a igual puntaje, por doc creciente. Es el orden que prometen todos los
+/// rankings; vive aqui para que no haya dos copias que se desalineen.
+void keep_top_k(std::vector<ScoredDocument>& resultado, std::size_t k);
+
 class TextRanking {
  public:
   virtual ~TextRanking() = default;
