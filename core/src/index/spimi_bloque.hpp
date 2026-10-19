@@ -77,6 +77,43 @@ class EscritorDeBloque {
   MetaBloque meta_;
 };
 
+/// El area meta del archivo de longitudes del SPIMI (#163).
+struct MetaLongitudes {
+  char magic[4] = {'S', 'P', 'M', 'L'};
+  std::uint16_t version = 1;
+  std::uint16_t reservado = 0;
+  PageId primera = kInvalidPage;
+  std::uint32_t reservado2 = 0;
+  std::uint64_t documentos = 0;
+  std::uint64_t bytes = 0;
+  std::uint64_t longitud_total = 0;
+};
+static_assert(sizeof(MetaLongitudes) <= DiskManager::kMetaSize);
+
+/// Una entrada del archivo de longitudes, y del flujo que el indice copia.
+struct LongitudDocumento {
+  DocId doc = 0;
+  std::uint32_t longitud = 0;
+};
+static_assert(sizeof(LongitudDocumento) == 8, "las longitudes se escriben como bytes crudos");
+
+inline MetaLongitudes leer_meta_longitudes(const std::filesystem::path& ruta,
+                                           std::size_t page_size) {
+  if (!std::filesystem::exists(ruta)) {
+    throw IoError("SPIMI: no existe el archivo de longitudes " + ruta.string());
+  }
+  MetaLongitudes meta;
+  {
+    DiskManager disco(ruta, page_size);
+    disco.read_meta(std::as_writable_bytes(std::span<MetaLongitudes, 1>(&meta, 1)));
+  }
+  constexpr char kMagic[4] = {'S', 'P', 'M', 'L'};
+  if (std::memcmp(meta.magic, kMagic, sizeof kMagic) != 0 || meta.version != 1) {
+    throw IoError("SPIMI: " + ruta.string() + " no es un archivo de longitudes de esta version");
+  }
+  return meta;
+}
+
 /// Lee y valida el area meta de un bloque.
 inline MetaBloque leer_meta_bloque(const std::filesystem::path& ruta, std::size_t page_size) {
   // DiskManager CREA el archivo si no existe; un bloque que falta es un error,

@@ -26,6 +26,15 @@ constexpr std::size_t costo_termino_nuevo(std::size_t bytes_termino) noexcept {
 
 }  // namespace
 
+/// El archivo de longitudes abierto mientras se agregan documentos.
+struct SpimiIndexer::Longitudes {
+  Longitudes(const std::filesystem::path& ruta, std::size_t page_size)
+      : disco(ruta, page_size), escritor(disco) {}
+
+  DiskManager disco;
+  detail::EscritorDePaginas escritor;
+};
+
 std::size_t SpimiIndexer::min_memory_budget(const TokenizerOptions& tokenizer) noexcept {
   return costo_termino_nuevo(tokenizer.max_term_bytes);
 }
@@ -39,6 +48,8 @@ SpimiIndexer::SpimiIndexer(TokenizerOptions tokenizer, SpimiOptions options)
                       std::to_string(minimo) + ", lo que cuesta un termino del largo maximo");
   }
   if (options_.dir.empty()) options_.dir = std::filesystem::temp_directory_path();
+  longitudes_ruta_ = options_.dir / ("quipudb_spimi_" + detail::etiqueta_unica() + ".len");
+  longitudes_ = std::make_unique<Longitudes>(longitudes_ruta_, options_.page_size);
 }
 
 SpimiIndexer::~SpimiIndexer() {
@@ -48,6 +59,11 @@ SpimiIndexer::~SpimiIndexer() {
     std::error_code ec;
     std::filesystem::remove(bloque, ec);
   }
+  // El archivo se cierra antes de borrarlo: en Windows, uno abierto no se
+  // borra.
+  longitudes_.reset();
+  std::error_code ec;
+  std::filesystem::remove(longitudes_ruta_, ec);
 }
 
 void SpimiIndexer::add_document(DocId doc, std::string_view text) {
@@ -65,6 +81,13 @@ void SpimiIndexer::add_document(DocId doc, std::string_view text) {
   // por primera vez. El orden no cambia el resultado -- el bloque se ordena
   // al volcarse --, pero hace la construccion reproducible.
   const std::vector<std::string> terminos = tokenizer_.tokenize(text);
+
+  // La longitud del documento: los terminos que dejo el tokenizador, con
+  // repeticiones. Un documento vacio tambien se anota, con 0.
+  const detail::LongitudDocumento longitud{doc, static_cast<std::uint32_t>(terminos.size())};
+  longitudes_->escritor.escribir(longitud);
+  longitud_total_ += longitud.longitud;
+
   std::unordered_map<std::string_view, std::size_t> posicion;
   std::vector<std::pair<std::string_view, std::uint32_t>> frecuencias;
   for (const std::string& t : terminos) {
@@ -116,6 +139,19 @@ void SpimiIndexer::agregar(std::string_view termino, Posting posting) {
 void SpimiIndexer::finish() {
   if (terminado_) return;
   volcar_bloque();
+
+  auto& [disco, escritor] = *longitudes_;
+  escritor.cerrar();
+  detail::MetaLongitudes meta;
+  meta.primera = escritor.primera();
+  meta.documentos = documentos_;
+  meta.bytes = escritor.bytes();
+  meta.longitud_total = longitud_total_;
+  disco.write_meta(std::as_bytes(std::span<const detail::MetaLongitudes, 1>(&meta, 1)));
+  disco.flush();
+  stats_.pages_written += disco.writes();
+  // Se cierra para que el merge lo pueda abrir.
+  longitudes_.reset();
   terminado_ = true;
 }
 

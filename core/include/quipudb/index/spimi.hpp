@@ -65,6 +65,21 @@
 //   posting (termino, documento) queda entero en un solo bloque, y por
 //   termino los documentos siguen creciendo de un bloque al siguiente.
 //
+// La longitud de cada documento (#163)
+// ------------------------------------
+//
+//   BM25 necesita cuanto mide cada documento, y la unica vez que se ven los
+//   documentos es esta pasada. La longitud es la cantidad de terminos que deja
+//   el tokenizador, con repeticiones: sin stopwords y ya stemmeados, que es lo
+//   que el ranking compara. Es igual a la suma de los tf de sus postings.
+//
+//   No se acumula en memoria: con 100 000 documentos seria una lista que
+//   crece sin limite, por fuera del presupuesto. Se escribe de corrido a un
+//   archivo propio, (u32 doc, u32 longitud) por documento, y como los
+//   documentos llegan en orden queda ordenado por doc sin hacer nada. El
+//   merge (#162) lo copia al indice. Su costo de memoria es una pagina,
+//   fija, ademas del presupuesto del diccionario.
+//
 // El formato de un bloque
 // -----------------------
 //
@@ -195,6 +210,16 @@ class SpimiIndexer {
 
   [[nodiscard]] std::size_t documents() const noexcept { return documentos_; }
 
+  /// Suma de las longitudes de todos los documentos: terminos que dejo el
+  /// tokenizador, con repeticiones.
+  [[nodiscard]] std::uint64_t total_length() const noexcept { return longitud_total_; }
+
+  /// El archivo con la longitud de cada documento. Completo recien despues de
+  /// `finish()`; el indexador lo borra al destruirse, igual que los bloques.
+  [[nodiscard]] const std::filesystem::path& lengths_file() const noexcept {
+    return longitudes_ruta_;
+  }
+
   /// Si ya se llamo a `finish()`: recien ahi los bloques estan completos.
   [[nodiscard]] bool finished() const noexcept { return terminado_; }
   [[nodiscard]] const TextTokenizer& tokenizer() const noexcept { return tokenizer_; }
@@ -209,7 +234,8 @@ class SpimiIndexer {
   [[nodiscard]] std::size_t blocks_written() const noexcept { return bloques_.size(); }
 
   /// Lo que costo la construccion:
-  ///   - `pages_written`: paginas de datos de todos los bloques;
+  ///   - `pages_written`: paginas de datos de todos los bloques y del archivo
+  ///     de longitudes;
   ///   - `pages_read`: 0, porque SPIMI no relee nada -- es una sola pasada,
   ///     de ahi el nombre. Lo que se lee de los bloques lo cuenta el merge;
   ///   - `records_examined`: documentos procesados;
@@ -233,6 +259,14 @@ class SpimiIndexer {
   OpStats stats_;
 
   std::vector<std::filesystem::path> bloques_;
+
+  /// El archivo de longitudes y su escritor, abiertos hasta `finish()`. Van
+  /// detras de un puntero porque el escritor es interno del core.
+  struct Longitudes;
+  std::filesystem::path longitudes_ruta_;
+  std::unique_ptr<Longitudes> longitudes_;
+  std::uint64_t longitud_total_ = 0;
+
   std::size_t documentos_ = 0;
   bool hay_documento_ = false;
   DocId ultimo_ = 0;
