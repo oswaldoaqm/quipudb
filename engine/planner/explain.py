@@ -9,6 +9,7 @@ from engine.parser.bound_ast import (
     BoundCondition,
     BoundDistanceOrderBy,
     BoundJoinRef,
+    BoundMatchCondition,
     BoundSelectStatement,
     BoundSource,
     BoundTableRef,
@@ -22,7 +23,7 @@ from engine.planner.optimizer import (
     PhysicalSource,
     PhysicalTableAccess,
 )
-from engine.planner.plan import Op, Plan, Step, Structure
+from engine.planner.plan import Op, Plan, Stats, Step, Structure
 
 
 def explain_select(
@@ -194,6 +195,16 @@ def _access_step(
     index = access.index
     if index is None:  # protegido por PhysicalTableAccess
         raise ValueError(f"la ruta {access.route.value} necesita un indice")
+    if access.route is AccessRoute.TEXT_SEARCH:
+        return Step(
+            op=Op.FETCH,
+            structure=access.table.structure,
+            table=table_name,
+            detail="lee los registros en el orden de relevancia del indice",
+            children=[
+                text_search_step(access, condition, source, table_name=table_name)
+            ],
+        )
     operation = {
         AccessRoute.INDEX_SEARCH: Op.INDEX_SEARCH,
         AccessRoute.INDEX_RANGE: Op.INDEX_RANGE,
@@ -215,6 +226,53 @@ def _access_step(
         detail="lee los registros que indiquen los RID del indice",
         children=[index_step],
     )
+
+
+def text_search_step(
+    access: PhysicalTableAccess,
+    condition: BoundCondition,
+    source: str,
+    *,
+    table_name: str,
+    stats: Stats | None = None,
+    time_ms: float = 0.0,
+) -> Step:
+    """El paso ``text_search`` de MATCH (#170), sin su ``fetch``.
+
+    Lo arman igual EXPLAIN, la ejecucion en memoria y la externa: el ranking va
+    como campo (``ranking``) y el detalle dice si fue elegido o por omision y
+    cuantos documentos se le pidieron al indice.
+    """
+
+    if not isinstance(condition, BoundMatchCondition):
+        raise TypeError("text_search necesita MATCH")
+    index = access.index
+    if index is None:  # protegido por PhysicalTableAccess
+        raise ValueError("text_search necesita un indice")
+    ranking = text_ranking_name(condition)
+    elegido = "elegido con USING" if condition.ranking_explicit else "por omision"
+    pedidos = (
+        "todos los que coinciden" if access.text_limit is None else f"top-{access.text_limit}"
+    )
+    return Step(
+        op=Op.TEXT_SEARCH,
+        structure=index.structure,
+        table=table_name,
+        column=condition.column.column.name,
+        detail=(
+            f"indice {index.name}; {_condition_text(condition, source)}; "
+            f"ranking {ranking} ({elegido}); {pedidos}"
+        ),
+        stats=stats if stats is not None else Stats(),
+        time_ms=time_ms,
+        ranking=ranking,
+    )
+
+
+def text_ranking_name(condition: BoundMatchCondition) -> str:
+    """El nombre del ranking como lo nombra el core y el plan: tf_idf o bm25."""
+
+    return condition.ranking.value.lower()
 
 
 def _join_structure(join: PhysicalJoin) -> Structure:

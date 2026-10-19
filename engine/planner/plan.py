@@ -97,6 +97,11 @@ class Step:
     puede mostrar ambos niveles con `subtree_stats()` y `subtree_time_ms()`.
     `detail` es texto libre y legible para la persona (el predicado, la clave
     de orden, cuantos RIDs se resolvieron); no se parsea.
+
+    `ranking` es el ranking de una busqueda de texto (#170): "tf_idf" o "bm25"
+    en el paso `text_search`, ``None`` en los demas. Es un campo y no parte de
+    `detail` por la regla 4 del ADR 0002: un dato que alguien necesita leer no
+    se esconde en texto libre.
     """
 
     op: Op
@@ -107,6 +112,7 @@ class Step:
     stats: Stats = field(default_factory=Stats)
     time_ms: float = 0.0
     children: list[Step] = field(default_factory=list)
+    ranking: str | None = None
 
     def subtree_stats(self) -> Stats:
         total = self.stats
@@ -134,6 +140,7 @@ class Step:
             "detail": self.detail,
             "stats": self.stats.to_dict(),
             "time_ms": round(self.time_ms, 3),
+            "ranking": self.ranking,
             "children": [c.to_dict() for c in self.children],
         }
 
@@ -148,6 +155,7 @@ class Step:
             stats=Stats.from_dict(d.get("stats", {})),
             time_ms=float(d.get("time_ms", 0.0)),
             children=[cls.from_dict(c) for c in d.get("children", [])],
+            ranking=d.get("ranking"),
         )
 
 
