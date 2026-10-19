@@ -61,6 +61,30 @@
 //   consulta tiene que tokenizarse igual que los documentos (#160), y el
 //   indice es quien sabe como fueron tokenizados.
 //
+// Las estadisticas de los rankings (#163)
+// ---------------------------------------
+//
+//   Ademas de los postings, TF-IDF y BM25 necesitan:
+//
+//     df        en cuantos documentos esta cada termino: va en el diccionario.
+//     N         cuantos documentos hay, contando los que quedaron sin
+//               terminos: va en el area meta.
+//     |d|       cuanto mide cada documento, en terminos: un quinto flujo,
+//               (u32 doc, u32 longitud) en orden de doc, copiado del archivo
+//               de longitudes del SPIMI.
+//     avgdl     la longitud promedio: la suma de las longitudes, que va en el
+//               area meta, dividida por N.
+//
+//   Las longitudes se cargan en memoria la primera vez que se piden -- 8
+//   bytes por documento, 800 KB con 100 000 documentos -- porque BM25 las
+//   consulta una vez por posting y leerlas de disco cada vez seria una pagina
+//   por posting.
+//
+//   El indice NO se actualiza: un documento nuevo cambia N, avgdl y el df de
+//   cada uno de sus terminos, y con eso el peso de terminos de documentos que
+//   ni se tocaron. Agregar documentos es reconstruir el indice. Un INSERT
+//   sobre la tabla no se refleja en el indice hasta que se reconstruye.
+//
 // Por que el resultado no depende de los bloques
 // ----------------------------------------------
 //
@@ -74,6 +98,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -132,6 +157,20 @@ class InvertedIndex {
 
   /// Postings en total, sumando todas las listas.
   [[nodiscard]] std::uint64_t postings() const noexcept;
+
+  /// N: documentos indexados, incluidos los que quedaron sin terminos.
+  [[nodiscard]] std::uint64_t documents() const noexcept;
+
+  /// Suma de las longitudes de todos los documentos.
+  [[nodiscard]] std::uint64_t total_length() const noexcept;
+
+  /// avgdl: la longitud promedio de un documento. 0 si no hay documentos.
+  [[nodiscard]] double average_document_length() const noexcept;
+
+  /// Cuantos terminos tiene el documento `doc` despues de tokenizar, con
+  /// repeticiones; vacio si `doc` no esta en el indice. La primera llamada
+  /// carga todas las longitudes.
+  [[nodiscard]] std::optional<std::uint32_t> document_length(DocId doc);
 
   /// Con que opciones se tokenizaron los documentos. La consulta tiene que
   /// usar las mismas.

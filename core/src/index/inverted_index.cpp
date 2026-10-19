@@ -29,7 +29,7 @@ using detail::PosicionFlujo;
 /// construcciones iguales tienen que dar los mismos bytes.
 struct MetaIndice {
   char magic[4] = {'Q', 'P', 'I', 'I'};
-  std::uint16_t version = 1;
+  std::uint16_t version = 2;
   std::uint16_t reservado = 0;
   std::uint64_t terminos = 0;
   std::uint64_t postings = 0;
@@ -39,12 +39,17 @@ struct MetaIndice {
   std::uint32_t disperso_entradas = 0;
   PageId opciones = kInvalidPage;
   std::uint32_t opciones_bytes = 0;
+  // Version 2 (#163): las estadisticas de los rankings.
+  std::uint32_t documentos = 0;
+  PageId longitudes = kInvalidPage;
+  std::uint64_t longitud_total = 0;
 };
-static_assert(sizeof(MetaIndice) == 48, "sin relleno: el archivo tiene que ser reproducible");
+static_assert(sizeof(MetaIndice) == 64, "sin relleno: el archivo tiene que ser reproducible");
 static_assert(sizeof(MetaIndice) <= DiskManager::kMetaSize);
 
 constexpr char kMagic[4] = {'Q', 'P', 'I', 'I'};
-constexpr std::uint16_t kVersion = 1;
+/// La 1 (#162) no tenia N ni las longitudes de los documentos.
+constexpr std::uint16_t kVersion = 2;
 
 /// Bytes fijos de una entrada del diccionario, ademas del termino:
 /// u16 largo, u32 df, u32 pagina, u16 offset.
@@ -387,6 +392,31 @@ InvertedIndexBuild InvertedIndex::build(const SpimiIndexer& spimi,
       meta.opciones = opciones.primera();
       meta.opciones_bytes = static_cast<std::uint32_t>(opciones.bytes());
 
+      // Las longitudes se copian tal cual del archivo del SPIMI: ya estan en
+      // orden de documento. De a una pagina, para no cargarlas enteras.
+      const auto ml = detail::leer_meta_longitudes(spimi.lengths_file(), page_size);
+      if (ml.documentos != spimi.documents()) {
+        throw IoError("SPIMI: el archivo de longitudes tiene " + std::to_string(ml.documentos) +
+                      " documentos y el indexador " + std::to_string(spimi.documents()));
+      }
+      {
+        DiskManager origen(spimi.lengths_file(), page_size);
+        LectorDePaginas lector(origen, {ml.primera, 0}, ml.bytes);
+        EscritorDePaginas longitudes(disco);
+        std::vector<std::byte> trozo(page_size);
+        for (std::uint64_t quedan = ml.bytes; quedan > 0;) {
+          const auto n = static_cast<std::size_t>(std::min<std::uint64_t>(trozo.size(), quedan));
+          lector.leer(std::span(trozo).first(n));
+          longitudes.escribir(std::span<const std::byte>(trozo).first(n));
+          quedan -= n;
+        }
+        longitudes.cerrar();
+        meta.longitudes = longitudes.primera();
+        stats.pages_read += origen.reads();
+      }
+      meta.documentos = static_cast<std::uint32_t>(ml.documentos);
+      meta.longitud_total = ml.longitud_total;
+
       disco.write_meta(std::as_bytes(std::span<const MetaIndice, 1>(&meta, 1)));
       disco.flush();
       stats.pages_written += disco.writes();
@@ -439,6 +469,9 @@ class InvertedIndex::Impl {
   MetaIndice meta;
   std::vector<std::pair<std::string, PageId>> disperso;
   TokenizerOptions opciones;
+  /// Las longitudes de los documentos, en orden de doc. Se cargan en la
+  /// primera consulta.
+  std::optional<std::vector<detail::LongitudDocumento>> longitudes;
   OpStats stats;
 };
 
@@ -476,6 +509,30 @@ InvertedIndex::~InvertedIndex() = default;
 
 std::uint64_t InvertedIndex::terms() const noexcept { return impl_->meta.terminos; }
 std::uint64_t InvertedIndex::postings() const noexcept { return impl_->meta.postings; }
+std::uint64_t InvertedIndex::documents() const noexcept { return impl_->meta.documentos; }
+std::uint64_t InvertedIndex::total_length() const noexcept { return impl_->meta.longitud_total; }
+
+double InvertedIndex::average_document_length() const noexcept {
+  const auto n = impl_->meta.documentos;
+  return n == 0 ? 0.0 : static_cast<double>(impl_->meta.longitud_total) / static_cast<double>(n);
+}
+
+std::optional<std::uint32_t> InvertedIndex::document_length(DocId doc) {
+  auto& longitudes = impl_->longitudes;
+  if (!longitudes) {
+    longitudes.emplace(impl_->meta.documentos);
+    const std::uint64_t antes = impl_->disco.reads();
+    LectorDePaginas lector(impl_->disco, {impl_->meta.longitudes, 0},
+                           longitudes->size() * sizeof(detail::LongitudDocumento));
+    lector.leer(std::as_writable_bytes(std::span(*longitudes)));
+    impl_->stats.pages_read += impl_->disco.reads() - antes;
+  }
+  const auto it = std::lower_bound(
+      longitudes->begin(), longitudes->end(), doc,
+      [](const detail::LongitudDocumento& l, DocId d) { return l.doc < d; });
+  if (it == longitudes->end() || it->doc != doc) return std::nullopt;
+  return it->longitud;
+}
 
 const TokenizerOptions& InvertedIndex::tokenizer_options() const noexcept {
   return impl_->opciones;
