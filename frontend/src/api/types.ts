@@ -16,6 +16,7 @@ export type Op =
   | "radius_search"
   | "knn_search"
   | "polygon_search"
+  | "text_search"
   | "fetch"
   | "filter"
   | "project"
@@ -63,6 +64,12 @@ export interface Step {
   detail: string;
   stats: Stats;
   time_ms: number;
+  /**
+   * Ranking de una busqueda de texto: "tf_idf" o "bm25" en `text_search`, null
+   * en los demas pasos (#170). Opcional porque los planes de prueba del
+   * simulador no lo traen.
+   */
+  ranking?: string | null;
   children: Step[];
 }
 

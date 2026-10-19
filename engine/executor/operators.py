@@ -31,7 +31,7 @@ from engine.parser.bound_ast import (
     BoundSource,
     BoundValue,
 )
-from engine.planner.explain import score_order_detail
+from engine.planner.explain import score_order_detail, text_search_step
 from engine.planner.optimizer import (
     AccessRoute,
     JoinStrategy,
@@ -521,15 +521,25 @@ def _read_candidates(
     else:
         raise ValueError(f"ruta de SELECT desconocida: {plan.route!r}")
 
-    index_step = Step(
-        op=index_op,
-        structure=index_metadata.structure,
-        table=table_name,
-        column=column_name,
-        detail=detail,
-        stats=index_measurement.stats,
-        time_ms=index_measurement.time_ms,
-    )
+    if plan.route is AccessRoute.TEXT_SEARCH:
+        index_step = text_search_step(
+            plan,
+            condition,
+            source,
+            table_name=table_name,
+            stats=index_measurement.stats,
+            time_ms=index_measurement.time_ms,
+        )
+    else:
+        index_step = Step(
+            op=index_op,
+            structure=index_metadata.structure,
+            table=table_name,
+            column=column_name,
+            detail=detail,
+            stats=index_measurement.stats,
+            time_ms=index_measurement.time_ms,
+        )
     rids = index_measurement.value
 
     def fetch() -> list[Any]:

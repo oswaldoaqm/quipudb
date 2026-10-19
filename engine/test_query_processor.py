@@ -1244,3 +1244,57 @@ def test_score_sin_match_es_error_ubicado(db):
         processor.execute(sql)
 
     assert sql[caught.value.span.start : caught.value.span.end] == "SCORE()"
+
+
+# ---------------------------------------------------------------------------
+# El plan de MATCH (#170)
+# ---------------------------------------------------------------------------
+
+
+def _pasos(plan: dict) -> list[dict]:
+    """Los pasos del plan, de la raiz a las hojas."""
+
+    salida = [plan]
+    for hijo in plan["children"]:
+        salida.extend(_pasos(hijo))
+    return salida
+
+
+def _paso_texto(plan: dict) -> dict:
+    (texto,) = [p for p in _pasos(plan["root"]) if p["op"] == "text_search"]
+    return texto
+
+
+def test_explain_analyze_de_match_mide_el_indice_y_el_fetch(db):
+    processor = _arts(db)
+    sql = "SELECT id FROM arts WHERE MATCH(texto, 'oro camión') USING TF_IDF LIMIT 2"
+
+    analizado = processor.execute(f"EXPLAIN ANALYZE {sql}").plan.to_dict()
+    explicado = processor.execute(f"EXPLAIN {sql}").plan.to_dict()
+
+    texto = _paso_texto(analizado)
+    assert texto["structure"] == "inverted_index"
+    assert texto["ranking"] == "tf_idf"
+    assert texto["stats"]["pages_read"] > 0  # diccionario, listas y normas
+    assert texto["stats"]["records_returned"] == 2  # el top-2 que bajo al indice
+    (fetch,) = [p for p in _pasos(analizado["root"]) if p["op"] == "fetch"]
+    assert fetch["structure"] == "heap"
+    assert fetch["children"][0]["op"] == "text_search"
+    assert fetch["stats"]["pages_read"] > 0  # leer las filas por RID
+
+    # EXPLAIN tiene la misma forma, con los contadores en cero.
+    assert [p["op"] for p in _pasos(explicado["root"])] == [
+        p["op"] for p in _pasos(analizado["root"])
+    ]
+    assert _paso_texto(explicado)["ranking"] == "tf_idf"
+    assert _paso_texto(explicado)["stats"]["pages_read"] == 0
+
+
+def test_el_plan_de_match_sin_using_dice_bm25(db):
+    processor = _arts(db)
+
+    plan = processor.execute("SELECT id FROM arts WHERE MATCH(texto, 'oro')").plan.to_dict()
+
+    texto = _paso_texto(plan)
+    assert texto["ranking"] == "bm25"
+    assert "por omision" in texto["detail"]

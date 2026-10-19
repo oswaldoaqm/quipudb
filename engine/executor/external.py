@@ -30,6 +30,7 @@ from engine.parser.bound_ast import (
     BoundSchema,
     PointValue,
 )
+from engine.planner.explain import text_search_step
 from engine.planner.optimizer import (
     AccessRoute,
     GroupStrategy,
@@ -563,15 +564,25 @@ def _index_pipeline(
     else:
         raise ValueError(f"ruta externa desconocida: {plan.route!r}")
 
-    index_step = Step(
-        op=operation,
-        structure=metadata.structure,
-        table=table_name,
-        column=condition.column.column.name,
-        detail=_condition_text(condition, source),
-        stats=measured.stats,
-        time_ms=measured.time_ms,
-    )
+    if plan.route is AccessRoute.TEXT_SEARCH:
+        index_step = text_search_step(
+            plan.access,
+            condition,
+            source,
+            table_name=table_name,
+            stats=measured.stats,
+            time_ms=measured.time_ms,
+        )
+    else:
+        index_step = Step(
+            op=operation,
+            structure=metadata.structure,
+            table=table_name,
+            column=condition.column.column.name,
+            detail=_condition_text(condition, source),
+            stats=measured.stats,
+            time_ms=measured.time_ms,
+        )
     rids = measured.value
     table.reset_stats()
     timer = _Timer()
