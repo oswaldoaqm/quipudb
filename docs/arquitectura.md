@@ -1242,3 +1242,37 @@ el mismo archivo **byte por byte** con 1 bloque, con muchos y con cualquier
 fan-in. Las pruebas lo comparan con 1 bloque contra 3 presupuestos distintos y
 contra fan-in 2, 3 y 7: es la prueba que el issue sugeria, y detecta casi
 cualquier error del merge.
+
+### Estadisticas para los rankings (#163)
+
+Ademas de los postings, TF-IDF y BM25 necesitan cuatro numeros del corpus. El
+indice los guarda todos y los recupera al reabrir:
+
+| Estadistica | Donde vive | API |
+|---|---|---|
+| df: documentos que contienen el termino | entrada del diccionario (#162) | `document_frequency(t)` |
+| N: documentos indexados | area meta | `documents()` |
+| \|d\|: terminos del documento | flujo `(u32 doc, u32 longitud)` en orden de doc | `document_length(doc)` |
+| avgdl: longitud promedio | suma de longitudes en el area meta, dividida por N | `average_document_length()` |
+
+La **longitud** es la cantidad de terminos que deja el tokenizador, con
+repeticiones (sin stopwords, ya stemmeados): lo que el ranking compara, e igual
+a la suma de los tf de los postings del documento. Un documento vacio o de solo
+stopwords cuenta en N con longitud 0.
+
+El SPIMI no las acumula en memoria: las escribe de corrido a un archivo propio
+mientras recorre los documentos -- quedan en orden de doc sin hacer nada --, y
+el merge las copia al indice. `document_length` las carga en memoria la
+primera vez (8 bytes por documento), porque BM25 la consulta una vez por
+posting.
+
+El formato del indice pasa a la **version 2**; abrir uno de la version 1 es un
+`IoError`.
+
+#### El indice no se actualiza: se reconstruye
+
+Un documento nuevo cambia N, avgdl y el df de cada uno de sus terminos, y con
+eso el peso de terminos de documentos que no se tocaron. No hay forma de
+agregarlo sin recalcular todo, asi que el indice de texto **no** se actualiza
+incrementalmente: un INSERT sobre la tabla no se refleja en el indice hasta
+que se reconstruye.
