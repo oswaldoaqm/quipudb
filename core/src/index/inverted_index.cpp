@@ -1,6 +1,7 @@
 #include "quipudb/index/inverted_index.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <iterator>
 #include <optional>
@@ -14,6 +15,7 @@
 #include "../external/temporales.hpp"
 #include "flujo_paginas.hpp"
 #include "quipudb/error.hpp"
+#include "quipudb/index/text_weights.hpp"
 #include "quipudb/storage/disk_manager.hpp"
 #include "quipudb/storage/page.hpp"
 #include "spimi_bloque.hpp"
@@ -25,11 +27,15 @@ using detail::EscritorDePaginas;
 using detail::LectorDePaginas;
 using detail::PosicionFlujo;
 
+/// La 1 (#162) no tenia N ni las longitudes de los documentos; la 2 (#163)
+/// no tenia las normas.
+constexpr std::uint16_t kVersion = 3;
+
 /// El area meta del indice. Sin relleno entre campos: se escribe cruda y dos
 /// construcciones iguales tienen que dar los mismos bytes.
 struct MetaIndice {
   char magic[4] = {'Q', 'P', 'I', 'I'};
-  std::uint16_t version = 2;
+  std::uint16_t version = kVersion;
   std::uint16_t reservado = 0;
   std::uint64_t terminos = 0;
   std::uint64_t postings = 0;
@@ -41,15 +47,30 @@ struct MetaIndice {
   std::uint32_t opciones_bytes = 0;
   // Version 2 (#163): las estadisticas de los rankings.
   std::uint32_t documentos = 0;
-  PageId longitudes = kInvalidPage;
+  /// El flujo por documento: `EstadisticaDocumento`, en orden de doc.
+  PageId por_documento = kInvalidPage;
   std::uint64_t longitud_total = 0;
 };
 static_assert(sizeof(MetaIndice) == 64, "sin relleno: el archivo tiene que ser reproducible");
 static_assert(sizeof(MetaIndice) <= DiskManager::kMetaSize);
 
 constexpr char kMagic[4] = {'Q', 'P', 'I', 'I'};
-/// La 1 (#162) no tenia N ni las longitudes de los documentos.
-constexpr std::uint16_t kVersion = 2;
+
+/// Lo que el indice guarda de cada documento: su longitud (#163) y la norma
+/// de su vector TF-IDF con cada variante de tf (#164).
+///
+/// Las normas se calculan al construir porque es el unico momento en que se
+/// recorren todos los postings con el df y el N definitivos. Calcularlas en la
+/// consulta seria recorrer el indice entero por cada busqueda. Se guardan las
+/// dos variantes para que la variante sea una opcion de la consulta y no del
+/// indice.
+struct EstadisticaDocumento {
+  DocId doc = 0;
+  std::uint32_t longitud = 0;
+  double norma_log = 0.0;
+  double norma_raw = 0.0;
+};
+static_assert(sizeof(EstadisticaDocumento) == 24, "sin relleno: se escribe cruda");
 
 /// Bytes fijos de una entrada del diccionario, ademas del termino:
 /// u16 largo, u32 df, u32 pagina, u16 offset.
@@ -361,6 +382,24 @@ InvertedIndexBuild InvertedIndex::build(const SpimiIndexer& spimi,
       EscritorDeDiccionario diccionario(disco);
       MetaIndice meta;
 
+      // Las longitudes del SPIMI, en orden de documento. Se cargan antes del
+      // merge porque las normas se acumulan por documento mientras se mezcla:
+      // 8 bytes por documento, mas 16 de las dos normas.
+      const auto ml = detail::leer_meta_longitudes(spimi.lengths_file(), page_size);
+      if (ml.documentos != spimi.documents()) {
+        throw IoError("SPIMI: el archivo de longitudes tiene " + std::to_string(ml.documentos) +
+                      " documentos y el indexador " + std::to_string(spimi.documents()));
+      }
+      std::vector<detail::LongitudDocumento> documentos(ml.documentos);
+      {
+        DiskManager origen(spimi.lengths_file(), page_size);
+        LectorDePaginas lector(origen, {ml.primera, 0}, ml.bytes);
+        lector.leer(std::as_writable_bytes(std::span(documentos)));
+        stats.pages_read += origen.reads();
+      }
+      std::vector<double> norma2_log(documentos.size(), 0.0);
+      std::vector<double> norma2_raw(documentos.size(), 0.0);
+
       fusionar(
           bloques, page_size,
           [&](const std::string& termino, const std::vector<Posting>& lista) {
@@ -369,6 +408,27 @@ InvertedIndexBuild InvertedIndex::build(const SpimiIndexer& spimi,
             diccionario.agregar(termino, static_cast<std::uint32_t>(lista.size()), inicio);
             ++meta.terminos;
             meta.postings += lista.size();
+
+            // La parte de este termino en la norma de cada documento. La lista
+            // y los documentos estan ordenados por doc, asi que cada busqueda
+            // empieza donde termino la anterior.
+            const double idf_t = idf(documentos.size(), lista.size());
+            if (idf_t == 0.0) return;
+            auto desde = documentos.begin();
+            for (const Posting& p : lista) {
+              desde = std::lower_bound(
+                  desde, documentos.end(), p.doc,
+                  [](const detail::LongitudDocumento& l, DocId d) { return l.doc < d; });
+              if (desde == documentos.end() || desde->doc != p.doc) {
+                throw IoError("SPIMI: el documento " + std::to_string(p.doc) +
+                              " tiene postings pero no longitud");
+              }
+              const auto i = static_cast<std::size_t>(desde - documentos.begin());
+              const double w_log = tf_weight(p.tf, TfWeight::kLog) * idf_t;
+              const double w_raw = tf_weight(p.tf, TfWeight::kRaw) * idf_t;
+              norma2_log[i] += w_log * w_log;
+              norma2_raw[i] += w_raw * w_raw;
+            }
           },
           stats);
       postings.cerrar();
@@ -392,28 +452,14 @@ InvertedIndexBuild InvertedIndex::build(const SpimiIndexer& spimi,
       meta.opciones = opciones.primera();
       meta.opciones_bytes = static_cast<std::uint32_t>(opciones.bytes());
 
-      // Las longitudes se copian tal cual del archivo del SPIMI: ya estan en
-      // orden de documento. De a una pagina, para no cargarlas enteras.
-      const auto ml = detail::leer_meta_longitudes(spimi.lengths_file(), page_size);
-      if (ml.documentos != spimi.documents()) {
-        throw IoError("SPIMI: el archivo de longitudes tiene " + std::to_string(ml.documentos) +
-                      " documentos y el indexador " + std::to_string(spimi.documents()));
+      EscritorDePaginas por_documento(disco);
+      for (std::size_t i = 0; i < documentos.size(); ++i) {
+        const EstadisticaDocumento e{documentos[i].doc, documentos[i].longitud,
+                                     std::sqrt(norma2_log[i]), std::sqrt(norma2_raw[i])};
+        por_documento.escribir(e);
       }
-      {
-        DiskManager origen(spimi.lengths_file(), page_size);
-        LectorDePaginas lector(origen, {ml.primera, 0}, ml.bytes);
-        EscritorDePaginas longitudes(disco);
-        std::vector<std::byte> trozo(page_size);
-        for (std::uint64_t quedan = ml.bytes; quedan > 0;) {
-          const auto n = static_cast<std::size_t>(std::min<std::uint64_t>(trozo.size(), quedan));
-          lector.leer(std::span(trozo).first(n));
-          longitudes.escribir(std::span<const std::byte>(trozo).first(n));
-          quedan -= n;
-        }
-        longitudes.cerrar();
-        meta.longitudes = longitudes.primera();
-        stats.pages_read += origen.reads();
-      }
+      por_documento.cerrar();
+      meta.por_documento = por_documento.primera();
       meta.documentos = static_cast<std::uint32_t>(ml.documentos);
       meta.longitud_total = ml.longitud_total;
 
@@ -469,9 +515,25 @@ class InvertedIndex::Impl {
   MetaIndice meta;
   std::vector<std::pair<std::string, PageId>> disperso;
   TokenizerOptions opciones;
-  /// Las longitudes de los documentos, en orden de doc. Se cargan en la
-  /// primera consulta.
-  std::optional<std::vector<detail::LongitudDocumento>> longitudes;
+  /// Lo que se sabe de cada documento, en orden de doc. Se carga en la
+  /// primera consulta que lo necesita.
+  std::optional<std::vector<EstadisticaDocumento>> por_documento;
+
+  const EstadisticaDocumento* estadistica(DocId doc) {
+    if (!por_documento) {
+      por_documento.emplace(meta.documentos);
+      const std::uint64_t antes = disco.reads();
+      LectorDePaginas lector(disco, {meta.por_documento, 0},
+                             por_documento->size() * sizeof(EstadisticaDocumento));
+      lector.leer(std::as_writable_bytes(std::span(*por_documento)));
+      stats.pages_read += disco.reads() - antes;
+    }
+    const auto it = std::lower_bound(
+        por_documento->begin(), por_documento->end(), doc,
+        [](const EstadisticaDocumento& e, DocId d) { return e.doc < d; });
+    if (it == por_documento->end() || it->doc != doc) return nullptr;
+    return &*it;
+  }
   OpStats stats;
 };
 
@@ -518,20 +580,15 @@ double InvertedIndex::average_document_length() const noexcept {
 }
 
 std::optional<std::uint32_t> InvertedIndex::document_length(DocId doc) {
-  auto& longitudes = impl_->longitudes;
-  if (!longitudes) {
-    longitudes.emplace(impl_->meta.documentos);
-    const std::uint64_t antes = impl_->disco.reads();
-    LectorDePaginas lector(impl_->disco, {impl_->meta.longitudes, 0},
-                           longitudes->size() * sizeof(detail::LongitudDocumento));
-    lector.leer(std::as_writable_bytes(std::span(*longitudes)));
-    impl_->stats.pages_read += impl_->disco.reads() - antes;
-  }
-  const auto it = std::lower_bound(
-      longitudes->begin(), longitudes->end(), doc,
-      [](const detail::LongitudDocumento& l, DocId d) { return l.doc < d; });
-  if (it == longitudes->end() || it->doc != doc) return std::nullopt;
-  return it->longitud;
+  const EstadisticaDocumento* e = impl_->estadistica(doc);
+  if (e == nullptr) return std::nullopt;
+  return e->longitud;
+}
+
+std::optional<double> InvertedIndex::document_norm(DocId doc, TfWeight tf) {
+  const EstadisticaDocumento* e = impl_->estadistica(doc);
+  if (e == nullptr) return std::nullopt;
+  return tf == TfWeight::kRaw ? e->norma_raw : e->norma_log;
 }
 
 const TokenizerOptions& InvertedIndex::tokenizer_options() const noexcept {
