@@ -1266,7 +1266,7 @@ el merge las copia al indice. `document_length` las carga en memoria la
 primera vez (8 bytes por documento), porque BM25 la consulta una vez por
 posting.
 
-El formato del indice pasa a la **version 2**; abrir uno de la version 1 es un
+El formato del indice paso a la **version 2** (#163); abrir uno de una version anterior es un
 `IoError`.
 
 #### El indice no se actualiza: se reconstruye
@@ -1276,3 +1276,52 @@ eso el peso de terminos de documentos que no se tocaron. No hay forma de
 agregarlo sin recalcular todo, asi que el indice de texto **no** se actualiza
 incrementalmente: un INSERT sobre la tabla no se refleja en el indice hasta
 que se reconstruye.
+
+### Ranking TF-IDF con similitud del coseno (#164)
+
+`TfIdfRanking` (`core/include/quipudb/index/tfidf_ranking.hpp`) devuelve los k
+documentos mas parecidos a una consulta en texto libre. Implementa
+`TextRanking`, la interfaz que comparte con BM25 (#165) para que el parser y
+el benchmark los intercambien.
+
+#### La formula exacta
+
+```
+             sum_t  w(t,q) * w(t,d)
+cos(q, d) = -------------------------        w(t,x) = tf_w(tf_{t,x}) * log10(N / df_t)
+                ||q|| * ||d||
+```
+
+| Variante de `tf_w` | Formula | Para que |
+|---|---|---|
+| `kLog` (por omision) | `1 + log10(tf)` | la *log-frequency weighting*: 10 apariciones no hacen a un documento 10 veces mas relevante |
+| `kRaw` | `tf` | la del ejemplo resuelto de la diapositiva, que se reproduce exactamente |
+
+El idf es `log10(N / df)`, sin suavizado. La consulta se pesa igual que los
+documentos, con el tf de cada termino en la consulta. Un termino que esta en
+todos los documentos tiene idf 0, no pesa, y su lista ni se lee. Solo salen
+documentos con coseno mayor que 0; a igual puntaje, por doc creciente.
+
+#### Solo se leen las listas de la consulta
+
+El producto escalar solo tiene terminos de la consulta: se recorren sus listas
+y se acumula por documento. La norma `||d||`, en cambio, depende de todos los
+terminos del documento, y calcularla en la consulta seria recorrer el indice
+entero. Por eso el indice la calcula en la pasada final del merge, cuando ya
+conoce df y N, y la guarda junto a la longitud de cada documento -- con las
+dos variantes, para que la variante se elija en la consulta. El formato del
+indice pasa a la **version 3**.
+
+El indice recuerda la ultima entrada del diccionario que encontro: el ranking
+pide el df de un termino (para saltar los de idf 0) y enseguida su lista, y la
+segunda busqueda no vuelve a leer la pagina del diccionario.
+
+#### El ejemplo de la diapositiva
+
+Con `kRaw`, la consulta "oro plata camion" sobre los tres documentos del
+ejemplo da D2 = 0.7562, D3 = 0.3272 y D1 = 0.0801, en ese orden. La
+diapositiva dice 0.00801 para D1, pero es una errata: el producto escalar es
+0.1761^2 = 0.0310, y 0.0310 / (0.5382 x 0.7192) = 0.0801. Las pruebas fijan
+los tres valores con 12 decimales, y ademas comparan el ranking contra un
+coseno calculado por fuerza bruta sobre todos los vectores de un corpus de 400
+documentos, con las dos variantes.

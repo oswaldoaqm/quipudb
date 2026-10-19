@@ -320,9 +320,15 @@ TEST_F(IndiceInvertido, BuscarLeeUnaPaginaDelDiccionario) {
   EXPECT_EQ(indice.stats().pages_read, 0U);
 
   indice.reset_stats();
-  const auto lista = indice.postings("w0");
+  const auto lista = indice.postings("w1");
   EXPECT_GE(indice.stats().pages_read, 2U);  // el diccionario y al menos una de la lista
   EXPECT_EQ(indice.stats().records_returned, lista.size());
+
+  // Pedir otra vez el mismo termino -- el df y despues la lista, como hacen
+  // los rankings -- no relee la pagina del diccionario.
+  indice.reset_stats();
+  EXPECT_EQ(indice.document_frequency("w1"), lista.size());
+  EXPECT_EQ(indice.stats().pages_read, 0U);
 }
 
 }  // namespace

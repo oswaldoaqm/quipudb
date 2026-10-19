@@ -6,6 +6,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <map>
@@ -102,6 +103,60 @@ TEST_F(EstadisticasTexto, LaTablaDeDfDelEjemploTfIdf) {
   EXPECT_DOUBLE_EQ(indice.average_document_length(), 14.0 / 3.0);
 }
 
+TEST_F(EstadisticasTexto, LasNormasDelEjemploTfIdf) {
+  // Las normas de los vectores W1, W2 y W3 de la diapositiva, con
+  // idf = log10(3 / df):
+  //   W1 = (danado .4771, fuego .4771, oro .1761, cargamento .1761)
+  //   W2 = (entrega .4771, plata 2 x .4771, llego .1761, camion .1761, color .4771)
+  //   W3 = (oro, llego, cargamento, camion: .1761 cada uno)
+  // Con tf crudo, plata pesa 0.9542 en W2; con 1 + log10(tf), 0.6207.
+  InvertedIndex indice(indexar({{1, "Cargamento de oro dañado por el fuego"},
+                                {2, "La entrega de la plata llegó en el camión color plata"},
+                                {3, "El cargamento de oro llegó en un camión"}},
+                               sin_stemmer()));
+  constexpr double kTol = 1e-12;
+  EXPECT_NEAR(*indice.document_norm(1, TfWeight::kRaw), 0.719239630751, kTol);
+  EXPECT_NEAR(*indice.document_norm(2, TfWeight::kRaw), 1.194941175650, kTol);
+  EXPECT_NEAR(*indice.document_norm(3, TfWeight::kRaw), 0.352182518111, kTol);
+  EXPECT_NEAR(*indice.document_norm(1, TfWeight::kLog), 0.719239630751, kTol);
+  EXPECT_NEAR(*indice.document_norm(2, TfWeight::kLog), 0.950071074630, kTol);
+  EXPECT_NEAR(*indice.document_norm(3, TfWeight::kLog), 0.352182518111, kTol);
+  EXPECT_EQ(indice.document_norm(4, TfWeight::kLog), std::nullopt);
+}
+
+TEST_F(EstadisticasTexto, UnDocumentoSinPesoTieneNormaCero) {
+  // "casa" esta en los tres documentos: idf 0, no pesa.
+  InvertedIndex todos(indexar({{1, "casa sol"}, {2, "casa"}, {3, "casa casa"}}, sin_stemmer()));
+  EXPECT_GT(*todos.document_norm(1, TfWeight::kLog), 0.0);
+  EXPECT_EQ(*todos.document_norm(2, TfWeight::kLog), 0.0);
+  EXPECT_EQ(*todos.document_norm(3, TfWeight::kRaw), 0.0);
+
+  // Un documento sin terminos.
+  InvertedIndex vacio(indexar({{1, "sol"}, {2, ""}}, sin_stemmer()));
+  EXPECT_EQ(*vacio.document_norm(2, TfWeight::kLog), 0.0);
+}
+
+TEST_F(EstadisticasTexto, LasNormasCoincidenConElCorpusEntero) {
+  const auto docs = prueba::corpus(300);
+  std::vector<std::pair<DocId, std::string>> con_id;
+  for (std::size_t i = 0; i < docs.size(); ++i) con_id.emplace_back(DocId(i + 1), docs[i]);
+  InvertedIndex indice(indexar(con_id, TokenizerOptions{}, SpimiOptions{.memory_budget = 8192}));
+
+  std::map<DocId, double> log2;
+  std::map<DocId, double> raw2;
+  for (const auto& [termino, lista] : prueba::oraculo(docs, TokenizerOptions{})) {
+    const double i = idf(docs.size(), lista.size());
+    for (const Posting& p : lista) {
+      log2[p.doc] += std::pow(tf_weight(p.tf, TfWeight::kLog) * i, 2);
+      raw2[p.doc] += std::pow(tf_weight(p.tf, TfWeight::kRaw) * i, 2);
+    }
+  }
+  for (DocId d = 1; d <= docs.size(); ++d) {
+    EXPECT_NEAR(*indice.document_norm(d, TfWeight::kLog), std::sqrt(log2[d]), 1e-9) << d;
+    EXPECT_NEAR(*indice.document_norm(d, TfWeight::kRaw), std::sqrt(raw2[d]), 1e-9) << d;
+  }
+}
+
 TEST_F(EstadisticasTexto, LosDocumentosSinTerminosCuentanEnN) {
   // Un documento vacio o de solo stopwords no esta en ninguna lista de
   // postings, pero existe: cuenta en N y en el promedio, con longitud 0.
@@ -174,8 +229,9 @@ TEST_F(EstadisticasTexto, LasLongitudesSeCarganUnaSolaVez) {
   InvertedIndex indice(indexar(con_id));
 
   ASSERT_TRUE(indice.document_length(1).has_value());
-  // 2000 documentos de 8 bytes ocupan 4 paginas de 4 KB.
-  EXPECT_EQ(indice.stats().pages_read, 4U);
+  // 2000 documentos de 24 bytes (doc, longitud y las dos normas de #164)
+  // son 48 000 bytes: 12 paginas de 4 KB.
+  EXPECT_EQ(indice.stats().pages_read, 12U);
   indice.reset_stats();
   for (DocId d = 1; d <= 2000; ++d) ASSERT_TRUE(indice.document_length(d).has_value());
   EXPECT_EQ(indice.stats().pages_read, 0U);

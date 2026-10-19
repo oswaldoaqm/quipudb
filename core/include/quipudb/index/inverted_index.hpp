@@ -69,16 +69,19 @@
 //     df        en cuantos documentos esta cada termino: va en el diccionario.
 //     N         cuantos documentos hay, contando los que quedaron sin
 //               terminos: va en el area meta.
-//     |d|       cuanto mide cada documento, en terminos: un quinto flujo,
-//               (u32 doc, u32 longitud) en orden de doc, copiado del archivo
-//               de longitudes del SPIMI.
+//     |d|       cuanto mide cada documento, en terminos: un quinto flujo, en
+//               orden de doc, con la longitud que registro el SPIMI.
 //     avgdl     la longitud promedio: la suma de las longitudes, que va en el
 //               area meta, dividida por N.
+//     ||d||     la norma del vector TF-IDF de cada documento (#164), con las
+//               dos variantes de tf, en el mismo flujo que la longitud. Se
+//               calcula en la pasada final del merge, que es la unica vez que
+//               se ven todos los postings con su df y N definitivos.
 //
-//   Las longitudes se cargan en memoria la primera vez que se piden -- 8
-//   bytes por documento, 800 KB con 100 000 documentos -- porque BM25 las
-//   consulta una vez por posting y leerlas de disco cada vez seria una pagina
-//   por posting.
+//   Cada documento ocupa 24 bytes en ese flujo: doc, longitud y las dos
+//   normas. Se carga en memoria la primera vez que se pide -- 2.4 MB con
+//   100 000 documentos -- porque los rankings lo consultan una vez por
+//   posting y leerlo de disco cada vez seria una pagina por posting.
 //
 //   El indice NO se actualiza: un documento nuevo cambia N, avgdl y el df de
 //   cada uno de sus terminos, y con eso el peso de terminos de documentos que
@@ -106,6 +109,7 @@
 #include "quipudb/catalog/types.hpp"
 #include "quipudb/index/spimi.hpp"
 #include "quipudb/index/text_tokenizer.hpp"
+#include "quipudb/index/text_weights.hpp"
 
 namespace quipudb {
 
@@ -171,6 +175,12 @@ class InvertedIndex {
   /// repeticiones; vacio si `doc` no esta en el indice. La primera llamada
   /// carga todas las longitudes.
   [[nodiscard]] std::optional<std::uint32_t> document_length(DocId doc);
+
+  /// La norma euclidiana del vector TF-IDF del documento, con la variante de
+  /// tf pedida: la raiz de la suma de w(t, d)^2 sobre todos sus terminos. Es
+  /// el denominador del coseno (#164). Vacio si `doc` no esta; 0 si ninguno de
+  /// sus terminos pesa (sin terminos, o todos con idf 0).
+  [[nodiscard]] std::optional<double> document_norm(DocId doc, TfWeight tf);
 
   /// Con que opciones se tokenizaron los documentos. La consulta tiene que
   /// usar las mismas.
