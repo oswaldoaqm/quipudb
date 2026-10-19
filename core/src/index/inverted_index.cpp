@@ -487,6 +487,10 @@ class InvertedIndex::Impl {
 
   /// La entrada de `termino`, leyendo una pagina del diccionario.
   std::optional<EntradaDiccionario> buscar(std::string_view termino) {
+    // Los rankings piden el df de un termino y enseguida su lista: la segunda
+    // busqueda no vuelve a leer la pagina del diccionario.
+    if (ultima && ultima->termino == termino) return ultima;
+
     // La ultima pagina cuyo primer termino no es mayor que el buscado.
     const auto it = std::upper_bound(
         disperso.begin(), disperso.end(), termino,
@@ -496,10 +500,16 @@ class InvertedIndex::Impl {
     disco.read_page(std::prev(it)->second, pagina);
     ++stats.pages_read;
     for (auto& e : leer_pagina_diccionario(pagina)) {
-      if (e.termino == termino) return std::move(e);
+      if (e.termino == termino) {
+        ultima = std::move(e);
+        return ultima;
+      }
     }
     return std::nullopt;
   }
+
+  /// La ultima entrada encontrada.
+  std::optional<EntradaDiccionario> ultima;
 
   std::vector<Posting> leer_lista(const EntradaDiccionario& e) {
     std::vector<Posting> lista(e.df);
