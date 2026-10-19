@@ -1,6 +1,5 @@
 #include "quipudb/index/tfidf_ranking.hpp"
 
-#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <map>
@@ -10,15 +9,6 @@
 #include "quipudb/error.hpp"
 
 namespace quipudb {
-namespace {
-
-/// Mayor puntaje primero; a igual puntaje, el doc menor.
-bool antes(const ScoredDocument& a, const ScoredDocument& b) noexcept {
-  if (a.score != b.score) return a.score > b.score;
-  return a.doc < b.doc;
-}
-
-}  // namespace
 
 TfIdfRanking::TfIdfRanking(InvertedIndex& index, TfWeight tf)
     : index_(index), tokenizer_(index.tokenizer_options()), tf_(tf) {}
@@ -64,13 +54,7 @@ std::vector<ScoredDocument> TfIdfRanking::search(std::string_view query, std::si
       }
       resultado.push_back({doc, punto / (norma_consulta * *norma_doc)});
     }
-    if (k < resultado.size()) {
-      std::partial_sort(resultado.begin(), resultado.begin() + static_cast<std::ptrdiff_t>(k),
-                        resultado.end(), antes);
-      resultado.resize(k);
-    } else {
-      std::sort(resultado.begin(), resultado.end(), antes);
-    }
+    keep_top_k(resultado, k);
   }
 
   stats_.pages_read = index_.stats().pages_read - paginas_antes;
