@@ -455,12 +455,10 @@ class QueryProcessor:
 
         schema = from_native_schema(table_info.schema, self._native)
         bound = bind_create_index(statement, schema, source)
-        kind = {
-            "BPLUS_UNCLUSTERED": self._native.kind.BPLUS_UNCLUSTERED,
-            "EXTENDIBLE_HASH": self._native.kind.EXTENDIBLE_HASH,
-            "RTREE": self._native.kind.RTREE,
-            "INVERTED_INDEX": self._native.kind.INVERTED_INDEX,
-        }[bound.kind.value]
+        # Solo se lee la constante del tipo pedido: un modulo nativo que no
+        # conozca los demas (el falso de las pruebas, uno compilado antes de
+        # #166) sigue sirviendo para los que si conoce.
+        kind = getattr(self._native.kind, bound.kind.value)
         if bound.kind is IndexKind.INVERTED_INDEX:
             self._reject_second_text_index(table_info, schema, statement, source)
 
