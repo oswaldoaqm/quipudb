@@ -1464,3 +1464,28 @@ uno dejaba la tabla inservible:
 | Optimizador | `WHERE texto = 'x'` lo tomaba como candidato de igualdad y fallaba | solo B+ y hash son candidatos de igualdad y rango; la consulta recorre y filtra |
 | API (`GET /tables`) | `structure` no aceptaba `inverted_index`: el Panel de Archivos se quedaba vacio | agregado al `Literal` |
 | Frontend | el indice se rotulaba "solo igualdad" y el simulador rechazaba la sintaxis | rotulo "busqueda de texto" y la misma sintaxis y errores que el motor |
+
+### MATCH en SQL (#168)
+
+```sql
+SELECT * FROM documentos WHERE MATCH(contenido, 'base de datos vectorial') USING TF_IDF LIMIT 10;
+SELECT id FROM articulos WHERE MATCH(texto, 'machine learning') USING BM25;
+SELECT id FROM articulos WHERE MATCH(texto, 'machine learning');   -- BM25
+```
+
+`MATCH(columna, 'consulta') [USING TF_IDF | BM25]` es una condicion de
+`WHERE`, como `DISTANCIA` y `DENTRO`, y recorre el mismo camino: parser,
+semantica, una ruta del optimizador (`TEXT_SEARCH`) y un paso del plan
+(`text_search`) seguido de `fetch`.
+
+| Decision | Por que |
+|---|---|
+| Sin `USING`, BM25 | Normaliza por la longitud del documento y satura el tf; es el que usan MongoDB y Elasticsearch. TF-IDF hay que pedirlo |
+| Las filas salen por relevancia | Sin `ORDER BY`, el orden del resultado es el del ranking: el fetch lee los RID en el orden en que los entrega el indice |
+| `LIMIT k` baja al indice | Sin `ORDER BY` ni `GROUP BY`, el `LIMIT` es el top-k del ranking, y el indice lo resuelve con un heap de k en vez de devolver todo (`text_limit`, como `nearest_limit` del k-NN). Con `ORDER BY` o `GROUP BY` se piden todos y se corta despues |
+| Sin indice de texto, error | No hay un "recorrer y filtrar" que rankee: sin el corpus indexado no hay df, N ni avgdl. El error apunta a la columna y dice como crear el indice |
+| Sin filtro residual | Que documentos coinciden lo decide el indice; `matches()` en memoria lanza si alguien le pasa un `MATCH` |
+| No en `DELETE` ni con `JOIN` | `SQLUnsupportedError` ubicado: un `DELETE` no borra por relevancia, y el indice rankea documentos de una sola tabla |
+
+Antes de buscar, si la tabla cambio desde la ultima construccion, el indice se
+reconstruye (#167): `MATCH` siempre ve las filas actuales.

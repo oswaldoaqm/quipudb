@@ -462,6 +462,24 @@ número de cruces. Sin índice es `scan` + `filter`, con exactamente el mismo
 criterio de borde. `DENTRO` también sirve en `DELETE` y se combina con
 `ORDER BY` y `LIMIT`.
 
+#### Búsqueda de texto
+
+Con un índice de texto (`CREATE INDEX ... USING FULLTEXT`), `MATCH` busca por
+relevancia:
+
+```sql
+SELECT * FROM documentos
+WHERE MATCH(contenido, 'base de datos vectorial') USING TF_IDF LIMIT 10;
+```
+
+`USING TF_IDF` rankea por similitud del coseno entre vectores TF-IDF y
+`USING BM25` por BM25; sin `USING` se usa BM25. Las filas salen de la más a la
+menos relevante, así que `LIMIT k` son los k mejores, y sin `LIMIT` salen
+todas las que tienen algún término de la consulta. La consulta se tokeniza
+igual que los documentos: mayúsculas, tildes, stopwords y plurales no
+importan. `MATCH` exige un índice de texto sobre la columna, se combina con
+`ORDER BY` y `GROUP BY`, y no se admite en `DELETE` ni con `JOIN`.
+
 ### API REST
 
 | Ruta | Qué hace |
