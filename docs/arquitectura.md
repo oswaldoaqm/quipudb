@@ -1197,3 +1197,48 @@ guarda la version, las entradas y los bytes del flujo.
 (`records_returned`); `pages_read` es 0 porque SPIMI no relee nada. Los
 bloques se cuentan con `blocks_written()`, porque `OpStats` es el contrato
 comun y no tiene ese campo.
+
+### SPIMI: el merge y el indice invertido (#162)
+
+`InvertedIndex::build` (`core/include/quipudb/index/inverted_index.hpp`) mezcla
+los bloques del SPIMI en un solo archivo, y `InvertedIndex` lo abre para
+buscar.
+
+#### El merge
+
+Es el MergeBlocks de la diapositiva de BSBI: una cola de prioridad sobre el
+termino actual de cada bloque, con una pagina de lectura por bloque. Las
+listas de un termino se concatenan en orden de bloque y, como los documentos
+llegaron al SPIMI en orden, quedan ordenadas por docID sin ordenar nada. El
+merge lo verifica igual: un bloque fuera de orden es un `IoError`.
+
+Si hay mas bloques que el *fan-in* (64 por omision), se mezclan por grupos en
+bloques intermedios y se repite -- los niveles L1, L2 de la diapositiva --,
+porque cada bloque abierto es un archivo y una pagina. Las pasadas son
+`1 + niveles`, la misma cuenta `ceil(log_k(bloques))` del External Sorting.
+
+#### El archivo
+
+Tres flujos de paginas encadenadas (`Page::next`), escritos a la vez durante
+el merge, en un solo archivo:
+
+| Flujo | Contenido | Para que |
+|---|---|---|
+| postings | las listas, `(u32 doc, u32 tf)` de corrido | una lista puede cruzar paginas |
+| diccionario | `termino, df, (pagina, offset)` por termino, sin cruzar paginas | cada pagina se recorre sola |
+| disperso | primer termino de cada pagina del diccionario | se carga al abrir; ubica la pagina del diccionario |
+
+Es el diccionario con buckets de la diapositiva de SPIMI, con un nivel de
+indice encima como propone la siguiente. Buscar un termino es una busqueda
+binaria en memoria, **una** pagina del diccionario y las paginas de su lista;
+`document_frequency` lee solo la del diccionario. Un cuarto flujo guarda las
+opciones del tokenizador, para que la consulta se tokenice igual que los
+documentos.
+
+#### El resultado no depende de los bloques
+
+El archivo solo guarda el resultado de la mezcla, asi que el mismo corpus da
+el mismo archivo **byte por byte** con 1 bloque, con muchos y con cualquier
+fan-in. Las pruebas lo comparan con 1 bloque contra 3 presupuestos distintos y
+contra fan-in 2, 3 y 7: es la prueba que el issue sugeria, y detecta casi
+cualquier error del merge.
