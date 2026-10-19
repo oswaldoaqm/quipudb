@@ -44,7 +44,7 @@ class Op(StrEnum):
 
 
 class Structure(StrEnum):
-    """Que estructura ejecuto el paso. Las cinco primeras son `kind::` del core."""
+    """Que estructura ejecuto el paso. Las siete primeras son `kind::` del core."""
 
     HEAP = "heap"
     SEQUENTIAL = "sequential"
@@ -52,6 +52,7 @@ class Structure(StrEnum):
     BPLUS_UNCLUSTERED = "bplus_unclustered"
     EXTENDIBLE_HASH = "extendible_hash"
     RTREE = "rtree"
+    INVERTED_INDEX = "inverted_index"  # indice de texto de la Parte 3 (#166)
     EXTERNAL_SORT = "external_sort"  # external/ del core: k-way merge
     EXTERNAL_HASH = "external_hash"  # external/ del core: particiones en disco
     MEMORY = "memory"  # el paso no toco disco (filter, project, limit)

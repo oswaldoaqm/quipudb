@@ -80,6 +80,7 @@ class IndexMetadata:
             Structure.BPLUS_UNCLUSTERED,
             Structure.EXTENDIBLE_HASH,
             Structure.RTREE,
+            Structure.INVERTED_INDEX,
         }:
             raise ValueError(f"estructura de indice secundario invalida: {self.structure.value}")
         expected_range = self.structure is Structure.BPLUS_UNCLUSTERED
@@ -161,6 +162,8 @@ class PhysicalTableAccess:
                 raise ValueError("una ruta espacial necesita un indice R-Tree")
         elif self.index.structure is Structure.RTREE:
             raise ValueError("un R-Tree solo se usa con una ruta espacial")
+        elif self.index.structure is Structure.INVERTED_INDEX:
+            raise ValueError("un indice de texto no es una ruta de igualdad ni de rango")
         if self.nearest is not None and self.index.column != self.nearest.column.index:
             raise ValueError("el indice no corresponde a la columna del orden espacial")
 
@@ -705,10 +708,14 @@ def _best_index(
     for_range: bool,
     allow_hash: bool = True,
 ) -> IndexMetadata | None:
+    # Solo B+ y hash responden igualdad o rango. El R-Tree responde consultas
+    # espaciales, y el indice de texto, MATCH (#168): ninguno de los dos sabe
+    # si un texto es IGUAL a otro.
     candidates = [
         index
         for index in table.indexes
-        if index.column == column and index.structure is not Structure.RTREE
+        if index.column == column
+        and index.structure in {Structure.BPLUS_UNCLUSTERED, Structure.EXTENDIBLE_HASH}
     ]
     if for_range:
         candidates = [index for index in candidates if index.supports_range]
