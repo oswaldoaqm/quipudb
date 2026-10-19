@@ -1417,11 +1417,12 @@ tokenize("texto", opciones)           # lo que ve el indice, para depurar
 |---|---|
 | El texto vive en una columna `VARCHAR` | Es un dato mas de la tabla. `VARCHAR` es de largo fijo y el registro cabe en una pagina, asi que documentos largos piden una tabla con paginas mas grandes (hasta 64 KB). Leer el texto de archivos referenciados por la tabla queda para cuando un corpus no quepa |
 | Documentos numerados 1..N, mapeo a RID en `<indice>.rids` | El indice invertido usa ids densos. Meter el RID en un id de 32 bits limitaria la tabla a 65 535 paginas, y con `VARCHAR` de largo fijo un corpus de 100 000 documentos se acerca |
-| `insert`/`remove` lanzan `Unsupported` | El indice no se actualiza incrementalmente (#163): se reconstruye con `build()` |
+| `insert`/`remove` lo marcan **desactualizado** (#167) | No se puede actualizar fila por fila (#163), pero el DML y el deshacer de las transacciones le avisan de cada fila. La marca es un archivo `<indice>.desactualizado`, para que sobreviva al proceso, y `search_text` reconstruye antes de buscar: cargar 10 000 filas cuesta una reconstruccion, no 10 000, y ninguna busqueda devuelve un RID viejo |
 | `search(key)`, `range_search`, `scan` lanzan `Unsupported` | Igualdad u orden sobre textos no es lo que hace este indice; el mensaje dice que usar |
 | Solo sobre `VARCHAR` de un heap file | Como los demas indices secundarios: el RID tiene que ser estable |
 | `build()` construye al lado y reemplaza al final | Si falla a medias, el indice anterior sigue sirviendo |
 
-`Database::drop_index` y `drop_table` borran tambien el archivo de RIDs, y el
+`Database::drop_index` y `drop_table` borran tambien el archivo de RIDs y la
+marca de desactualizado, y el
 SPIMI escribe sus bloques temporales en el directorio del catalogo y los borra
 al terminar.

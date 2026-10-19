@@ -99,7 +99,6 @@ def test_se_reabre_desde_el_catalogo(db, tmp_path):
 def test_se_reconstruye_con_otras_opciones(db):
     ix = crear(db)
     db.table("documentos").insert([4, "The gold mines of the north"])
-    assert ix.search_text("mine", quipudb.TextRanking.BM25) == []
 
     opciones = quipudb.TokenizerOptions()
     opciones.stopword_languages = [quipudb.TextLanguage.ENGLISH]
@@ -122,8 +121,18 @@ def test_lo_que_no_aplica_lanza_unsupported(db):
     ix = crear(db)
     with pytest.raises(quipudb.Unsupported, match="search_text"):
         ix.search("oro")
-    with pytest.raises(quipudb.Unsupported, match="build"):
-        ix.insert("oro", quipudb.RID())
+    with pytest.raises(quipudb.Unsupported, match="search_text"):
+        ix.range_search("a", "z")
+
+
+def test_un_cambio_en_la_tabla_lo_desactualiza_y_buscar_lo_reconstruye(db):
+    """Lo que hace el DML: insertar en la tabla y avisarle al indice."""
+    ix = crear(db)
+    rid = db.table("documentos").insert([4, "Un fuego en la mina de oro"])
+    ix.insert("Un fuego en la mina de oro", rid)
+    assert ix.stale
+    assert ids(db, ix.search_text("mina", quipudb.TextRanking.BM25)) == [4]
+    assert not ix.stale
 
 
 def test_solo_sobre_columnas_varchar(db):

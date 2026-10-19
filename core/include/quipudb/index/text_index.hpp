@@ -29,17 +29,33 @@
 //   siguiente DocId (1, 2, 3...). El mapeo DocId -> RID se guarda en un
 //   archivo propio junto al indice, `<archivo>.rids`, y se carga al abrir.
 //
+// Cuando la tabla cambia: desactualizado, y se reconstruye al buscar
+// ------------------------------------------------------------------
+//
+//   El indice no se puede actualizar fila por fila (#163): un documento nuevo
+//   cambia N, avgdl y el df de sus terminos, y con eso el peso de documentos
+//   que ni se tocaron. Pero el motor SI le avisa de cada fila: quien inserta o
+//   borra en la tabla llama a `insert` y `remove` de todos sus indices, y lo
+//   mismo hace el deshacer de una transaccion.
+//
+//   Asi que `insert` y `remove` no tocan el indice: lo marcan como
+//   DESACTUALIZADO, y `search_text` lo reconstruye antes de buscar. Cargar
+//   10 000 filas cuesta una sola reconstruccion, en la siguiente busqueda, y
+//   no 10 000. Y ninguna busqueda devuelve un RID que ya no existe o un
+//   documento que no esta.
+//
+//   La marca es un archivo, `<archivo>.desactualizado`, y no solo un flag en
+//   memoria: si el proceso termina entre el INSERT y la busqueda, el proximo
+//   la encuentra y reconstruye igual.
+//
 // El contrato de `Index`, y lo que no aplica
 // ------------------------------------------
 //
 //   Implementa `Index` para que el catalogo y `Database` lo manejen igual que
-//   a los demas: crear, abrir, cerrar, borrar. La busqueda de verdad es
-//   `search_text`. Las operaciones genericas que no tienen sentido lanzan
-//   Unsupported con un mensaje que dice que usar:
+//   a los demas: crear, abrir, cerrar, borrar, y avisarle de cada fila. La
+//   busqueda de verdad es `search_text`. Las operaciones genericas que no
+//   tienen sentido lanzan Unsupported con un mensaje que dice que usar:
 //
-//     insert, remove   el indice no se actualiza incrementalmente (#163): un
-//                      documento nuevo cambia N, avgdl y df de todo. Se
-//                      reconstruye con `build`.
 //     search(key)      igualdad exacta sobre un texto no es lo que hace un
 //                      indice de texto; es `search_text`.
 //     range_search     no hay orden entre textos que sirva aqui.
@@ -86,8 +102,13 @@ class TextIndex final : public Index {
   [[nodiscard]] DataType key_type() const noexcept override { return DataType::Varchar; }
   [[nodiscard]] bool supports_range() const noexcept override { return false; }
 
+  /// La tabla gano una fila: el indice queda desactualizado. No lanza.
   void insert(const Key& key, RID rid) override;
+  /// La tabla perdio filas: el indice queda desactualizado. Devuelve 0, porque
+  /// el indice no guarda pares (texto, RID) que contar.
   std::size_t remove(const Key& key) override;
+  /// La tabla perdio esa fila: el indice queda desactualizado. Devuelve true,
+  /// que es lo que el DELETE espera de un indice que conocia la fila.
   bool remove(const Key& key, RID rid) override;
   [[nodiscard]] std::vector<RID> search(const Key& key) override;
   [[nodiscard]] std::vector<RID> range_search(const Key& lo, const Key& hi) override;
@@ -106,6 +127,10 @@ class TextIndex final : public Index {
   /// Los `k` registros mas relevantes para `query`, con su puntaje, de mayor a
   /// menor. Mismo contrato que `TextRanking::search`. Lanza Unsupported si el
   /// indice nunca se construyo.
+  /// Si la tabla cambio desde la ultima construccion. `search_text` lo
+  /// resuelve solo, reconstruyendo antes de buscar.
+  [[nodiscard]] bool stale() const noexcept { return desactualizado_; }
+
   [[nodiscard]] std::vector<std::pair<RID, double>> search_text(std::string_view query,
                                                                 TextRankingKind ranking,
                                                                 std::size_t k);
@@ -123,12 +148,17 @@ class TextIndex final : public Index {
   /// Ruta del archivo de RIDs que acompana a un indice de texto en `path`.
   [[nodiscard]] static std::filesystem::path rids_path(const std::filesystem::path& path);
 
+  /// Ruta de la marca de desactualizado de un indice de texto en `path`.
+  [[nodiscard]] static std::filesystem::path stale_marker_path(const std::filesystem::path& path);
+
   /// No hay nada pendiente en memoria: el indice se escribe entero al
   /// construir. Existe para que `Database::flush` lo trate como a los demas.
   void flush() noexcept {}
 
  private:
   void abrir();
+  /// Deja la marca de desactualizado, en memoria y en disco.
+  void marcar_desactualizado();
   [[noreturn]] void no_aplica(const char* operacion) const;
   [[nodiscard]] TextRanking& ranking(TextRankingKind r);
 
@@ -144,6 +174,7 @@ class TextIndex final : public Index {
   std::unique_ptr<TextRanking> tfidf_;
   std::unique_ptr<TextRanking> bm25_;
   OpStats stats_;
+  bool desactualizado_ = false;
 };
 
 }  // namespace quipudb

@@ -94,8 +94,11 @@ TableFile& Database::table(std::string_view name) {
 std::vector<std::filesystem::path> Database::archivos_de(const IndexInfo& info) const {
   std::vector<std::filesystem::path> rutas{catalog_.resolve(info.file)};
   // El indice de texto guarda el mapeo de documentos a RIDs en un archivo
-  // aparte, que muere con el.
-  if (info.kind == kind::kInvertedIndex) rutas.push_back(TextIndex::rids_path(rutas.front()));
+  // aparte, y puede tener la marca de desactualizado: los dos mueren con el.
+  if (info.kind == kind::kInvertedIndex) {
+    rutas.push_back(TextIndex::rids_path(rutas.front()));
+    rutas.push_back(TextIndex::stale_marker_path(rutas.front()));
+  }
   return rutas;
 }
 
