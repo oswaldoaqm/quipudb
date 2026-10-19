@@ -146,6 +146,13 @@ class DistanceMetric(StrEnum):
     EUCLIDEAN = "EUCLIDEAN"
 
 
+class TextRanking(StrEnum):
+    """Ranking de ``MATCH ... USING`` (#168). Sin ``USING`` se usa BM25."""
+
+    TF_IDF = "TF_IDF"
+    BM25 = "BM25"
+
+
 @dataclass(frozen=True, slots=True)
 class ComparisonCondition:
     column: ColumnReference
@@ -189,8 +196,23 @@ class PolygonCondition:
     span: Span
 
 
+@dataclass(frozen=True, slots=True)
+class MatchCondition:
+    """``MATCH(columna, 'consulta') [USING TF_IDF | BM25]`` (#168).
+
+    ``ranking_explicit`` distingue el ``USING`` escrito del ranking por omision:
+    el plan y los mensajes dicen cual se uso y si alguien lo eligio.
+    """
+
+    column: ColumnReference
+    query: StringLiteral
+    ranking: TextRanking
+    ranking_explicit: bool
+    span: Span
+
+
 Condition: TypeAlias = (
-    ComparisonCondition | BetweenCondition | DistanceCondition | PolygonCondition
+    ComparisonCondition | BetweenCondition | DistanceCondition | PolygonCondition | MatchCondition
 )
 
 

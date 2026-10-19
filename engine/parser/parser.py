@@ -35,6 +35,7 @@ from engine.parser.ast import (
     JoinRef,
     Limit,
     Literal,
+    MatchCondition,
     OrderBy,
     OrderDirection,
     PointLiteral,
@@ -48,6 +49,7 @@ from engine.parser.ast import (
     StorageKind,
     StringLiteral,
     TableRef,
+    TextRanking,
     Wildcard,
 )
 from engine.parser.errors import SQLParseError, SQLUnsupportedError
@@ -529,11 +531,16 @@ class _Parser:
 
     def _condition(
         self,
-    ) -> ComparisonCondition | BetweenCondition | DistanceCondition | PolygonCondition:
+    ) -> (
+        ComparisonCondition | BetweenCondition | DistanceCondition | PolygonCondition
+        | MatchCondition
+    ):
         if self._match(TokenKind.DISTANCIA):
             return self._distance_condition(self._previous())
         if self._match(TokenKind.DENTRO):
             return self._polygon_condition(self._previous())
+        if self._match(TokenKind.MATCH):
+            return self._match_condition(self._previous())
 
         column = self._column_reference("se esperaba una columna en WHERE")
         if self._match(TokenKind.BETWEEN):
@@ -587,6 +594,40 @@ class _Parser:
             radius=radius,
             metric=metric,
             span=combine_spans(start.span, radius.span),
+        )
+
+    def _match_condition(self, start: Token) -> MatchCondition:
+        """``MATCH(columna, 'consulta') [USING TF_IDF | BM25]`` (#168)."""
+
+        self._expect(TokenKind.LPAREN, "se esperaba '(' despues de MATCH")
+        column = self._column_reference("se esperaba una columna en MATCH")
+        self._expect(TokenKind.COMMA, "se esperaba ',' despues de la columna de MATCH")
+        query_token = self._peek()
+        if query_token.kind is not TokenKind.STRING:
+            raise self._error(query_token, "MATCH necesita la consulta como texto entre comillas")
+        self._advance()
+        query = StringLiteral(str(query_token.value), query_token.span)
+        end = self._expect(TokenKind.RPAREN, "se esperaba ')' despues de la consulta de MATCH")
+
+        ranking = TextRanking.BM25
+        explicit = False
+        if self._match(TokenKind.USING):
+            if self._match(TokenKind.TF_IDF):
+                ranking = TextRanking.TF_IDF
+            elif self._match(TokenKind.BM25):
+                ranking = TextRanking.BM25
+            else:
+                raise self._error(
+                    self._peek(), "se esperaba TF_IDF o BM25 como ranking de MATCH"
+                )
+            explicit = True
+            end = self._previous()
+        return MatchCondition(
+            column=column,
+            query=query,
+            ranking=ranking,
+            ranking_explicit=explicit,
+            span=combine_spans(start.span, end.span),
         )
 
     def _polygon_condition(self, start: Token) -> PolygonCondition:

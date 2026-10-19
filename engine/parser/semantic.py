@@ -27,6 +27,7 @@ from engine.parser.ast import (
     InsertStatement,
     IntegerLiteral,
     Literal,
+    MatchCondition,
     PointLiteral,
     PolygonCondition,
     SelectStatement,
@@ -52,6 +53,7 @@ from engine.parser.bound_ast import (
     BoundGroupBy,
     BoundInsertStatement,
     BoundJoinRef,
+    BoundMatchCondition,
     BoundOrderBy,
     BoundPolygonCondition,
     BoundProjection,
@@ -63,7 +65,7 @@ from engine.parser.bound_ast import (
     PointValue,
     join_output_schema,
 )
-from engine.parser.errors import SQLSemanticError
+from engine.parser.errors import SQLSemanticError, SQLUnsupportedError
 from engine.parser.span import Span
 
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
@@ -444,6 +446,13 @@ def bind_select(
             )
 
     where = _bind_condition(statement.where, scope, source)
+    if isinstance(where, BoundMatchCondition) and not isinstance(bound_source, BoundTableRef):
+        raise SQLUnsupportedError(
+            "MATCH sobre una consulta con JOIN no esta soportado: el indice de texto "
+            "rankea los documentos de una sola tabla",
+            where.span,
+            source,
+        )
     limit = None
     if statement.limit is not None:
         if (
@@ -480,6 +489,12 @@ def bind_delete(
         )
 
     where = _bind_condition(statement.where, _Scope.of(BoundTableRef(schema, statement.span)), source)
+    if isinstance(where, BoundMatchCondition):
+        raise SQLUnsupportedError(
+            "MATCH solo se admite en SELECT: un DELETE no borra por relevancia",
+            where.span,
+            source,
+        )
     if where is None:
         # El parser no construye este caso; protege AST creados a mano.
         _fail("DELETE requiere una clausula WHERE", statement.span, source)
@@ -536,6 +551,21 @@ def _bind_condition(
         return None
 
     column = _resolve_column(condition.column, scope, source)
+    if isinstance(condition, MatchCondition):
+        if column.column.data_type is not SqlTypeName.VARCHAR:
+            _fail(
+                f"MATCH requiere una columna VARCHAR; {column.column.name} es "
+                f"{column.column.data_type.value}",
+                condition.column.span,
+                source,
+            )
+        return BoundMatchCondition(
+            column,
+            condition.query.value,
+            condition.ranking,
+            condition.ranking_explicit,
+            condition.span,
+        )
     if isinstance(condition, PolygonCondition):
         if column.column.data_type is not SqlTypeName.POINT:
             _fail(
