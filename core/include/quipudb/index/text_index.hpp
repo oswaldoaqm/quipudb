@@ -88,6 +88,24 @@ enum class TextRankingKind : std::uint8_t {
   return r == TextRankingKind::kBm25 ? "bm25" : "tf_idf";
 }
 
+/// Lo que costo una construccion del indice. Es lo que mide el 2.3.2 (#172):
+/// la construccion es la misma para TF-IDF y BM25, y esto es lo suyo.
+struct TextIndexBuild {
+  /// Documentos indexados: los registros de la tabla.
+  std::size_t documents = 0;
+  /// Bloques que escribio SPIMI.
+  std::size_t blocks = 0;
+  /// Pasadas de mezcla: 1 si los bloques cabian en una sola.
+  std::size_t passes = 0;
+  /// Presupuesto de memoria del diccionario de SPIMI, en bytes.
+  std::size_t memory_budget = 0;
+  /// Lo maximo que ocupo ese diccionario, segun la cuenta de SPIMI (ver
+  /// "Cuando se llena la memoria" en spimi.hpp). Nunca pasa del presupuesto.
+  std::size_t peak_memory = 0;
+  /// SPIMI mas la mezcla, solo de esta construccion.
+  OpStats stats;
+};
+
 class TextIndex final : public Index {
  public:
   /// Abre el indice si `path` existe; si no, queda vacio hasta `build()`.
@@ -124,13 +142,19 @@ class TextIndex final : public Index {
   /// idioma o las stopwords. Si algo falla, el indice anterior queda intacto.
   void build(const TokenizerOptions& tokenizer = {});
 
-  /// Los `k` registros mas relevantes para `query`, con su puntaje, de mayor a
-  /// menor. Mismo contrato que `TextRanking::search`. Lanza Unsupported si el
-  /// indice nunca se construyo.
+  /// Lo que costo la ultima construccion en este proceso, o nada si el indice
+  /// se abrio de disco y no se construyo desde entonces.
+  [[nodiscard]] const std::optional<TextIndexBuild>& last_build() const noexcept {
+    return ultima_construccion_;
+  }
+
   /// Si la tabla cambio desde la ultima construccion. `search_text` lo
   /// resuelve solo, reconstruyendo antes de buscar.
   [[nodiscard]] bool stale() const noexcept { return desactualizado_; }
 
+  /// Los `k` registros mas relevantes para `query`, con su puntaje, de mayor a
+  /// menor. Mismo contrato que `TextRanking::search`. Lanza Unsupported si el
+  /// indice nunca se construyo.
   [[nodiscard]] std::vector<std::pair<RID, double>> search_text(std::string_view query,
                                                                 TextRankingKind ranking,
                                                                 std::size_t k);
@@ -174,6 +198,7 @@ class TextIndex final : public Index {
   std::unique_ptr<TextRanking> tfidf_;
   std::unique_ptr<TextRanking> bm25_;
   OpStats stats_;
+  std::optional<TextIndexBuild> ultima_construccion_;
   bool desactualizado_ = false;
 };
 

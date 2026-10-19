@@ -232,6 +232,31 @@ TEST_F(IndiceDeTexto, UnaTablaVaciaDaUnIndiceVacio) {
   EXPECT_TRUE(ix.search_text("oro", TextRankingKind::kBm25, 10).empty());
 }
 
+TEST_F(IndiceDeTexto, DiceLoQueCostoLaUltimaConstruccion) {
+  TextIndex& ix = crear();
+  ASSERT_TRUE(ix.last_build().has_value());
+  const TextIndexBuild primera = *ix.last_build();
+  EXPECT_EQ(primera.documents, 3U);
+  EXPECT_EQ(primera.blocks, 1U);  // tres documentos caben en un bloque
+  EXPECT_EQ(primera.passes, 1U);
+  EXPECT_EQ(primera.memory_budget, kSpimiDefaultMemory);
+  EXPECT_GT(primera.peak_memory, 0U);
+  EXPECT_LE(primera.peak_memory, primera.memory_budget);
+  EXPECT_GT(primera.stats.pages_written, 0U);
+
+  // Es la de esta construccion, no la suma: reconstruir igual da lo mismo.
+  ix.build();
+  EXPECT_EQ(ix.last_build()->peak_memory, primera.peak_memory);
+  EXPECT_EQ(ix.last_build()->stats.pages_written, primera.stats.pages_written);
+  EXPECT_EQ(ix.stats().pages_written, 2 * primera.stats.pages_written);
+
+  // Al reabrir no hubo construccion en este proceso.
+  db_.reset();
+  abrir();
+  auto& reabierto = dynamic_cast<TextIndex&>(db_->index("documentos", "por_contenido"));
+  EXPECT_FALSE(reabierto.last_build().has_value());
+}
+
 TEST_F(IndiceDeTexto, CuentaLoQueCostoConstruirYBuscar) {
   TextIndex& ix = crear();
   EXPECT_GT(ix.stats().pages_written, 0U);  // la construccion
