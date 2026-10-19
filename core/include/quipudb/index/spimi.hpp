@@ -194,6 +194,9 @@ class SpimiIndexer {
   }
 
   [[nodiscard]] std::size_t documents() const noexcept { return documentos_; }
+
+  /// Si ya se llamo a `finish()`: recien ahi los bloques estan completos.
+  [[nodiscard]] bool finished() const noexcept { return terminado_; }
   [[nodiscard]] const TextTokenizer& tokenizer() const noexcept { return tokenizer_; }
   [[nodiscard]] const SpimiOptions& options() const noexcept { return options_; }
 
