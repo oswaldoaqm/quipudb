@@ -36,6 +36,8 @@ Step
   detail     : str      texto libre y legible: el predicado, la clave, cuantos RIDs
   stats      : Stats    contadores propios del paso, sin incluir hijos
   time_ms    : float    tiempo propio del paso, sin incluir hijos
+  ranking    : str|null ranking de una busqueda de texto: "tf_idf" o "bm25" en
+                        text_search, null en los demas pasos (desde #170)
   children   : Step[]   pasos que se ejecutan antes y le entregan su salida
 
 Stats                   espejo exacto de OpStats del core
@@ -57,6 +59,8 @@ dibuja.
 | `index_range` | Busqueda por rango en un indice secundario; entrega RIDs | ninguno |
 | `radius_search` | Busqueda espacial por radio; entrega RIDs | ninguno |
 | `knn_search` | k vecinos mas cercanos, ya ordenados; entrega RIDs | ninguno |
+| `polygon_search` | Puntos dentro de un poligono; entrega RIDs | ninguno |
+| `text_search` | `MATCH` en el indice invertido, por relevancia; entrega RIDs | ninguno |
 | `fetch` | Lee de la tabla los registros de los RIDs que entrega el hijo | 1 |
 | `filter` | Evalua en memoria un predicado que ninguna estructura resolvio | 1 |
 | `project` | Se queda con algunas columnas | 1 |
@@ -74,7 +78,14 @@ absorbido por el acceso: no contiene `sort` ni un `limit` posterior. En cambio,
 el fallback contiene `sort/external_sort` y `limit/memory`, si se pidió límite.
 Los contadores del índice y de la recuperación por RID siguen separados.
 
-Los cinco primeros son, letra por letra, las constantes `kind::` de
+Desde #170, `text_search/inverted_index` seguido de `fetch` declara un `MATCH`:
+el paso lleva el ranking en el campo `ranking` -- tambien cuando la consulta no
+escribio `USING` y se uso el de por omision -- y su `detail` dice si fue elegido
+y cuantos documentos se le pidieron al indice (`top-k` cuando el `LIMIT` bajo,
+o todos). `ORDER BY relevancia` aparece como `sort/memory`: el orden ya lo
+entrega el indice y no hay external sort (#169).
+
+Los siete primeros son, letra por letra, las constantes `kind::` de
 `core/include/quipudb/catalog/table.hpp`. Los tres ultimos solo existen en la
 capa Python.
 
@@ -85,6 +96,8 @@ capa Python.
 | `bplus_clustered` | index (implementa `TableFile`) |
 | `bplus_unclustered` | index (implementa `Index`) |
 | `extendible_hash` | index (implementa `Index`) |
+| `rtree` | index (implementa `Index`) |
+| `inverted_index` | index (implementa `Index`; indice de texto) |
 | `external_sort` | external |
 | `external_hash` | external |
 | `memory` | el paso no toco disco: `filter`, `project`, `limit` |
@@ -92,7 +105,8 @@ capa Python.
 ### Reglas que el planner respeta al armar el plan
 
 1. Una busqueda que resuelve un indice secundario siempre son **dos pasos**:
-   `index_search` / `index_range` (hijo, estructura del indice) y `fetch`
+   `index_search` / `index_range` -- o `radius_search`, `knn_search`,
+   `polygon_search`, `text_search` -- (hijo, estructura del indice) y `fetch`
    (padre, estructura de la tabla). Asi el panel muestra por separado las
    paginas del indice y las de la tabla, que es justo lo que 2.1.6 compara.
 2. `extendible_hash` nunca aparece bajo `index_range`: el planner consulta
