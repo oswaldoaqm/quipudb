@@ -69,6 +69,9 @@
 #include "quipudb/index/distance.hpp"
 #include "quipudb/index/rtree_index.hpp"
 #include "quipudb/index/spatial_scan.hpp"
+#include "quipudb/index/text_index.hpp"
+#include "quipudb/index/text_ranking.hpp"
+#include "quipudb/index/text_tokenizer.hpp"
 #include "quipudb/storage/heap_file.hpp"
 #include "quipudb/storage/sequential_file.hpp"
 #include "quipudb/version.hpp"
@@ -245,6 +248,7 @@ PYBIND11_MODULE(quipudb_native, m) {
   kinds.attr("BPLUS_UNCLUSTERED") = std::string(kind::kBPlusUnclustered);
   kinds.attr("EXTENDIBLE_HASH") = std::string(kind::kExtendibleHash);
   kinds.attr("RTREE") = std::string(kind::kRTree);
+  kinds.attr("INVERTED_INDEX") = std::string(kind::kInvertedIndex);
 
   // --- tipos ----------------------------------------------------------------
 
@@ -483,6 +487,58 @@ PYBIND11_MODULE(quipudb_native, m) {
   m.def("scan_polygon", &scan_polygon, py::arg("table"), py::arg("column"),
         py::arg("vertices"),
         "RIDs dentro del poligono recorriendo la tabla entera, sin indice");
+
+  // --- indice de texto (#166) -----------------------------------------------
+  //
+  // El indice invertido de la Parte 3 se usa por aqui, no por sus clases
+  // sueltas: `Database.create_index(..., kind.INVERTED_INDEX)` lo construye con
+  // SPIMI sobre la tabla y `search_text` busca con el ranking elegido.
+
+  py::enum_<TextLanguage>(m, "TextLanguage", "Idioma de las stopwords y del stemmer")
+      .value("SPANISH", TextLanguage::kSpanish)
+      .value("ENGLISH", TextLanguage::kEnglish);
+
+  py::class_<TokenizerOptions>(
+      m, "TokenizerOptions",
+      "Como se tokeniza el texto. El indice guarda las suyas y la consulta usa las mismas")
+      .def(py::init<>())
+      .def_readwrite("stopword_languages", &TokenizerOptions::stopword_languages)
+      .def_readwrite("extra_stopwords", &TokenizerOptions::extra_stopwords)
+      .def_readwrite("stemmer", &TokenizerOptions::stemmer,
+                     "Idioma del stemmer de Snowball, o None para no stemmear")
+      .def_readwrite("unaccent_before_stem", &TokenizerOptions::unaccent_before_stem)
+      .def_readwrite("max_term_bytes", &TokenizerOptions::max_term_bytes)
+      .def(py::self == py::self);
+
+  m.def(
+      "tokenize",
+      [](std::string_view texto, const TokenizerOptions& opciones) {
+        return TextTokenizer(opciones).tokenize(texto);
+      },
+      py::arg("text"), py::arg("options") = TokenizerOptions{},
+      "Los terminos del texto, como los ve el indice de texto");
+
+  py::enum_<TextRankingKind>(m, "TextRanking", "Ranking de la busqueda de texto (USING)")
+      .value("TF_IDF", TextRankingKind::kTfIdf)
+      .value("BM25", TextRankingKind::kBm25);
+
+  m.attr("ALL_RESULTS") = kAllResults;
+
+  py::class_<TextIndex, Index>(m, "TextIndex",
+                               "Indice invertido de texto sobre una columna VARCHAR")
+      .def("search_text", &TextIndex::search_text, py::arg("query"), py::arg("ranking"),
+           py::arg("k") = kAllResults,
+           "Lista de (RID, puntaje) de los k registros mas relevantes, de mayor a menor. "
+           "Sin k, todos los que coinciden")
+      .def("build", &TextIndex::build, py::arg("tokenizer") = TokenizerOptions{},
+           "Reconstruye el indice recorriendo la tabla: despues de cambiarla, o para "
+           "usar otras opciones de tokenizacion")
+      .def_property_readonly("tokenizer_options", &TextIndex::tokenizer_options,
+                             py::return_value_policy::copy)
+      .def_property_readonly("terms", &TextIndex::terms, "Terminos distintos del indice")
+      .def_property_readonly(
+          "documents", [](const TextIndex& t) { return t.size(); },
+          "Documentos indexados");
 
   // --- Database -------------------------------------------------------------
 

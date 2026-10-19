@@ -142,6 +142,10 @@ class Database {
                                                     const IndexInfo& info,
                                                     TableFile& datos) const;
 
+  /// Los archivos de un indice: el suyo, y los que lo acompanan (el de RIDs
+  /// del indice de texto). Es lo que se borra al quitar el indice.
+  [[nodiscard]] std::vector<std::filesystem::path> archivos_de(const IndexInfo& info) const;
+
   /// Clave con la que se guarda un indice abierto: "tabla.indice".
   [[nodiscard]] static std::string clave_indice(std::string_view table,
                                                 std::string_view index_name);
