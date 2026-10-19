@@ -110,6 +110,21 @@ def test_se_reconstruye_con_otras_opciones(db):
     assert ids(db, ix.search_text("mine", quipudb.TextRanking.BM25)) == [4]
 
 
+def test_last_build_dice_lo_que_costo_construir(db, tmp_path):
+    """Lo que mide el benchmark del 2.3.2 (#172): bloques y memoria de SPIMI."""
+    construccion = crear(db).last_build
+    assert isinstance(construccion, quipudb.TextIndexBuild)
+    assert construccion.documents == 3
+    assert construccion.blocks == 1
+    assert construccion.passes == 1
+    assert 0 < construccion.peak_memory <= construccion.memory_budget
+    assert construccion.stats.pages_written > 0
+
+    del db
+    otra = quipudb.Database(tmp_path / "catalogo.txt")
+    assert otra.index("documentos", "por_contenido").last_build is None
+
+
 def test_tokenize_muestra_lo_que_ve_el_indice():
     assert quipudb.tokenize("Mis amigas y amigos peruanos") == ["amig", "amig", "peruan"]
     sin_stemmer = quipudb.TokenizerOptions()

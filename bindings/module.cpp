@@ -524,6 +524,17 @@ PYBIND11_MODULE(quipudb_native, m) {
 
   m.attr("ALL_RESULTS") = kAllResults;
 
+  py::class_<TextIndexBuild>(m, "TextIndexBuild",
+                             "Lo que costo una construccion del indice de texto (#172)")
+      .def_readonly("documents", &TextIndexBuild::documents)
+      .def_readonly("blocks", &TextIndexBuild::blocks, "Bloques que escribio SPIMI")
+      .def_readonly("passes", &TextIndexBuild::passes, "Pasadas de mezcla")
+      .def_readonly("memory_budget", &TextIndexBuild::memory_budget,
+                    "Presupuesto del diccionario de SPIMI, en bytes")
+      .def_readonly("peak_memory", &TextIndexBuild::peak_memory,
+                    "Lo maximo que ocupo el diccionario de SPIMI, en bytes")
+      .def_readonly("stats", &TextIndexBuild::stats, "SPIMI mas la mezcla");
+
   py::class_<TextIndex, Index>(m, "TextIndex",
                                "Indice invertido de texto sobre una columna VARCHAR")
       .def("search_text", &TextIndex::search_text, py::arg("query"), py::arg("ranking"),
@@ -536,6 +547,9 @@ PYBIND11_MODULE(quipudb_native, m) {
       .def_property_readonly("tokenizer_options", &TextIndex::tokenizer_options,
                              py::return_value_policy::copy)
       .def_property_readonly("terms", &TextIndex::terms, "Terminos distintos del indice")
+      .def_property_readonly("last_build", &TextIndex::last_build,
+                             "Lo que costo la ultima construccion en este proceso, o None "
+                             "si el indice se abrio de disco")
       .def_property_readonly("stale", &TextIndex::stale,
                              "True si la tabla cambio desde la ultima construccion; "
                              "search_text lo reconstruye solo")

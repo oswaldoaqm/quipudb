@@ -145,6 +145,7 @@ void TextIndex::build(const TokenizerOptions& tokenizer) {
   borrar(nuevo);
   borrar(rids_nuevo);
 
+  TextIndexBuild construccion;
   try {
     SpimiIndexer spimi(tokenizer, SpimiOptions{.page_size = page_size_, .dir = path_.parent_path()});
     std::vector<RID> rids;
@@ -156,8 +157,16 @@ void TextIndex::build(const TokenizerOptions& tokenizer) {
                          std::get<std::string>(registro.at(key_index_)));
     }
     spimi.finish();
-    stats_ += spimi.stats();
-    stats_ += InvertedIndex::build(spimi, nuevo).stats;
+    const InvertedIndexBuild mezcla = InvertedIndex::build(spimi, nuevo);
+    construccion = TextIndexBuild{
+        .documents = spimi.documents(),
+        .blocks = mezcla.blocks,
+        .passes = mezcla.passes,
+        .memory_budget = spimi.options().memory_budget,
+        .peak_memory = spimi.peak_memory(),
+        .stats = spimi.stats(),
+    };
+    construccion.stats += mezcla.stats;
     escribir_rids(rids_nuevo, rids, page_size_);
   } catch (...) {
     borrar(nuevo);
@@ -176,6 +185,8 @@ void TextIndex::build(const TokenizerOptions& tokenizer) {
   // desactualizado y la proxima busqueda lo vuelve a intentar.
   borrar(stale_marker_path(path_));
   abrir();
+  stats_ += construccion.stats;
+  ultima_construccion_ = construccion;
 }
 
 TextRanking& TextIndex::ranking(TextRankingKind r) {

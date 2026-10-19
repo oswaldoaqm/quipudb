@@ -230,10 +230,6 @@ def ejecutar_banco(
                 ):
                     if operacion.n_operaciones < 1:
                         raise ValueError("n_operaciones debe ser >= 1")
-                    actual = (dict(operacion.configuracion), operacion.n_operaciones)
-                    if configuracion is not None and configuracion != actual:
-                        raise ValueError("la configuracion cambio entre repeticiones")
-                    configuracion = actual
                     espacio_antes = sum(operacion.medir_espacio())
                     operacion.reiniciar_contadores()
                     inicio = time.perf_counter_ns()
@@ -243,6 +239,13 @@ def ejecutar_banco(
                     paginas_leidas, paginas_escritas = operacion.capturar_contadores()
                     datos_bytes, indices_bytes = operacion.medir_espacio()
                     operacion.validar()
+                    # Despues de validar y no antes de medir: un caso puede anotar en
+                    # su configuracion lo que solo se sabe al terminar, como los
+                    # bloques de SPIMI (#172). Igual tiene que repetirse identica.
+                    actual = (dict(operacion.configuracion), operacion.n_operaciones)
+                    if configuracion is not None and configuracion != actual:
+                        raise ValueError("la configuracion cambio entre repeticiones")
+                    configuracion = actual
                     if repeticion > 0:
                         mediciones.append(
                             {
