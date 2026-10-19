@@ -70,6 +70,7 @@ jobs:
         # saltan es el paso anterior mas este -rs, que lista lo salteado.
         run: >
           python -m pytest engine/test_bindings.py
+          engine/test_text_index.py
           engine/test_query_processor.py
           engine/executor/test_order_group.py
           engine/executor/test_spatial.py
