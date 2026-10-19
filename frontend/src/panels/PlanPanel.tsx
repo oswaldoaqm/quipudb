@@ -22,6 +22,7 @@ const CATEGORIA: Record<Op, Categoria> = {
   radius_search: "indice",
   knn_search: "indice",
   polygon_search: "indice",
+  text_search: "indice",
   fetch: "indice",
   scan: "recorrido",
   sort: "externo",
@@ -123,6 +124,16 @@ function Fila({ nodo, maximoPaginas }: { nodo: Nodo; maximoPaginas: number }) {
           {paso.column && (
             <span className="truncate font-mono text-[10px] opacity-60">
               {paso.column}
+            </span>
+          )}
+          {/* El ranking de MATCH (#170) va aparte del detalle: es lo que
+              distingue un TF-IDF de un BM25 sobre el mismo indice. */}
+          {paso.ranking && (
+            <span
+              className="shrink-0 rounded border border-current px-1 font-mono text-[9px] uppercase opacity-80"
+              title="ranking de la busqueda de texto"
+            >
+              {paso.ranking}
             </span>
           )}
           <span className="ml-auto shrink-0 font-mono text-[10px] opacity-75">
