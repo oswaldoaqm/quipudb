@@ -1,6 +1,7 @@
 #include "quipudb/index/text_index.hpp"
 
 #include <cstring>
+#include <fstream>
 #include <span>
 #include <string>
 #include <system_error>
@@ -106,11 +107,26 @@ std::filesystem::path TextIndex::rids_path(const std::filesystem::path& path) {
   return std::filesystem::path(path.string() + ".rids");
 }
 
+std::filesystem::path TextIndex::stale_marker_path(const std::filesystem::path& path) {
+  return std::filesystem::path(path.string() + ".desactualizado");
+}
+
+void TextIndex::marcar_desactualizado() {
+  if (desactualizado_) return;  // un archivo por cambio de estado, no por fila
+  const auto marca = stale_marker_path(path_);
+  std::ofstream(marca).flush();
+  if (!std::filesystem::exists(marca)) {
+    throw IoError("indice de texto: no se pudo dejar la marca " + marca.string());
+  }
+  desactualizado_ = true;
+}
+
 void TextIndex::abrir() {
   tfidf_.reset();
   bm25_.reset();
   indice_.reset();
   rids_.clear();
+  desactualizado_ = std::filesystem::exists(stale_marker_path(path_));
   if (!std::filesystem::exists(path_)) return;
   indice_ = std::make_unique<InvertedIndex>(path_, page_size_);
   rids_ = leer_rids(rids_path(path_), page_size_);
@@ -156,6 +172,9 @@ void TextIndex::build(const TokenizerOptions& tokenizer) {
   borrar(rids_path(path_));
   std::filesystem::rename(nuevo, path_);
   std::filesystem::rename(rids_nuevo, rids_path(path_));
+  // La marca se quita al final: si algo de arriba fallo, el indice sigue
+  // desactualizado y la proxima busqueda lo vuelve a intentar.
+  borrar(stale_marker_path(path_));
   abrir();
 }
 
@@ -171,6 +190,9 @@ TextRanking& TextIndex::ranking(TextRankingKind r) {
 std::vector<std::pair<RID, double>> TextIndex::search_text(std::string_view query,
                                                            TextRankingKind ranking_kind,
                                                            std::size_t k) {
+  // La tabla cambio desde la ultima construccion: se reconstruye ahora, con
+  // las mismas opciones. Ver "Cuando la tabla cambia" en el header.
+  if (desactualizado_) build(indice_ ? indice_->tokenizer_options() : TokenizerOptions{});
   (void)inverted_index();  // lanza si nunca se construyo
   TextRanking& r = ranking(ranking_kind);
   const auto documentos = r.search(query, k);
@@ -203,20 +225,25 @@ const OpStats& TextIndex::stats() const noexcept { return stats_; }
 void TextIndex::reset_stats() noexcept { stats_.reset(); }
 
 // --- lo que no aplica a un indice de texto ---------------------------------
+//
+// insert y remove si aplican: marcan el indice como desactualizado (ver el
+// header). Lo que sigue no tiene sentido para texto.
 
 void TextIndex::no_aplica(const char* operacion) const {
   throw Unsupported(std::string("el indice de texto sobre ") + column_.name + " no implementa " +
                     operacion);
 }
 
-void TextIndex::insert(const Key&, RID) {
-  no_aplica("insert: no se actualiza incrementalmente, se reconstruye con build()");
-}
+void TextIndex::insert(const Key&, RID) { marcar_desactualizado(); }
+
 std::size_t TextIndex::remove(const Key&) {
-  no_aplica("remove: no se actualiza incrementalmente, se reconstruye con build()");
+  marcar_desactualizado();
+  return 0;
 }
+
 bool TextIndex::remove(const Key&, RID) {
-  no_aplica("remove: no se actualiza incrementalmente, se reconstruye con build()");
+  marcar_desactualizado();
+  return true;
 }
 std::vector<RID> TextIndex::search(const Key&) {
   no_aplica("search por igualdad; use search_text");

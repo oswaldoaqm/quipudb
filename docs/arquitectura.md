@@ -109,8 +109,10 @@ Desde #107, `CREATE INDEX nombre ON tabla (columna) USING BPLUS|HASH` valida la
 tabla y la columna, toma un lock exclusivo y delega en
 `Database::create_index`. El core construye el B+ secundario no agrupado o el
 hash extensible sobre las filas que ya existen. Desde #128, `USING RTREE` hace
-lo mismo sobre una columna `POINT`. Solo se admite sobre tablas HEAP y, como
-los otros DDL, se rechaza dentro de una transacción explícita.
+lo mismo sobre una columna `POINT`, y desde #167 `USING FULLTEXT` (o
+`INVERTED_INDEX`) construye el índice de texto sobre una columna `VARCHAR`. Solo
+se admite sobre tablas HEAP y, como los otros DDL, se rechaza dentro de una
+transacción explícita.
 
 Desde #108, `EXPLAIN SELECT` transforma el IR físico a `Plan` sin ejecutar
 operadores: los pasos muestran la ruta elegida con tiempos y contadores en
@@ -1417,11 +1419,48 @@ tokenize("texto", opciones)           # lo que ve el indice, para depurar
 |---|---|
 | El texto vive en una columna `VARCHAR` | Es un dato mas de la tabla. `VARCHAR` es de largo fijo y el registro cabe en una pagina, asi que documentos largos piden una tabla con paginas mas grandes (hasta 64 KB). Leer el texto de archivos referenciados por la tabla queda para cuando un corpus no quepa |
 | Documentos numerados 1..N, mapeo a RID en `<indice>.rids` | El indice invertido usa ids densos. Meter el RID en un id de 32 bits limitaria la tabla a 65 535 paginas, y con `VARCHAR` de largo fijo un corpus de 100 000 documentos se acerca |
-| `insert`/`remove` lanzan `Unsupported` | El indice no se actualiza incrementalmente (#163): se reconstruye con `build()` |
+| `insert`/`remove` lo marcan **desactualizado** (#167) | No se puede actualizar fila por fila (#163), pero el DML y el deshacer de las transacciones le avisan de cada fila. La marca es un archivo `<indice>.desactualizado`, para que sobreviva al proceso, y `search_text` reconstruye antes de buscar: cargar 10 000 filas cuesta una reconstruccion, no 10 000, y ninguna busqueda devuelve un RID viejo |
 | `search(key)`, `range_search`, `scan` lanzan `Unsupported` | Igualdad u orden sobre textos no es lo que hace este indice; el mensaje dice que usar |
 | Solo sobre `VARCHAR` de un heap file | Como los demas indices secundarios: el RID tiene que ser estable |
 | `build()` construye al lado y reemplaza al final | Si falla a medias, el indice anterior sigue sirviendo |
 
-`Database::drop_index` y `drop_table` borran tambien el archivo de RIDs, y el
+`Database::drop_index` y `drop_table` borran tambien el archivo de RIDs y la
+marca de desactualizado, y el
 SPIMI escribe sus bloques temporales en el directorio del catalogo y los borra
 al terminar.
+
+### Crear el indice de texto desde SQL (#167)
+
+El enunciado muestra las consultas `MATCH` pero no como se crea el indice. La
+sintaxis elegida es la misma de los indices secundarios de #107:
+
+```sql
+CREATE INDEX por_contenido ON documentos (contenido) USING FULLTEXT;
+-- equivalente: ... USING INVERTED_INDEX
+```
+
+`FULLTEXT` es la palabra de MySQL para lo mismo; `INVERTED_INDEX` es el nombre
+de la estructura, como `EXTENDIBLE_HASH` lo es de `HASH`. El indice se
+construye con las opciones de tokenizacion por omision (espanol, #160); para
+otro idioma se reconstruye desde los bindings con `TextIndex.build(opciones)`.
+
+| Caso | Resultado |
+|---|---|
+| Columna que no es `VARCHAR` | `SQLSemanticError` en la columna, con linea y columna |
+| La columna ya tiene un indice de texto | `SQLSemanticError` en la columna; no se crea otro ni se reconstruye el existente |
+| Nombre de indice repetido | el error de siempre del catalogo |
+| Tabla que no es HEAP o transaccion abierta | igual que los demas indices |
+
+#### Lo que tuvo que cambiar fuera del parser
+
+Un indice de texto es un indice secundario mas en el catalogo, y varias partes
+del motor recorren "todos los indices de la tabla". Sin estos cambios, crear
+uno dejaba la tabla inservible:
+
+| Donde | Que pasaba | Que se hizo |
+|---|---|---|
+| DML y transacciones | `INSERT`/`DELETE` y el deshacer llaman `insert`/`remove` de cada indice, que en #166 lanzaban `Unsupported` | ahora marcan el indice **desactualizado**; `search_text` lo reconstruye antes de buscar (ver #166) |
+| Planner (`native_catalog`) | un tipo de indice desconocido es `ValueError`: fallaba todo `SELECT` sobre la tabla | `Structure.INVERTED_INDEX` |
+| Optimizador | `WHERE texto = 'x'` lo tomaba como candidato de igualdad y fallaba | solo B+ y hash son candidatos de igualdad y rango; la consulta recorre y filtra |
+| API (`GET /tables`) | `structure` no aceptaba `inverted_index`: el Panel de Archivos se quedaba vacio | agregado al `Literal` |
+| Frontend | el indice se rotulaba "solo igualdad" y el simulador rechazaba la sintaxis | rotulo "busqueda de texto" y la misma sintaxis y errores que el motor |

@@ -91,6 +91,9 @@ def test_create_table_usa_heap_por_defecto_y_keywords_son_case_insensitive() -> 
         ("HASH", IndexKind.EXTENDIBLE_HASH),
         ("EXTENDIBLE_HASH", IndexKind.EXTENDIBLE_HASH),
         ("RTREE", IndexKind.RTREE),
+        ("FULLTEXT", IndexKind.INVERTED_INDEX),
+        ("INVERTED_INDEX", IndexKind.INVERTED_INDEX),
+        ("fulltext", IndexKind.INVERTED_INDEX),
     ],
 )
 def test_create_index_parsea_estructura_y_nombres(

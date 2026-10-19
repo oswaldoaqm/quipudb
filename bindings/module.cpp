@@ -536,6 +536,9 @@ PYBIND11_MODULE(quipudb_native, m) {
       .def_property_readonly("tokenizer_options", &TextIndex::tokenizer_options,
                              py::return_value_policy::copy)
       .def_property_readonly("terms", &TextIndex::terms, "Terminos distintos del indice")
+      .def_property_readonly("stale", &TextIndex::stale,
+                             "True si la tabla cambio desde la ultima construccion; "
+                             "search_text lo reconstruye solo")
       .def_property_readonly(
           "documents", [](const TextIndex& t) { return t.size(); },
           "Documentos indexados");

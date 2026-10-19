@@ -14,7 +14,7 @@ from engine.parser.ast import DistanceMetric, SqlTypeName
 from engine.parser.bound_ast import PointValue
 
 TableStructure = Literal["heap", "sequential", "bplus_clustered"]
-IndexStructure = Literal["bplus_unclustered", "extendible_hash", "rtree"]
+IndexStructure = Literal["bplus_unclustered", "extendible_hash", "rtree", "inverted_index"]
 ErrorKind = Literal["lex", "parse", "semantic", "unsupported"]
 
 

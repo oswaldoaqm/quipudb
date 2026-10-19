@@ -49,6 +49,8 @@ const ESTRUCTURAS: Record<string, IndexInfo["structure"]> = {
   hash: "extendible_hash",
   extendible_hash: "extendible_hash",
   rtree: "rtree",
+  fulltext: "inverted_index",
+  inverted_index: "inverted_index",
 };
 
 /** Cualquier CREATE: el que no sea un CREATE INDEX lo atiende el CREATE TABLE. */
@@ -106,8 +108,8 @@ export function ejecutarCreateIndex(sql: string): string {
           ? "se esperaba ')' despues de la columna indexada"
           : !/\bUSING\b/i.test(sql)
             ? "se esperaba USING despues de la columna indexada"
-            : "se esperaba BPLUS, BPLUS_UNCLUSTERED, HASH, EXTENDIBLE_HASH o RTREE " +
-              "despues de USING";
+            : "se esperaba BPLUS, BPLUS_UNCLUSTERED, HASH, EXTENDIBLE_HASH, RTREE, " +
+              "FULLTEXT o INVERTED_INDEX despues de USING";
     throw new MotorError({
       error: falta,
       kind: "parse",
@@ -155,8 +157,8 @@ export function ejecutarCreateIndex(sql: string): string {
   if (!estructura) {
     throw new MotorError({
       error:
-        "se esperaba BPLUS, BPLUS_UNCLUSTERED, HASH, EXTENDIBLE_HASH o RTREE " +
-        "despues de USING",
+        "se esperaba BPLUS, BPLUS_UNCLUSTERED, HASH, EXTENDIBLE_HASH, RTREE, " +
+        "FULLTEXT o INVERTED_INDEX despues de USING",
       kind: "parse",
       ...ubicarEn(
         sql,
@@ -169,6 +171,26 @@ export function ejecutarCreateIndex(sql: string): string {
   if (estructura === "rtree" && columnaInfo!.type !== "POINT") {
     falla(
       `la columna '${columna}' no es POINT; RTREE requiere coordenadas`,
+      columna,
+    );
+  }
+  if (estructura === "inverted_index" && columnaInfo!.type !== "VARCHAR") {
+    falla(
+      `la columna '${columna}' es ${columnaInfo!.type}; un indice de texto (FULLTEXT) requiere una columna VARCHAR`,
+      columna,
+    );
+  }
+  if (
+    estructura === "inverted_index" &&
+    tabla!.info.indexes.some(
+      (i) => i.structure === "inverted_index" && i.column === columna.toLowerCase(),
+    )
+  ) {
+    const existente = tabla!.info.indexes.find(
+      (i) => i.structure === "inverted_index" && i.column === columna.toLowerCase(),
+    )!;
+    falla(
+      `la columna '${columna}' ya tiene el indice de texto '${existente.name}'; no se crea otro ni se reconstruye`,
       columna,
     );
   }

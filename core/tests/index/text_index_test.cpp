@@ -142,27 +142,74 @@ TEST_F(IndiceDeTexto, SoloSobreHeapFiles) {
                SchemaError);
 }
 
+TEST_F(IndiceDeTexto, InsertarEnLaTablaLoDesactualizaYBuscarLoReconstruye) {
+  TextIndex& ix = crear();
+  EXPECT_FALSE(ix.stale());
+  // Lo que hace el DML: insertar en la tabla y avisarle a cada indice.
+  const Record nuevo{std::int32_t{4}, std::string("Un fuego en la mina de oro")};
+  const RID rid = db_->table("documentos").insert(nuevo);
+  ix.insert(nuevo.at(1), rid);
+  EXPECT_TRUE(ix.stale());
+  EXPECT_EQ(ix.size(), 3U);  // todavia no se reconstruyo
+
+  // La busqueda reconstruye antes de buscar: el documento nuevo aparece.
+  EXPECT_EQ(ids(ix.search_text("mina", TextRankingKind::kBm25, 10)),
+            (std::vector<std::int32_t>{4}));
+  EXPECT_FALSE(ix.stale());
+  EXPECT_EQ(ix.size(), 4U);
+}
+
+TEST_F(IndiceDeTexto, BorrarDeLaTablaNoDejaRidsViejos) {
+  TextIndex& ix = crear();
+  auto& tabla = db_->table("documentos");
+  // Borrar D2, el unico con "plata", como lo hace el DELETE.
+  const auto antes = ix.search_text("plata", TextRankingKind::kTfIdf, 10);
+  ASSERT_EQ(antes.size(), 1U);
+  EXPECT_TRUE(ix.remove(Key{std::string(kTextos[1])}, antes[0].first));
+  ASSERT_EQ(tabla.remove(Key{std::int32_t{2}}), 1U);
+
+  EXPECT_TRUE(ix.search_text("plata", TextRankingKind::kTfIdf, 10).empty());
+  EXPECT_EQ(ix.size(), 2U);
+}
+
+TEST_F(IndiceDeTexto, LaMarcaSobreviveAlProceso) {
+  TextIndex& ix = crear();
+  const RID rid = db_->table("documentos").insert(Record{std::int32_t{4}, std::string("mina")});
+  ix.insert(Key{std::string("mina")}, rid);
+  const fs::path archivo =
+      db_->catalog().resolve(db_->catalog().table("documentos").index("por_contenido")->file);
+  EXPECT_TRUE(fs::exists(TextIndex::stale_marker_path(archivo)));
+
+  // Otro proceso abre la base: el indice sigue desactualizado y la busqueda
+  // lo reconstruye igual.
+  db_.reset();
+  abrir();
+  auto& reabierto = dynamic_cast<TextIndex&>(db_->index("documentos", "por_contenido"));
+  EXPECT_TRUE(reabierto.stale());
+  EXPECT_EQ(reabierto.search_text("mina", TextRankingKind::kBm25, 10).size(), 1U);
+  EXPECT_FALSE(fs::exists(TextIndex::stale_marker_path(archivo)));
+}
+
 TEST_F(IndiceDeTexto, LoQueNoAplicaLoDiceClaro) {
   TextIndex& ix = crear();
   const Key texto = std::string("oro");
-  EXPECT_THROW(ix.insert(texto, RID{1, 0}), Unsupported);
-  EXPECT_THROW(ix.remove(texto), Unsupported);
-  EXPECT_THROW(ix.remove(texto, RID{1, 0}), Unsupported);
   EXPECT_THROW((void)ix.search(texto), Unsupported);
   EXPECT_THROW((void)ix.range_search(texto, texto), Unsupported);
   EXPECT_THROW((void)ix.scan(), Unsupported);
   EXPECT_FALSE(ix.supports_range());
 }
 
-TEST_F(IndiceDeTexto, BorrarElIndiceBorraSusDosArchivos) {
-  crear();
+TEST_F(IndiceDeTexto, BorrarElIndiceBorraTodosSusArchivos) {
+  crear().insert(Key{std::string("x")}, RID{1, 0});  // deja la marca de desactualizado
   const fs::path archivo =
       db_->catalog().resolve(db_->catalog().table("documentos").index("por_contenido")->file);
   ASSERT_TRUE(fs::exists(archivo));
   ASSERT_TRUE(fs::exists(TextIndex::rids_path(archivo)));
+  ASSERT_TRUE(fs::exists(TextIndex::stale_marker_path(archivo)));
   db_->drop_index("documentos", "por_contenido");
   EXPECT_FALSE(fs::exists(archivo));
   EXPECT_FALSE(fs::exists(TextIndex::rids_path(archivo)));
+  EXPECT_FALSE(fs::exists(TextIndex::stale_marker_path(archivo)));
 }
 
 TEST_F(IndiceDeTexto, BorrarLaTablaBorraElIndice) {

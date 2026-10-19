@@ -574,6 +574,60 @@ def test_adaptador_copia_metadata_y_deriva_capacidad_por_kind() -> None:
     assert metadata.indexes[2].supports_range is False
 
 
+def test_adaptador_reconoce_el_indice_de_texto() -> None:
+    table_info = SimpleNamespace(
+        schema=SimpleNamespace(table_name="alumnos", columns=[SimpleNamespace()] * 3),
+        storage="heap",
+        indexes=[SimpleNamespace(name="por_nombre", column=2, kind="inverted_index")],
+    )
+
+    metadata = from_native_table_info(table_info)
+
+    assert metadata.indexes[0].structure is Structure.INVERTED_INDEX
+    assert metadata.indexes[0].supports_range is False
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "SELECT * FROM alumnos WHERE nombre = 'Ana'",
+        "SELECT * FROM alumnos WHERE nombre BETWEEN 'A' AND 'M'",
+        "SELECT * FROM alumnos WHERE nombre > 'M'",
+    ],
+)
+def test_el_indice_de_texto_no_es_ruta_de_igualdad_ni_de_rango(source: str) -> None:
+    # Un indice de texto sobre la columna no sabe si un texto es IGUAL a otro:
+    # la consulta recorre la tabla y filtra, sin romperse.
+    plan = optimize_select(
+        _select_sql(source),
+        _table(_index("por_nombre", Structure.INVERTED_INDEX, column=2)),
+    )
+
+    assert plan.route is AccessRoute.SCAN
+    assert plan.index is None
+    assert plan.residual_filter is True
+
+
+def test_el_indice_de_texto_convive_con_un_hash_en_la_misma_columna() -> None:
+    plan = optimize_select(
+        _select_sql("SELECT * FROM alumnos WHERE nombre = 'Ana'"),
+        _table(
+            _index("a_texto", Structure.INVERTED_INDEX, column=2),
+            _index("z_hash", Structure.EXTENDIBLE_HASH, column=2),
+        ),
+    )
+
+    assert plan.route is AccessRoute.INDEX_SEARCH
+    assert plan.index is not None
+    assert plan.index.name == "z_hash"
+
+
+def test_ir_rechaza_el_indice_de_texto_como_ruta() -> None:
+    index = _index("por_nombre", Structure.INVERTED_INDEX, column=2)
+    with pytest.raises(ValueError, match="indice de texto"):
+        PhysicalTableAccess(_table(index), AccessRoute.INDEX_SEARCH, index)
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [

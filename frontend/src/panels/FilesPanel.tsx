@@ -56,11 +56,14 @@ function Indice({ indice }: { indice: IndexInfo }) {
         </span>
         {/* El hash no puede recorrer un intervalo: lo dice el propio contrato
             del core con supports_range (ADR 0002, regla 2). El R-Tree tampoco
-            hace rangos escalares, pero responde radio, k-NN y poligono. */}
+            hace rangos escalares, pero responde radio, k-NN y poligono. El
+            indice de texto no responde igualdad: responde MATCH (#168). */}
         <span className="text-[10px] text-muted-foreground">
           {indice.structure === "rtree"
             ? "· radio, k-NN y polígono"
-            : indice.supports_range ? "· igualdad y rango" : "· solo igualdad"}
+            : indice.structure === "inverted_index"
+              ? "· búsqueda de texto"
+              : indice.supports_range ? "· igualdad y rango" : "· solo igualdad"}
         </span>
       </div>
     </li>

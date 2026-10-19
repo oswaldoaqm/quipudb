@@ -35,6 +35,7 @@ from engine.parser import (
     EndTransactionStatement,
     ExplainStatement,
     FromSource,
+    IndexKind,
     InsertStatement,
     JoinRef,
     SelectStatement,
@@ -454,11 +455,12 @@ class QueryProcessor:
 
         schema = from_native_schema(table_info.schema, self._native)
         bound = bind_create_index(statement, schema, source)
-        kind = {
-            "BPLUS_UNCLUSTERED": self._native.kind.BPLUS_UNCLUSTERED,
-            "EXTENDIBLE_HASH": self._native.kind.EXTENDIBLE_HASH,
-            "RTREE": self._native.kind.RTREE,
-        }[bound.kind.value]
+        # Solo se lee la constante del tipo pedido: un modulo nativo que no
+        # conozca los demas (el falso de las pruebas, uno compilado antes de
+        # #166) sigue sirviendo para los que si conoce.
+        kind = getattr(self._native.kind, bound.kind.value)
+        if bound.kind is IndexKind.INVERTED_INDEX:
+            self._reject_second_text_index(table_info, schema, statement, source)
 
         self._lock_or_abort(bound.table_name, LockMode.EXCLUSIVE)
         try:
@@ -657,6 +659,42 @@ class QueryProcessor:
             return QueryResult(affected_rows=affected_rows)
         finally:
             self._release_autocommit(statement.table.name)
+
+    def _reject_second_text_index(
+        self,
+        table_info: Any,
+        schema: BoundSchema,
+        statement: CreateIndexStatement,
+        source: str,
+    ) -> None:
+        """Un segundo indice de texto sobre la misma columna es un error.
+
+        Seria identico al primero -- mismos documentos, mismas opciones -- y
+        crearlo reconstruiria el corpus entero en silencio. Si lo que se quiere
+        es reconstruir, eso pasa solo al buscar despues de cambiar la tabla.
+        """
+
+        column = next(
+            position
+            for position, candidate in enumerate(schema.columns)
+            if candidate.name == statement.column.name
+        )
+        existing = next(
+            (
+                index
+                for index in table_info.indexes
+                if str(index.kind) == str(self._native.kind.INVERTED_INDEX)
+                and int(index.column) == column
+            ),
+            None,
+        )
+        if existing is not None:
+            raise SQLSemanticError(
+                f"la columna {statement.column.name!r} ya tiene el indice de texto "
+                f"{existing.name!r}; no se crea otro ni se reconstruye",
+                statement.column.span,
+                source,
+            )
 
     @staticmethod
     def _raise_semantic(

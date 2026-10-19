@@ -44,6 +44,19 @@ def test_el_indice_viaja_con_el_nombre_de_su_columna_no_su_posicion() -> None:
     assert info.indexes[0].supports_range is True
 
 
+def test_el_indice_de_texto_se_describe_sin_romper_get_tables() -> None:
+    # Sin "inverted_index" en IndexStructure, pydantic rechazaba la tabla
+    # entera y el Panel de Archivos quedaba vacio en cuanto existia un
+    # indice de texto (#167).
+    indice = IndexMetadata("por_nombre", 1, Structure.INVERTED_INDEX, supports_range=False)
+
+    info = describe_table(_ESQUEMA, _metadata(indice))
+
+    assert info.indexes[0].column == "nombre"
+    assert info.indexes[0].structure == "inverted_index"
+    assert info.indexes[0].supports_range is False
+
+
 def test_la_clave_primaria_pasa_de_posicion_a_booleano_por_columna() -> None:
     info = describe_table(_ESQUEMA, _metadata())
 

@@ -175,6 +175,17 @@ def bind_create_index(
             statement.column.span,
             source,
         )
+    if (
+        statement.kind is IndexKind.INVERTED_INDEX
+        and indexed_column.data_type is not SqlTypeName.VARCHAR
+    ):
+        _fail(
+            f"la columna {statement.column.name!r} es "
+            f"{indexed_column.data_type.value}; un indice de texto (FULLTEXT) requiere "
+            "una columna VARCHAR",
+            statement.column.span,
+            source,
+        )
     if statement.kind is not IndexKind.RTREE and indexed_column.data_type is SqlTypeName.POINT:
         _fail(
             f"la columna {statement.column.name!r} es POINT y requiere un indice R-Tree",

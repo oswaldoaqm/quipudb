@@ -16,6 +16,7 @@ _INDEX_STRUCTURES = {
     Structure.BPLUS_UNCLUSTERED,
     Structure.EXTENDIBLE_HASH,
     Structure.RTREE,
+    Structure.INVERTED_INDEX,
 }
 
 
