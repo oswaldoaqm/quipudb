@@ -1489,3 +1489,37 @@ semantica, una ruta del optimizador (`TEXT_SEARCH`) y un paso del plan
 
 Antes de buscar, si la tabla cambio desde la ultima construccion, el indice se
 reconstruye (#167): `MATCH` siempre ve las filas actuales.
+
+### SCORE() y ORDER BY relevancia (#169)
+
+```sql
+SELECT *, SCORE() as relevancia FROM articulos
+WHERE MATCH(texto, 'machine learning') USING BM25 ORDER BY relevancia DESC;
+```
+
+`SCORE()` es el puntaje que el ranking le dio a cada fila: el coseno con
+TF-IDF, el puntaje BM25 con BM25. Sale como una columna `DOUBLE` mas, con su
+alias (`AS`) o `score`, en el lugar donde se escribio; con `*`, despues de todas
+las columnas de la tabla. `ORDER BY` acepta el alias o `SCORE()` directamente.
+
+#### Por que no usa el External Sorting
+
+El indice entrega los documentos ordenados de mayor a menor puntaje (#164,
+#165), asi que `ORDER BY relevancia DESC` es exactamente ese orden y `ASC` es
+su inverso. El planner lo reconoce: el puntaje va en campos propios de
+`BoundSelectStatement` (`score`, `score_order`) y no en `order_by`, de modo que
+no se pide external sort. El plan muestra igual un paso `sort` en memoria que
+dice que el orden lo puso el indice (DESC, costo cero) o que se invirtio
+(ASC). Con `DESC` el `LIMIT` sigue bajando al indice como top-k; con `ASC`, no:
+los k de menor puntaje no son el top-k.
+
+Los puntajes viajan en una lista paralela a las filas desde la busqueda en el
+indice hasta la proyeccion: no son una columna de la tabla.
+
+| Caso | Resultado |
+|---|---|
+| `SCORE()` u `ORDER BY SCORE()` sin `MATCH` | `SQLSemanticError` ubicado en el `SCORE()` |
+| `SCORE()` dos veces | `SQLSemanticError` en el segundo |
+| `SCORE()` con `GROUP BY` | `SQLUnsupportedError`: el puntaje es de cada documento, no de un grupo |
+| `SCORE()` con `ORDER BY` sobre otra columna | `SQLUnsupportedError`: el External Sorting ordena registros de la tabla y el puntaje no viaja con ellos |
+| El alias coincide con el nombre de una columna | gana el alias, como en SQL |
