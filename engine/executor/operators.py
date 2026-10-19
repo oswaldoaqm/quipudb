@@ -23,7 +23,7 @@ from engine.executor.predicates import (
     spatial_search_args,
     text_search_args,
 )
-from engine.parser.ast import SqlTypeName
+from engine.parser.ast import OrderDirection, SqlTypeName
 from engine.parser.bound_ast import (
     BoundCondition,
     BoundJoinRef,
@@ -31,6 +31,7 @@ from engine.parser.bound_ast import (
     BoundSource,
     BoundValue,
 )
+from engine.planner.explain import score_order_detail
 from engine.planner.optimizer import (
     AccessRoute,
     JoinStrategy,
@@ -65,6 +66,10 @@ def execute_select(
     statement = plan.statement
     table_name = statement.schema.table_name
 
+    # El puntaje de MATCH (#169) no esta en la tabla: lo entrega el indice de
+    # texto, uno por RID, y viaja en una lista paralela a las filas.
+    usa_puntaje = statement.score is not None or statement.score_order is not None
+    scores: list[float] | None = [] if usa_puntaje else None
     native_rows, root = execute_source(
         database,
         native,
@@ -74,16 +79,37 @@ def execute_select(
         source,
         offset=0,
         temp_dir=temp_dir,
+        scores=scores,
     )
     rows = tuple(from_native_record(row, statement.schema) for row in native_rows)
+    if scores is not None and len(scores) != len(rows):
+        raise RuntimeError("el indice de texto devolvio un puntaje por fila distinto de las filas")
+
+    if statement.score_order is not None:
+        rows, scores, root = _order_by_score(statement, rows, scores or [], root)
 
     columns = tuple(projection.column.name for projection in statement.projections)
     tipos = tuple(projection.column.data_type for projection in statement.projections)
-    if not statement.wildcard:
+    if not statement.wildcard or statement.score is not None:
+        score = statement.score
+        if score is not None:
+            columns = columns[: score.position] + (score.name,) + columns[score.position :]
+            tipos = tipos[: score.position] + (SqlTypeName.DOUBLE,) + tipos[score.position :]
+        puntajes = scores or []
+
+        def proyectar() -> tuple[tuple[BoundValue, ...], ...]:
+            salida = []
+            for i, row in enumerate(rows):
+                fila = row if statement.wildcard else tuple(
+                    row[projection.index] for projection in statement.projections
+                )
+                if score is not None:
+                    fila = fila[: score.position] + (puntajes[i],) + fila[score.position :]
+                salida.append(fila)
+            return tuple(salida)
+
         projected = measure_memory(
-            lambda: tuple(
-                tuple(row[projection.index] for projection in statement.projections) for row in rows
-            ),
+            proyectar,
             records_examined=len(rows),
             records_returned=len,
         )
@@ -106,6 +132,39 @@ def execute_select(
             else statement.limit
         ),
         table_name,
+    )
+
+
+def _order_by_score(
+    statement: Any,
+    rows: tuple[tuple[BoundValue, ...], ...],
+    scores: list[float],
+    root: Step,
+) -> tuple[tuple[tuple[BoundValue, ...], ...], list[float], Step]:
+    """``ORDER BY`` sobre el puntaje (#169), sin External Sorting.
+
+    El indice entrega los documentos de mayor a menor puntaje: DESC es ese
+    mismo orden y ASC es el inverso. El paso queda en el plan igual, para que
+    se vea que el orden lo puso el indice.
+    """
+
+    if statement.score_order.direction is OrderDirection.DESC:
+        ordenado = measure_memory(lambda: (rows, scores), records_examined=0, records_returned=len)
+    else:
+        ordenado = measure_memory(
+            lambda: (rows[::-1], scores[::-1]),
+            records_examined=len(rows),
+            records_returned=lambda par: len(par[0]),
+        )
+    nuevas, nuevos = ordenado.value
+    return nuevas, nuevos, Step(
+        op=Op.SORT,
+        structure=Structure.MEMORY,
+        table=statement.schema.table_name,
+        detail=score_order_detail(statement),
+        stats=ordenado.stats,
+        time_ms=ordenado.time_ms,
+        children=[root],
     )
 
 
@@ -148,8 +207,12 @@ def execute_source(
     source: str,
     offset: int,
     temp_dir: Path | None = None,
+    scores: list[float] | None = None,
 ) -> tuple[list[Any], Step]:
     """Ejecuta un nodo de la fuente y devuelve sus filas nativas y su ``Step``.
+
+    Si ``scores`` no es ``None``, la ruta de texto (#169) agrega ahi el puntaje
+    de cada fila, en el mismo orden que las filas.
 
     Los dos arboles se recorren a la vez porque los esquemas viven en el
     semantico y las rutas en el fisico. ``offset`` es donde empieza este nodo
@@ -166,7 +229,7 @@ def execute_source(
         assert isinstance(fisica, PhysicalTableAccess)
         table = database.table(semantica.schema.table_name)
         rows, step = _read_candidates(
-            database, native, table, fisica, semantica.schema, condition, source
+            database, native, table, fisica, semantica.schema, condition, source, scores
         )
 
     if not fisica.residual_filter:
@@ -326,6 +389,7 @@ def _read_candidates(
     schema: BoundSchema,
     condition: BoundCondition | None,
     source: str,
+    scores: list[float] | None = None,
 ) -> tuple[Any, Step]:
     plan = acceso
     table_name = schema.table_name
@@ -445,10 +509,14 @@ def _read_candidates(
         # Los RID salen por relevancia, de mayor a menor, y el fetch conserva
         # ese orden: sin ORDER BY, es el orden del resultado.
         query, ranking, k = text_search_args(condition, native, plan.text_limit)
-        index_measurement = measure_native(
-            index,
-            lambda: [rid for rid, _ in index.search_text(query, ranking, k)],
-        )
+
+        def buscar() -> list[Any]:
+            resultado = index.search_text(query, ranking, k)
+            if scores is not None:
+                scores.extend(score for _, score in resultado)
+            return [rid for rid, _ in resultado]
+
+        index_measurement = measure_native(index, buscar)
         index_op = Op.TEXT_SEARCH
     else:
         raise ValueError(f"ruta de SELECT desconocida: {plan.route!r}")

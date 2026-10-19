@@ -113,6 +113,10 @@ def execute_external_select(
     """Ejecuta SELECT externo sin agregar una lista a las rutas incrementales."""
 
     statement = plan.statement
+    if statement.score is not None or statement.score_order is not None:
+        # La semantica lo impide (#169): el External Sorting ordena registros
+        # de la tabla y el puntaje de MATCH no viaja con ellos.
+        raise ValueError("SCORE() no pasa por el camino externo")
     pipeline = _candidate_pipeline(database, native, plan, source, options)
     try:
         if statement.group_by is not None:

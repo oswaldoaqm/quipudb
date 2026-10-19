@@ -132,3 +132,48 @@ def test_explain_muestra_la_busqueda_de_texto_y_el_fetch() -> None:
     assert texto.structure is Structure.INVERTED_INDEX
     assert texto.column == "contenido"
     assert "MATCH(contenido, 'oro') USING TF_IDF" in texto.detail
+
+
+# --- SCORE() y ORDER BY sobre el puntaje (#169) ---------------------------------
+
+
+def test_order_by_relevancia_desc_no_usa_external_sort_y_el_limit_baja() -> None:
+    plan = optimize_select(
+        _bind(
+            "SELECT *, SCORE() AS r FROM documentos WHERE MATCH(contenido, 'oro') "
+            "ORDER BY r DESC LIMIT 5"
+        ),
+        _table(_TEXTO),
+    )
+
+    assert plan.external_sort is False
+    assert plan.access.text_limit == 5  # el top-5 del indice ya es el top-5 por puntaje
+
+
+def test_order_by_relevancia_asc_no_baja_el_limit() -> None:
+    plan = optimize_select(
+        _bind(
+            "SELECT id FROM documentos WHERE MATCH(contenido, 'oro') ORDER BY SCORE() ASC LIMIT 5"
+        ),
+        _table(_TEXTO),
+    )
+
+    assert plan.external_sort is False
+    assert plan.access.text_limit is None  # los 5 de menor puntaje no son el top-5
+
+
+def test_explain_ordena_por_relevancia_en_memoria_y_proyecta_el_puntaje() -> None:
+    source = (
+        "SELECT *, SCORE() AS relevancia FROM documentos WHERE MATCH(contenido, 'oro') "
+        "USING BM25 ORDER BY relevancia DESC"
+    )
+    plan = explain_select(optimize_select(_bind(source), _table(_TEXTO)), source, source)
+
+    project = plan.root
+    assert project.op is Op.PROJECT
+    assert project.detail == "id, contenido, autor, relevancia (SCORE)"
+    sort = project.children[0]
+    assert sort.op is Op.SORT
+    assert sort.structure is Structure.MEMORY
+    assert "sin external sort" in sort.detail
+    assert sort.children[0].op is Op.FETCH

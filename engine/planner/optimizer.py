@@ -263,6 +263,7 @@ class PhysicalSelectPlan:
             self.source.text_limit != self.statement.limit
             or self.statement.order_by is not None
             or self.statement.group_by is not None
+            or _score_ascendente(self.statement)
         ):
             raise ValueError("solo el LIMIT sin ORDER BY ni GROUP BY baja al indice de texto")
         _validate_source(self.source, self.statement.source, self.statement.where)
@@ -386,6 +387,7 @@ def optimize_select(
         and statement.limit is not None
         and statement.order_by is None
         and statement.group_by is None
+        and not _score_ascendente(statement)
     ):
         # Sin ORDER BY, las filas de MATCH salen por relevancia, asi que el
         # LIMIT es el top-k del ranking y el indice lo resuelve con un heap de
@@ -400,6 +402,15 @@ def optimize_select(
             isinstance(source, PhysicalTableAccess) and source.nearest is not None
         ),
         group_strategy=(GroupStrategy.AUTO if statement.group_by is not None else None),
+    )
+
+
+def _score_ascendente(statement: BoundSelectStatement) -> bool:
+    """``ORDER BY SCORE() ASC`` (#169): el top-k del indice no son las k primeras."""
+
+    return (
+        statement.score_order is not None
+        and statement.score_order.direction is OrderDirection.ASC
     )
 
 
