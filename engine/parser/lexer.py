@@ -25,6 +25,8 @@ _KEYWORDS = {
         TokenKind.HASH,
         TokenKind.EXTENDIBLE_HASH,
         TokenKind.RTREE,
+        TokenKind.FULLTEXT,
+        TokenKind.INVERTED_INDEX,
         TokenKind.INSERT,
         TokenKind.INTO,
         TokenKind.VALUES,

@@ -49,6 +49,7 @@ class IndexKind(StrEnum):
     BPLUS_UNCLUSTERED = "BPLUS_UNCLUSTERED"
     EXTENDIBLE_HASH = "EXTENDIBLE_HASH"
     RTREE = "RTREE"
+    INVERTED_INDEX = "INVERTED_INDEX"
 
 
 @dataclass(frozen=True, slots=True)

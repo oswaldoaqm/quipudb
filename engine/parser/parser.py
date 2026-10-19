@@ -236,11 +236,16 @@ class _Parser:
             kind = IndexKind.EXTENDIBLE_HASH
         elif self._match(TokenKind.RTREE):
             kind = IndexKind.RTREE
+        elif self._match(TokenKind.FULLTEXT, TokenKind.INVERTED_INDEX):
+            # El indice de texto de la Parte 3 (#167). FULLTEXT es la palabra
+            # de MySQL; INVERTED_INDEX, el nombre de la estructura, como
+            # EXTENDIBLE_HASH lo es de HASH.
+            kind = IndexKind.INVERTED_INDEX
         else:
             raise self._error(
                 self._peek(),
-                "se esperaba BPLUS, BPLUS_UNCLUSTERED, HASH, EXTENDIBLE_HASH o RTREE "
-                "despues de USING",
+                "se esperaba BPLUS, BPLUS_UNCLUSTERED, HASH, EXTENDIBLE_HASH, RTREE, "
+                "FULLTEXT o INVERTED_INDEX despues de USING",
             )
         return CreateIndexStatement(
             index=index,

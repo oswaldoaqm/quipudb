@@ -113,3 +113,49 @@ def test_bind_create_index_valida_los_tres_identificadores(source: str) -> None:
 
     with pytest.raises(SQLSemanticError, match="nombre de (indice|tabla|columna) invalido"):
         bind_create_index(statement, _SCHEMA, source)
+
+
+# ---------------------------------------------------------------------------
+# Indice de texto (#167)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("spelling", ["FULLTEXT", "INVERTED_INDEX"])
+def test_bind_create_index_de_texto_sobre_varchar(spelling: str) -> None:
+    statement = _create_index(f"CREATE INDEX por_nombre ON alumnos (nombre) USING {spelling}")
+
+    bound = bind_create_index(statement, _SCHEMA)
+
+    assert bound.kind is IndexKind.INVERTED_INDEX
+    assert bound.column_name == "nombre"
+
+
+def test_bind_create_index_de_texto_rechaza_columna_que_no_es_texto() -> None:
+    source = "CREATE INDEX por_id ON alumnos (id) USING FULLTEXT"
+    statement = _create_index(source)
+
+    with pytest.raises(SQLSemanticError, match="requiere una columna VARCHAR") as caught:
+        bind_create_index(statement, _SCHEMA, source)
+
+    # El error apunta a la columna: linea y columna de "id" en el texto.
+    assert caught.value.span == statement.column.span
+    assert source[caught.value.span.start : caught.value.span.end] == "id"
+    assert caught.value.span.line == 1
+
+
+def test_bind_create_index_de_texto_rechaza_point() -> None:
+    source = "CREATE INDEX por_ubicacion ON lugares (ubicacion) USING FULLTEXT"
+    statement = _create_index(source)
+    schema = BoundSchema(
+        "lugares",
+        (
+            BoundColumn("id", SqlTypeName.INT, None),
+            BoundColumn("ubicacion", SqlTypeName.POINT, None),
+        ),
+        0,
+    )
+
+    with pytest.raises(SQLSemanticError, match="requiere una columna VARCHAR") as caught:
+        bind_create_index(statement, schema, source)
+
+    assert caught.value.span == statement.column.span

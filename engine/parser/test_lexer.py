@@ -24,6 +24,8 @@ KEYWORDS = (
     ("hash", TokenKind.HASH),
     ("extendible_hash", TokenKind.EXTENDIBLE_HASH),
     ("rtree", TokenKind.RTREE),
+    ("fulltext", TokenKind.FULLTEXT),
+    ("inverted_index", TokenKind.INVERTED_INDEX),
     ("insert", TokenKind.INSERT),
     ("into", TokenKind.INTO),
     ("values", TokenKind.VALUES),
