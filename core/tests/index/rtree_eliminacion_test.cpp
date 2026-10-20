@@ -264,7 +264,8 @@ TEST_F(RTreeEliminacionTest, LaFreeListSobreviveAlReabrir) {
   // No se compara contra el tamano que tenia el archivo (#204). El arbol que
   // queda despues de borrar y reinsertar no es el mismo que el construido de
   // una vez, y puede necesitar algunos nodos mas sin que la free list falle:
-  // con los puntos de GCC 15 eran 11 paginas mas. Lo que si se puede exigir
+  // con los puntos de GCC 15 el archivo paso de 506 a 518 paginas, con la
+  // lista libre ya agotada. Lo que si se puede exigir
   // es que esas paginas nuevas se pidan recien con la lista agotada.
   std::size_t crecimientos = 0;
   for (std::size_t i = 0; i < 600; ++i) {
