@@ -257,8 +257,21 @@ TEST_F(RTreeEliminacionTest, LaFreeListSobreviveAlReabrir) {
   EXPECT_EQ(reabierto.free_pages(), libres);
   EXPECT_EQ(reabierto.check_invariants(), "");
 
-  // Reinsertar lo borrado reutiliza las paginas libres antes de crecer.
-  for (std::size_t i = 0; i < 600; ++i) reabierto.insert(puntos[i].point, puntos[i].rid);
+  // Reinsertar lo borrado reutiliza las paginas libres antes de crecer: si una
+  // insercion agranda el archivo, la lista libre tiene que haber quedado vacia.
+  std::size_t crecimientos = 0;
+  for (std::size_t i = 0; i < 600; ++i) {
+    const PageId antes = reabierto.page_count();
+    reabierto.insert(puntos[i].point, puntos[i].rid);
+    if (reabierto.page_count() > antes) {
+      ++crecimientos;
+      EXPECT_EQ(reabierto.free_pages(), 0u) << "crecio con paginas libres, insercion " << i;
+    }
+  }
+  std::cout << "[ R-Tree ] reabierto: " << paginas << " paginas y " << libres
+            << " libres antes de reinsertar; " << reabierto.page_count() << " paginas, "
+            << reabierto.free_pages() << " libres y " << crecimientos
+            << " inserciones que agrandaron el archivo despues\n";
   EXPECT_EQ(reabierto.check_invariants(), "");
   EXPECT_LE(reabierto.page_count(), paginas + 1);
   EXPECT_EQ(claves(reabierto.scan()), claves(puntos));
