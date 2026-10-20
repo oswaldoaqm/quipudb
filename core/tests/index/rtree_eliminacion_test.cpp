@@ -260,6 +260,12 @@ TEST_F(RTreeEliminacionTest, LaFreeListSobreviveAlReabrir) {
 
   // Reinsertar lo borrado reutiliza las paginas libres antes de crecer: si una
   // insercion agranda el archivo, la lista libre tiene que haber quedado vacia.
+  //
+  // No se compara contra el tamano que tenia el archivo (#204). El arbol que
+  // queda despues de borrar y reinsertar no es el mismo que el construido de
+  // una vez, y puede necesitar algunos nodos mas sin que la free list falle:
+  // con los puntos de GCC 15 eran 11 paginas mas. Lo que si se puede exigir
+  // es que esas paginas nuevas se pidan recien con la lista agotada.
   std::size_t crecimientos = 0;
   for (std::size_t i = 0; i < 600; ++i) {
     const PageId antes = reabierto.page_count();
@@ -274,7 +280,6 @@ TEST_F(RTreeEliminacionTest, LaFreeListSobreviveAlReabrir) {
             << reabierto.free_pages() << " libres y " << crecimientos
             << " inserciones que agrandaron el archivo despues\n";
   EXPECT_EQ(reabierto.check_invariants(), "");
-  EXPECT_LE(reabierto.page_count(), paginas + 1);
   EXPECT_EQ(claves(reabierto.scan()), claves(puntos));
 }
 
