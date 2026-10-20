@@ -92,7 +92,9 @@ TABLA = "documentos"
 INDICE = "documentos_gin"
 CONFIGURACION_TEXTO = "english"
 MODOS = ("gin_or", "gin_and")
-DSN_PREDETERMINADO = "host=localhost port=5432 user=postgres password=quipudb dbname=quipudb_bench"
+# El cluster temporal del README: un PostgreSQL propio, fijado al mismo nucleo
+# que QuipuDB, que se crea para medir y se borra despues.
+DSN_PREDETERMINADO = "host=localhost port=55433 user=postgres dbname=postgres"
 AJUSTES_SESION = {"jit": "off", "max_parallel_workers_per_gather": "0"}
 
 
@@ -126,8 +128,8 @@ def conectar(dsn: str):
         conexion = psycopg.connect(dsn, autocommit=True)
     except psycopg.OperationalError as error:
         raise RuntimeError(
-            f"no se pudo conectar a PostgreSQL ({error}); si falta la base, "
-            'crearla con: psql -U postgres -c "CREATE DATABASE quipudb_bench"'
+            f"no se pudo conectar a PostgreSQL ({error}); levantar el cluster temporal "
+            "como indica benchmarks/README.md o pasar otro servidor con --dsn"
         ) from error
     for clave, valor in AJUSTES_SESION.items():
         conexion.execute(f"SET {clave} = {valor}")
