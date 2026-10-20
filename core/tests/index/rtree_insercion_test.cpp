@@ -14,6 +14,7 @@
 #include <tuple>
 #include <vector>
 
+#include "azar_portable.hpp"
 #include "quipudb/error.hpp"
 #include "quipudb/index/rtree.hpp"
 
@@ -94,8 +95,8 @@ TEST_F(RTreeInsercionTest, CuandoLaRaizSeParteElArbolSubeDeAltura) {
 TEST_F(RTreeInsercionTest, LosInvariantesSeCumplenDespuesDeCadaInsercion) {
   RTree arbol(path_, kDefaultPageSize, kOrdenChico);
   std::mt19937 gen(42);
-  std::uniform_real_distribution<double> lon(-77.2, -76.8);
-  std::uniform_real_distribution<double> lat(-12.3, -11.8);
+  prueba::RealUniforme lon(-77.2, -76.8);
+  prueba::RealUniforme lat(-12.3, -11.8);
   std::vector<RTreeLeafEntry> insertadas;
 
   std::size_t altura_previa = 0;
@@ -174,7 +175,7 @@ TEST_F(RTreeInsercionTest, EnElBordeDelRangoLasCuentasSiguenSiendoFinitas) {
   RTree arbol(path_, kDefaultPageSize, 4);
   const double max = RTree::kMaxCoordinate;
   std::mt19937 gen(8);
-  std::uniform_real_distribution<double> u(-1.0, 1.0);
+  prueba::RealUniforme u(-1.0, 1.0);
   std::vector<RTreeLeafEntry> puntos;
   for (std::size_t i = 0; i < 2000; ++i) {
     puntos.push_back({Point{u(gen) * max, u(gen) * max}, rid_de(i)});
@@ -193,7 +194,7 @@ TEST_F(RTreeInsercionTest, EnElBordeDelRangoLasCuentasSiguenSiendoFinitas) {
 TEST_F(RTreeInsercionTest, SeReabreConTodosSusPuntosYSigueCreciendo) {
   std::vector<RTreeLeafEntry> insertadas;
   std::mt19937 gen(7);
-  std::uniform_real_distribution<double> d(-100.0, 100.0);
+  prueba::RealUniforme d(-100.0, 100.0);
   {
     RTree arbol(path_, kDefaultPageSize, kOrdenChico);
     for (std::size_t i = 0; i < 500; ++i) {
@@ -289,8 +290,8 @@ TEST_F(RTreeInsercionTest, CienMilPuntosConElOrdenPorDefecto) {
   RTree arbol(path_);
   std::mt19937 gen(2026);
   // Caja de Lima Metropolitana.
-  std::uniform_real_distribution<double> lon(-77.2, -76.8);
-  std::uniform_real_distribution<double> lat(-12.3, -11.8);
+  prueba::RealUniforme lon(-77.2, -76.8);
+  prueba::RealUniforme lat(-12.3, -11.8);
 
   constexpr std::size_t n = 100'000;
   const auto inicio = std::chrono::steady_clock::now();

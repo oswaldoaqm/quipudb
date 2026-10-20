@@ -11,6 +11,7 @@
 #include <tuple>
 #include <vector>
 
+#include "azar_portable.hpp"
 #include "quipudb/error.hpp"
 #include "quipudb/index/rtree.hpp"
 
@@ -60,8 +61,8 @@ constexpr Rect kLima{-77.2, -12.3, -76.8, -11.8};
 
 std::vector<RTreeLeafEntry> puntos_en(const Rect& caja, std::size_t n, unsigned semilla) {
   std::mt19937 gen(semilla);
-  std::uniform_real_distribution<double> x(caja.min_x, caja.max_x);
-  std::uniform_real_distribution<double> y(caja.min_y, caja.max_y);
+  prueba::RealUniforme x(caja.min_x, caja.max_x);
+  prueba::RealUniforme y(caja.min_y, caja.max_y);
   std::vector<RTreeLeafEntry> out;
   out.reserve(n);
   for (std::size_t i = 0; i < n; ++i) out.push_back({Point{x(gen), y(gen)}, rid_de(i)});
@@ -84,8 +85,8 @@ TEST_F(RTreeBusquedaTest, CoincideConRevisarTodosLosPuntosUnoPorUno) {
   for (const auto& e : todos) arbol.insert(e.point, e.rid);
 
   std::mt19937 gen(99);
-  std::uniform_real_distribution<double> x(kLima.min_x - 0.05, kLima.max_x + 0.05);
-  std::uniform_real_distribution<double> y(kLima.min_y - 0.05, kLima.max_y + 0.05);
+  prueba::RealUniforme x(kLima.min_x - 0.05, kLima.max_x + 0.05);
+  prueba::RealUniforme y(kLima.min_y - 0.05, kLima.max_y + 0.05);
   for (int consulta = 0; consulta < 300; ++consulta) {
     double x1 = x(gen), x2 = x(gen), y1 = y(gen), y2 = y(gen);
     if (x1 > x2) std::swap(x1, x2);

@@ -16,6 +16,7 @@
 #include <tuple>
 #include <vector>
 
+#include "azar_portable.hpp"
 #include "quipudb/error.hpp"
 #include "quipudb/index/rtree.hpp"
 
@@ -214,7 +215,7 @@ TEST_F(RTreePoligonoTest, DescartaLoQueEstaEnLaCajaPeroNoEnElPoligono) {
 TEST_F(RTreePoligonoTest, CoincideConComprobarUnoPorUno) {
   RTree arbol(path_, kDefaultPageSize, 6);
   std::mt19937 generador(20'260'927);
-  std::uniform_real_distribution<double> coord(-0.5, 3.5);
+  prueba::RealUniforme coord(-0.5, 3.5);
 
   std::vector<RTreeLeafEntry> puntos;
   for (std::size_t i = 0; i < 2'000; ++i) {
