@@ -1,0 +1,62 @@
+{
+  "descripcion": "Fuentes oficiales inmutables del 2.3.2: tiempos de QuipuDB (#172), rankings de QuipuDB (#173) y GIN de PostgreSQL con sus rankings (#174), mas las consultas y juicios de #171. Corridas relativas a benchmarks/results y datasets a benchmarks/datasets; todos los CSV estan ignorados por Git.",
+  "corridas": {
+    "172": {
+      "ejecucion": "20261019T225528Z_c576d5c784fa40a8a9ae8b0b1276895a",
+      "archivos": {
+        "mediciones": {
+          "nombre": "20261019T225528Z_c576d5c784fa40a8a9ae8b0b1276895a_mediciones.csv",
+          "sha256": "d3ddf19c7416c204b0acf14f6d0dda136f52700f9e7b7b70b213610ac076cc85"
+        },
+        "resumen": {
+          "nombre": "20261019T225528Z_c576d5c784fa40a8a9ae8b0b1276895a_resumen.csv",
+          "sha256": "92e82848a6c40237e6f790232f286bdb503d94c2697211382b007d367a617e94"
+        },
+        "entorno": {
+          "nombre": "20261019T225528Z_c576d5c784fa40a8a9ae8b0b1276895a_entorno.csv",
+          "sha256": "195cebea6c59f3eed7d519006ba902456550fbe569d8a1c377ec8ee633648db3"
+        }
+      }
+    },
+    "173": {
+      "ejecucion": "20261019T232944Z_34775e724d824378964e9b9b674d00ad",
+      "archivos": {
+        "rankings": {
+          "nombre": "20261019T232944Z_34775e724d824378964e9b9b674d00ad_rankings.csv",
+          "sha256": "cd9808b7d82b656f8fa24ed79c9d69e020c3e891da61d77bf21d8491e5f689e2"
+        },
+        "entorno": {
+          "nombre": "20261019T232944Z_34775e724d824378964e9b9b674d00ad_entorno.csv",
+          "sha256": "b8519e8654720a18db12b3d283d26a18b9a13738e67627526d277de760620996"
+        }
+      }
+    },
+    "174": {
+      "ejecucion": "20261019T234855Z_e13610fb8c904a65aa5f306bfe670be8",
+      "archivos": {
+        "mediciones": {
+          "nombre": "20261019T234855Z_e13610fb8c904a65aa5f306bfe670be8_mediciones.csv",
+          "sha256": "0ca35bff5cc0f1c1dd5c24cf15a1cd1a07df60a5f33bf71f55d47a8deeb77b9a"
+        },
+        "resumen": {
+          "nombre": "20261019T234855Z_e13610fb8c904a65aa5f306bfe670be8_resumen.csv",
+          "sha256": "32d168b55ceb1ae8bc7df4f22554f880e1e6cb1b049f03773bcf35082d8fa35a"
+        },
+        "entorno": {
+          "nombre": "20261019T234855Z_e13610fb8c904a65aa5f306bfe670be8_entorno.csv",
+          "sha256": "40022b0b47cc28c2ab39189696288af0f3b411d59b444d1458c8c92db21e2c76"
+        },
+        "rankings": {
+          "nombre": "20261019T234855Z_e13610fb8c904a65aa5f306bfe670be8_rankings.csv",
+          "sha256": "699552f1b7dc82787ff2591377ab3d62471a0461a9348f4c23484ac845f08fb8"
+        }
+      }
+    }
+  },
+  "datasets": {
+    "consultas.csv": "9807a6280572c0c4345bc9d46839b274289da8f503f75e786f85a243aa011304",
+    "relevancia_1000.csv": "012ce70213130ad3a7985dcf2d0a4575ba4f6f68f3edd90f5220ee70dbbdfca2",
+    "relevancia_10000.csv": "7f0b725df96797244afdbbc1e8a1c55bb7b6b5e280b9c773c65984b6f6b7feef",
+    "relevancia_100000.csv": "fe457ac5178262bbc4e43edf927c2b9ef94e24d9d46e61d767b670eccca6edf9"
+  }
+}
