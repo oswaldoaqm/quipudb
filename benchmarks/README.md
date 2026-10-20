@@ -1111,3 +1111,92 @@ Tambien comprueban la validacion del archivo de rankings, que un ranking
 perfecto llega al techo y que la CLI no pisa resultados. Con los bindings,
 generan los rankings reales de un corpus sintetico. Los resultados y su
 analisis estan en [relevancia_tfidf_bm25.md](relevancia_tfidf_bm25.md).
+
+## GIN de PostgreSQL (issue #174)
+
+`scripts/bench_gin.py` corre las mismas 300 consultas de la suite texto sobre
+PostgreSQL con un indice GIN: mismos corpus de #171, en el mismo orden. Escribe
+los tres CSV del banco con `tecnica=gin_or` y `gin_and`, para graficarse junto
+a los de #172, y un `<id>_rankings.csv` en el formato de #173, para que
+`relevancia_texto.py` los evalue con el mismo codigo. No necesita los bindings;
+si `psycopg` y un servidor PostgreSQL, sin extensiones.
+
+### El servidor: un cluster temporal fijado al mismo nucleo
+
+El script **borra y crea** la tabla `documentos`, asi que no se apunta a una
+base con datos. La medicion oficial uso un cluster propio y desechable de
+PostgreSQL 17.4, con los binarios de la instalacion local. Corre con el usuario
+de Windows, y eso permite fijarlo a la misma CPU logica que QuipuDB en #172.
+Al servicio de PostgreSQL, que corre con otro usuario, no se le puede cambiar
+la afinidad.
+
+```bat
+set PG="C:\Program Files\PostgreSQL\17\bin"
+%PG%\initdb -D %TEMP%\quipudb-pg -U postgres --auth=trust -E UTF8 --locale=es-ES
+start /affinity 4 /b "" %PG%\pg_ctl start -w -D %TEMP%\quipudb-pg -l %TEMP%\quipudb-pg.log ^
+  -o "-p 55433 -c jit=off -c shared_buffers=128MB -c work_mem=4MB"
+```
+
+`--locale` tiene que reconocer letras Unicode: con `C`, el parser de PostgreSQL
+toma el apostrofo tipografico como letra (`friend’s` da `friend’`) y deja de
+tokenizar como QuipuDB. Despues de medir: `pg_ctl stop -D %TEMP%\quipudb-pg` y
+borrar la carpeta. En Linux, `taskset -c 2 pg_ctl start ...` cumple el papel
+de `start /affinity`.
+
+### Medir
+
+```bash
+python -B benchmarks/scripts/bench_gin.py --tamanos 1000 10000 100000 \
+  --calentamientos 1 --repeticiones 5 --entorno proposito=experimento_oficial
+```
+
+Se conecta por defecto a `localhost:55433` (`--dsn` para otro servidor). La
+sesion apaga `jit` y las consultas en paralelo. Por tamano:
+
+- **Tabla:** `documentos(id, texto varchar(256), tsv tsvector)`, con `tsv`
+  como columna generada `to_tsvector('english', texto)`. Se copia el CSV y se
+  hace `VACUUM ANALYZE`.
+- **Construccion:** `DROP INDEX` y `CREATE INDEX ... USING gin (tsv)`, desde el
+  cliente, en cada repeticion. La tokenizacion la hizo la columna generada al
+  cargar; se mide aparte (`gin_tokenizacion`) recalculando `to_tsvector` sobre
+  el corpus, porque el `build` de QuipuDB si la incluye.
+- **Consultas:** `gin_or` (`plainto_tsquery` con `|`: algun termino, como
+  `MATCH`) y `gin_and` (`plainto_tsquery`: todos). Las dos ordenan por
+  `ts_rank` y desempatan por id, `LIMIT 10`. Cada una se mide con
+  `EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, FORMAT JSON)`: el tiempo es el del
+  servidor y las paginas son los bloques tocados. Se fuerza el GIN con
+  `enable_seqscan = off` y se verifica que el plan lo use; el plan natural y el
+  tiempo desde el cliente quedan en el entorno.
+- **Rankings:** el top-10 de cada consulta, mas los empatados con el 10.o.
+
+### Graficas e informe del 2.3.2
+
+`scripts/generar_graficas_texto.py` lee solo las fuentes fijadas en
+`docs/informe/fuentes_texto.json`:
+
+- la corrida de tiempos de #172;
+- los rankings de #173;
+- la corrida del GIN, con sus rankings;
+- `consultas.csv` y `relevancia_N.csv` de #171.
+
+Todas con nombre y SHA-256. Genera cinco figuras PNG + SVG en
+`docs/informe/graficas/texto/` y las tablas del
+[informe](../docs/informe/comparacion_texto.md), entre sus marcadores
+BEGIN/END RESULTADOS. Si falta una fuente o cambio su hash, falla antes de
+escribir nada. La relevancia sale del mismo codigo de #173.
+
+```bash
+MPLCONFIGDIR=/tmp/quipudb-matplotlib python -B benchmarks/scripts/generar_graficas_texto.py
+MPLCONFIGDIR=/tmp/quipudb-matplotlib python -B -m pytest \
+  benchmarks/test_gin_y_graficas_texto.py -q -rs -p no:cacheprovider
+```
+
+Las pruebas no necesitan PostgreSQL ni los CSV oficiales. Comprueban:
+
+- el SQL de las dos consultas, y que el GIN mide los mismos casos que QuipuDB;
+- el generador sobre fuentes sinteticas: tablas, hash alterado, fuente
+  faltante y conservacion del texto fuera de los marcadores.
+
+La que verifica los hashes oficiales se salta si los CSV no estan. La
+integracion contra un servidor real corre solo si `QUIPUDB_DSN_GIN` apunta a
+uno de prueba.
