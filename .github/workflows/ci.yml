@@ -16,7 +16,7 @@ on:
 jobs:
   core:
     name: Compilar core (C++)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v5
       - name: Configurar
@@ -30,7 +30,7 @@ jobs:
 
   python:
     name: Lint capa Python
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -46,7 +46,7 @@ jobs:
 
   bindings:
     name: Compilar bindings y probarlos (Python + C++)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -88,7 +88,7 @@ jobs:
   commits:
     name: Validar mensajes de commit
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v5
         with:
