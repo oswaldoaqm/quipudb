@@ -1172,9 +1172,9 @@ coinciden (la raiz pierde la tilde igual), pero `informacion` no se reduce y
 
 `unaccent_before_stem` invierte el orden, que es la receta de PostgreSQL con
 `unaccent` delante del stemmer: las dos formas coinciden siempre, a cambio de
-que los sufijos con tilde ya no se reduzcan. Que opcion usa el indice se
-decide en el ADR de la Parte 3 (#175), con los datos del benchmark de
-relevancia (#173).
+que los sufijos con tilde ya no se reduzcan. El indice mantiene el orden de
+PostgreSQL por omision; la medicion que lo respalda esta en el
+[ADR 0006](adr/0006-indice-invertido-y-rankings.md) (#175).
 
 ### SPIMI: los bloques (#161)
 
@@ -1265,8 +1265,8 @@ stopwords cuenta en N con longitud 0.
 El SPIMI no las acumula en memoria: las escribe de corrido a un archivo propio
 mientras recorre los documentos -- quedan en orden de doc sin hacer nada --, y
 el merge las copia al indice. `document_length` las carga en memoria la
-primera vez (8 bytes por documento), porque BM25 la consulta una vez por
-posting.
+primera vez (desde la version 3, junto con las normas: 24 bytes por
+documento), porque BM25 la consulta una vez por posting.
 
 El formato del indice paso a la **version 2** (#163); abrir uno de una version anterior es un
 `IoError`.
@@ -1277,7 +1277,8 @@ Un documento nuevo cambia N, avgdl y el df de cada uno de sus terminos, y con
 eso el peso de terminos de documentos que no se tocaron. No hay forma de
 agregarlo sin recalcular todo, asi que el indice de texto **no** se actualiza
 incrementalmente: un INSERT sobre la tabla no se refleja en el indice hasta
-que se reconstruye.
+que se reconstruye. Desde #167 eso pasa solo, en la siguiente busqueda (ver
+#166).
 
 ### Ranking TF-IDF con similitud del coseno (#164)
 
@@ -1523,3 +1524,101 @@ indice hasta la proyeccion: no son una columna de la tabla.
 | `SCORE()` con `GROUP BY` | `SQLUnsupportedError`: el puntaje es de cada documento, no de un grupo |
 | `SCORE()` con `ORDER BY` sobre otra columna | `SQLUnsupportedError`: el External Sorting ordena registros de la tabla y el puntaje no viaja con ellos |
 | El alias coincide con el nombre de una columna | gana el alias, como en SQL |
+
+### Formato en disco del indice de texto (#175)
+
+Lo que queda en el directorio del catalogo por cada indice de texto. Todos los
+archivos usan el `DiskManager`: paginas de 4 KiB por omision (el `page_size`
+de la tabla) y un area meta de 64 bytes al principio. Los numeros se escriben
+en el orden de bytes de la maquina, sin relleno. Los `static_assert` del codigo
+fijan los tamanos, y dos construcciones del mismo corpus dan los mismos bytes
+(#162).
+
+| Archivo | Contenido | Vida |
+|---|---|---|
+| `<tabla>.<indice>.inverted_index` | El indice invertido | Permanente |
+| `<tabla>.<indice>.inverted_index.rids` | Documento -> RID | Permanente |
+| `<tabla>.<indice>.inverted_index.desactualizado` | Vacio: su existencia es la marca | Desde un `INSERT`/`DELETE` hasta la reconstruccion |
+| `quipudb_spimi_*` (bloques y longitudes) | Intermedios de SPIMI (#161) | Se borran al terminar el `build` |
+| `<...>.inverted_index.nuevo` (y su `.rids`) | El indice en construccion | Reemplaza al anterior al final del `build` |
+
+#### El area meta del indice (version 3, 64 bytes)
+
+| Offset | Campo | Tipo | Que es |
+|---:|---|---|---|
+| 0 | magic | `char[4]` | `QPII` |
+| 4 | version | `u16` | 3; otra es un `IoError` al abrir |
+| 6 | reservado | `u16` | 0 |
+| 8 | terminos | `u64` | Terminos distintos |
+| 16 | postings | `u64` | Suma de los largos de todas las listas |
+| 24 | diccionario | `u32` (PageId) | Primera pagina del diccionario |
+| 28 | disperso | `u32` | Primera pagina del indice disperso |
+| 32 | disperso_bytes | `u32` | Bytes del flujo disperso |
+| 36 | disperso_entradas | `u32` | Paginas del diccionario (una entrada por pagina) |
+| 40 | opciones | `u32` | Primera pagina de las opciones del tokenizador |
+| 44 | opciones_bytes | `u32` | Bytes de ese flujo |
+| 48 | documentos | `u32` | N |
+| 52 | por_documento | `u32` | Primera pagina de las estadisticas por documento |
+| 56 | longitud_total | `u64` | Suma de las longitudes; `avgdl = longitud_total / N` |
+
+#### Los flujos
+
+Un flujo es una cadena de paginas (`Page::next`) que se lee como bytes
+seguidos. Una posicion dentro de un flujo es `(u32 pagina, u16 offset)`.
+
+| Flujo | Registro | Cruza paginas | Orden |
+|---|---|---|---|
+| postings | `u32 doc, u32 tf` (8 bytes) | si: una lista puede ocupar muchas | Por termino, y dentro de la lista por doc |
+| diccionario | `u16 largo, termino, u32 df, u32 pagina, u16 offset` (12 + largo bytes): la posicion de la lista en el flujo de postings | **no**: si no cabe, empieza otra pagina. El `record_count` de la pagina dice cuantas entradas tiene | Por termino (bytes UTF-8) |
+| disperso | `u16 largo, termino, u32 pagina`: el primer termino de cada pagina del diccionario | si | Por termino |
+| opciones | `u8 n, n x u8 idioma, u8 hay_stemmer, u8 stemmer, u8 unaccent_before_stem, u32 max_term_bytes, u32 m, m x (u16 largo, palabra)`, donde el idioma es 0 = espanol, 1 = ingles y las m palabras son las stopwords extra | si | -- |
+| por documento | `u32 doc, u32 longitud, f64 norma_log, f64 norma_raw` (24 bytes) | si | Por doc |
+
+Buscar un termino es:
+
+1. una busqueda binaria en el indice disperso, que se carga en memoria al
+   abrir;
+2. leer **una** pagina del diccionario;
+3. leer las paginas de su lista.
+
+`document_frequency` se queda en el segundo paso.
+
+Las estadisticas por documento se cargan en memoria la primera vez que un
+ranking las pide (24 bytes por documento).
+
+#### El archivo de RIDs
+
+Area meta de 24 bytes:
+
+| Campo | Tipo | Que es |
+|---|---|---|
+| magic | `char[4]` | `QPTR` |
+| version | `u16` | 1 |
+| reservado | `u16` | -- |
+| documentos | `u32` | Cantidad de documentos |
+| primera | `u32` | Primera pagina del flujo |
+| bytes | `u64` | Bytes del flujo |
+
+Le sigue un flujo con `u32 pagina, u16 slot` (6 bytes) por documento, en el
+orden de los DocId 1..N, que es el orden del cursor del Heap al construir. Se
+carga entero al abrir el indice.
+
+#### Cuanto ocupa
+
+Con los 100 000 documentos de Quora del 2.3.2 (#172), el indice ocupa
+7,7 MiB:
+
+- 7,1 MiB de indice invertido;
+- 0,6 MiB de RIDs (`6 x N` bytes mas las paginas).
+
+Los postings (`8 bytes x postings`) y las estadisticas por documento
+(`24 x N`) son la mayor parte. El GIN de PostgreSQL ocupa 4,3 MiB porque
+comprime las listas y no guarda frecuencias; a cambio, para rankear lee el
+`tsvector` de la tabla (#174).
+
+### Mediciones del 2.3.2 (#171 a #174)
+
+La comparacion experimental de TF-IDF, BM25 y el GIN de PostgreSQL esta en
+[`docs/informe/comparacion_texto.md`](informe/comparacion_texto.md). Las
+decisiones de esta seccion, con las mediciones que las respaldan, estan en el
+[ADR 0006](adr/0006-indice-invertido-y-rankings.md).

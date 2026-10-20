@@ -600,10 +600,14 @@ desde esos CSV.
 | #40 | B+ agrupado vs. B+ no agrupado vs. hash extensible | [`comparacion_indices.md`](benchmarks/comparacion_indices.md) |
 | #131 | R-Tree vs. búsqueda secuencial | [`comparacion_rtree_secuencial.md`](benchmarks/comparacion_rtree_secuencial.md) |
 | #132 | Secuencial vs. R-Tree vs. GiST de PostGIS | [`docs/informe/comparacion_espacial.md`](docs/informe/comparacion_espacial.md) |
+| #172 | TF-IDF + coseno vs. BM25: construcción, consultas, espacio y memoria de SPIMI | [`comparacion_tfidf_bm25.md`](benchmarks/comparacion_tfidf_bm25.md) |
+| #173 | Precision@10 y Recall@10 de TF-IDF y BM25 | [`relevancia_tfidf_bm25.md`](benchmarks/relevancia_tfidf_bm25.md) |
+| #174 | TF-IDF vs. BM25 vs. GIN de PostgreSQL | [`docs/informe/comparacion_texto.md`](docs/informe/comparacion_texto.md) |
 
 ```bash
 python benchmarks/scripts/generar_datasets.py       # alumnos 1k/10k/100k
 python benchmarks/scripts/generar_puntos.py         # puntos 1k/10k/100k
+python benchmarks/scripts/generar_documentos.py     # BEIR Quora 1k/10k/100k, consultas y juicios
 
 PYTHONPATH=build-py/bindings python -B benchmarks/scripts/ejecutar_benchmarks.py \
   --suite archivos --tamanos 1000 10000 100000 --consultas 1000
@@ -611,22 +615,28 @@ PYTHONPATH=build-py/bindings python -B benchmarks/scripts/ejecutar_benchmarks.py
   --suite indices --tamanos 1000 10000 100000 --consultas 1000 --consultas-rango 100
 PYTHONPATH=build-py/bindings python -B benchmarks/scripts/ejecutar_benchmarks.py \
   --suite espacial --tamanos 1000 10000 100000 --calentamientos 1 --repeticiones 5
+PYTHONPATH=build-py/bindings python -B benchmarks/scripts/ejecutar_benchmarks.py   --suite texto --tamanos 1000 10000 100000 --calentamientos 1 --repeticiones 5
+PYTHONPATH=build-py/bindings python -B benchmarks/scripts/rankings_texto.py
+python -B benchmarks/scripts/relevancia_texto.py benchmarks/results/<id>_rankings.csv
 
 python -B benchmarks/scripts/generar_graficas.py
 python -B benchmarks/scripts/generar_graficas_espacial.py
+python -B benchmarks/scripts/generar_graficas_texto.py
 ```
 
-La medición contra PostGIS necesita Docker; los pasos están en el
-[README de benchmarks](benchmarks/README.md#gist-de-postgis-issue-132), junto con
-los protocolos completos de cada suite.
+La medición contra PostGIS necesita Docker; la del GIN, un PostgreSQL de
+prueba. Los pasos están en el README de benchmarks
+([PostGIS](benchmarks/README.md#gist-de-postgis-issue-132),
+[GIN](benchmarks/README.md#gin-de-postgresql-issue-174)), junto con los
+protocolos completos de cada suite.
 
 ## Documentación
 
 | Documento | Contenido |
 |---|---|
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Diseño general del motor |
-| [`docs/adr/`](docs/adr/) | Decisiones: núcleo (0001), plan de ejecución (0002), SQL (0003), transacciones (0004), locks (0005) |
-| [`docs/informe/`](docs/informe/) | Informe modular: dominio, archivos e índices, SQL, transacciones, interfaz y experimentos |
+| [`docs/adr/`](docs/adr/) | Decisiones: núcleo (0001), plan de ejecución (0002), SQL (0003), transacciones (0004), locks (0005), índice invertido y rankings (0006) |
+| [`docs/informe/`](docs/informe/) | Informe modular: dominio, archivos e índices, SQL, transacciones, interfaz, búsqueda de texto y experimentos |
 | [`benchmarks/README.md`](benchmarks/README.md) | Datasets, protocolos y reproducción de las corridas |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Ramas, commits y pull requests |
 

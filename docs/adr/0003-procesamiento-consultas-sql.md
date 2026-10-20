@@ -77,7 +77,8 @@ storage_kind         = "HEAP" | "SEQUENTIAL" ;
 create_index         = "CREATE", "INDEX", identifier, "ON", identifier,
                        "(", identifier, ")", "USING", index_kind ;
 index_kind           = "BPLUS" | "BPLUS_UNCLUSTERED"
-                     | "HASH" | "EXTENDIBLE_HASH" | "RTREE" ;
+                     | "HASH" | "EXTENDIBLE_HASH" | "RTREE"
+                     | "FULLTEXT" | "INVERTED_INDEX" ;
 
 insert               = "INSERT", "INTO", identifier, "VALUES", "(",
                        literal, { ",", literal }, ")" ;
@@ -85,8 +86,10 @@ insert               = "INSERT", "INTO", identifier, "VALUES", "(",
 select               = "SELECT", projection_list, "FROM", identifier,
                        [ where_clause ], [ group_by_clause ],
                        [ order_by_clause ], [ limit_clause ] ;
-projection_list      = "*" | projection, { ",", projection } ;
-projection           = identifier | aggregate ;
+projection_list      = "*", { ",", score_call }
+                     | projection, { ",", projection } ;
+projection           = identifier | aggregate | score_call ;
+score_call           = "SCORE", "(", ")", [ "AS", identifier ] ;
 aggregate            = "COUNT", "(", "*", ")"
                      | aggregate_name, "(", identifier, ")" ;
 aggregate_name       = "SUM" | "MIN" | "MAX" | "AVG" ;
@@ -94,16 +97,21 @@ aggregate_name       = "SUM" | "MIN" | "MAX" | "AVG" ;
 where_clause         = "WHERE", condition ;
 condition            = identifier, comparison_operator, literal
                      | identifier, "BETWEEN", literal, "AND", literal
-                     | distance_condition ;
+                     | distance_condition
+                     | match_condition ;
 comparison_operator  = "=" | "<" | "<=" | ">" | ">=" ;
 distance_condition   = distance_expression,
                        ( "<" | "<=" ), signed_number ;
 distance_expression  = "DISTANCIA", "(", identifier, ",", point_literal,
                        [ ",", distance_metric ], ")" ;
 distance_metric      = "HAVERSINE" | "EUCLIDEAN" ;
+match_condition      = "MATCH", "(", identifier, ",", string_literal, ")",
+                       [ "USING", text_ranking ] ;
+text_ranking         = "TF_IDF" | "BM25" ;
 
 group_by_clause      = "GROUP", "BY", identifier ;
-order_by_clause      = "ORDER", "BY", ( identifier | distance_expression ),
+order_by_clause      = "ORDER", "BY",
+                       ( identifier | distance_expression | "SCORE", "(", ")" ),
                        [ "ASC" | "DESC" ] ;
 limit_clause         = "LIMIT", unsigned_integer ;
 
@@ -352,6 +360,32 @@ vecinos y perder coincidencias. En GROUP BY, la columna espacial de orden debe
 seguir siendo la única columna de agrupación. EXPLAIN describe la elección
 sin recorrer datos; EXPLAIN ANALYZE conserva sus contadores reales. Los empates
 no tienen un desempate SQL garantizado.
+
+### Actualizacion 2026-10-19: busqueda de texto (Parte 3)
+
+Los issues #167 a #170 agregan la busqueda de texto. Las decisiones de fondo
+(tokenizacion, SPIMI, formulas) estan en el ADR 0006.
+
+- **Indice.** `CREATE INDEX nombre ON tabla (columna) USING FULLTEXT` crea el
+  indice invertido; `INVERTED_INDEX` es un sinonimo. La columna tiene que ser
+  `VARCHAR` de una tabla HEAP y no puede tener ya un indice de texto. El indice
+  se construye con las filas actuales y las opciones de tokenizacion por
+  omision (espanol).
+- **Consulta.** `MATCH(columna, 'consulta') [USING TF_IDF | BM25]` es una
+  condicion de `WHERE`; sin `USING` el ranking es BM25. Exige un indice de
+  texto sobre la columna: sin el no hay estadisticas para rankear y la
+  consulta es un `SQLSemanticError` ubicado. No se admite en `DELETE` ni con
+  `JOIN` (`SQLUnsupportedError`).
+- **Orden y LIMIT.** Las filas salen por relevancia; sin `ORDER BY` ni
+  `GROUP BY`, `LIMIT k` baja al indice como top-k.
+- **`SCORE() [AS alias]`.** Proyecta el puntaje de cada fila como una columna
+  `DOUBLE`; con `*` va despues de las columnas de la tabla. Exige `MATCH` en
+  el `WHERE`, aparece una sola vez y no se combina con `GROUP BY`.
+- **`ORDER BY alias | SCORE() [ASC | DESC]`.** Usa el orden que entrega el
+  indice, sin External Sorting. `DESC` es ese orden y `ASC` su inverso; con
+  `ASC` el `LIMIT` ya no baja al indice.
+- **Plan.** El plan emite `text_search/inverted_index` seguido de `fetch`, con
+  el ranking en el campo `ranking` del paso (ADR 0002, #170).
 
 ### Limites explicitos
 
