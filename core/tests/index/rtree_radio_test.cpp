@@ -15,6 +15,7 @@
 #include <tuple>
 #include <vector>
 
+#include "azar_portable.hpp"
 #include "quipudb/error.hpp"
 #include "quipudb/index/distance.hpp"
 #include "quipudb/index/rtree.hpp"
@@ -66,8 +67,8 @@ constexpr Point kLima{-77.0428, -12.0464};
 /// Puntos repartidos alrededor de Lima, deterministas.
 std::vector<RTreeLeafEntry> alrededor_de_lima(std::size_t cuantos) {
   std::mt19937 generador(20'260'927);
-  std::uniform_real_distribution<double> lon(-77.3, -76.8);
-  std::uniform_real_distribution<double> lat(-12.3, -11.8);
+  prueba::RealUniforme lon(-77.3, -76.8);
+  prueba::RealUniforme lat(-12.3, -11.8);
 
   std::vector<RTreeLeafEntry> puntos;
   puntos.reserve(cuantos);
@@ -221,7 +222,15 @@ TEST_F(RTreeRadioTest, CoincideConLaFuerzaBrutaTambienConLaEuclidiana) {
 
 TEST_F(RTreeRadioTest, RadiosDeUnoCincoYDiezKilometros) {
   RTree arbol(path_, kDefaultPageSize, 8);
-  const auto puntos = alrededor_de_lima(3'000);
+  auto puntos = alrededor_de_lima(3'000);
+  // Al azar cae en promedio un punto por km2: un radio de 1 km puede quedar
+  // vacio segun la semilla, y el caso no mediria nada (#204). Un punto a una
+  // distancia conocida dentro de cada radio lo evita; un grado de latitud son
+  // ~111,2 km en cualquier parte.
+  constexpr double kGradoLat = 111'195.0;
+  for (const double metros : {500.0, 3'000.0, 7'000.0}) {
+    puntos.push_back({{kLima.x, kLima.y + metros / kGradoLat}, rid_de(puntos.size())});
+  }
   for (const auto& p : puntos) arbol.insert(p.point, p.rid);
 
   std::size_t anterior = 0;

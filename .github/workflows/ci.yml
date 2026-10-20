@@ -6,17 +6,18 @@ on:
   pull_request:
     branches: [main]
 
-# La imagen va fija y no como ubuntu-latest. El 2026-10-19 ubuntu-latest paso
-# de ubuntu-24.04 (GCC 13.3) a ubuntu-26.04 (GCC 15.2) sin que cambiara ni una
-# linea del repo, y RTreeEliminacionTest.LaFreeListSobreviveAlReabrir empezo a
-# fallar en main: con otra libstdc++ los mismos "puntos al azar" con la misma
-# semilla son otros. Un CI que cambia de compilador por su cuenta deja de decir
-# si el error es del codigo o del entorno. Pasar a 26.04 es una decision aparte,
-# con su propio issue.
+# La imagen va fija y no como ubuntu-latest: un CI que cambia de compilador por
+# su cuenta deja de decir si el error es del codigo o del entorno. El
+# 2026-10-19 ubuntu-latest paso de ubuntu-24.04 (GCC 13.3) a ubuntu-26.04
+# (GCC 15.2) y una prueba del R-Tree empezo a fallar: con otra libstdc++, las
+# distribuciones de <random> dan otros numeros con la misma semilla. Las
+# pruebas del R-Tree ya generan sus datos sin esas distribuciones
+# (core/tests/index/azar_portable.hpp) y comprueban la free list por como se
+# usa, no por un tamano fijo, asi que se volvio a la imagen nueva (#204).
 jobs:
   core:
     name: Compilar core (C++)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v5
       - name: Configurar
@@ -30,7 +31,7 @@ jobs:
 
   python:
     name: Lint capa Python
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -46,7 +47,7 @@ jobs:
 
   bindings:
     name: Compilar bindings y probarlos (Python + C++)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -88,7 +89,7 @@ jobs:
   commits:
     name: Validar mensajes de commit
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v5
         with:

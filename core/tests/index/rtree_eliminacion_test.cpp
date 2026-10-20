@@ -12,6 +12,7 @@
 #include <tuple>
 #include <vector>
 
+#include "azar_portable.hpp"
 #include "quipudb/index/rtree.hpp"
 
 namespace quipudb {
@@ -50,8 +51,8 @@ std::multiset<Clave> claves(const std::vector<RTreeLeafEntry>& entradas) {
 
 std::vector<RTreeLeafEntry> puntos_al_azar(std::size_t n, unsigned semilla) {
   std::mt19937 gen(semilla);
-  std::uniform_real_distribution<double> lon(-77.2, -76.8);
-  std::uniform_real_distribution<double> lat(-12.3, -11.8);
+  prueba::RealUniforme lon(-77.2, -76.8);
+  prueba::RealUniforme lat(-12.3, -11.8);
   std::vector<RTreeLeafEntry> out;
   for (std::size_t i = 0; i < n; ++i) out.push_back({Point{lon(gen), lat(gen)}, rid_de(i)});
   return out;
@@ -114,7 +115,7 @@ TEST_F(RTreeEliminacionTest, LosInvariantesSeCumplenTrasCadaEliminacion) {
   for (const auto& e : vivos) arbol.insert(e.point, e.rid);
 
   std::mt19937 gen(5);
-  std::shuffle(vivos.begin(), vivos.end(), gen);
+  prueba::barajar(vivos, gen);
   std::size_t alturas_bajadas = 0;
   std::size_t altura_previa = arbol.height();
 
@@ -140,7 +141,7 @@ TEST_F(RTreeEliminacionTest, LosInvariantesSeCumplenTrasCadaEliminacion) {
 TEST_F(RTreeEliminacionTest, InsertarYBorrarIntercaladosNoRompenNada) {
   RTree arbol(path_, kDefaultPageSize, kOrdenChico);
   std::mt19937 gen(33);
-  std::uniform_real_distribution<double> d(-50.0, 50.0);
+  prueba::RealUniforme d(-50.0, 50.0);
   std::vector<RTreeLeafEntry> vivos;
   std::size_t siguiente = 0;
 
@@ -190,7 +191,7 @@ TEST_F(RTreeEliminacionTest, VaciarYRellenarTresVecesNoHaceCrecerElArchivo) {
   const auto puntos = puntos_al_azar(3000, 77);
   auto orden = puntos;
   std::mt19937 gen(1);
-  std::shuffle(orden.begin(), orden.end(), gen);
+  prueba::barajar(orden, gen);
 
   PageId paginas = 0;
   for (int vuelta = 0; vuelta < 3; ++vuelta) {
@@ -230,7 +231,7 @@ TEST_F(RTreeEliminacionTest, ConOrdenesDeBorradoDistintosNingunaPaginaSePierde) 
     if (vuelta == 0) tras_primer_relleno = arbol.page_count();
 
     auto orden = puntos;
-    std::shuffle(orden.begin(), orden.end(), gen);
+    prueba::barajar(orden, gen);
     for (const auto& e : orden) ASSERT_TRUE(arbol.remove(e.point, e.rid));
     ASSERT_EQ(arbol.free_pages(), arbol.page_count()) << "vuelta " << vuelta;
   }
@@ -257,10 +258,29 @@ TEST_F(RTreeEliminacionTest, LaFreeListSobreviveAlReabrir) {
   EXPECT_EQ(reabierto.free_pages(), libres);
   EXPECT_EQ(reabierto.check_invariants(), "");
 
-  // Reinsertar lo borrado reutiliza las paginas libres antes de crecer.
-  for (std::size_t i = 0; i < 600; ++i) reabierto.insert(puntos[i].point, puntos[i].rid);
+  // Reinsertar lo borrado reutiliza las paginas libres antes de crecer: si una
+  // insercion agranda el archivo, la lista libre tiene que haber quedado vacia.
+  //
+  // No se compara contra el tamano que tenia el archivo (#204). El arbol que
+  // queda despues de borrar y reinsertar no es el mismo que el construido de
+  // una vez, y puede necesitar algunos nodos mas sin que la free list falle:
+  // con los puntos de GCC 15 el archivo paso de 506 a 518 paginas, con la
+  // lista libre ya agotada. Lo que si se puede exigir
+  // es que esas paginas nuevas se pidan recien con la lista agotada.
+  std::size_t crecimientos = 0;
+  for (std::size_t i = 0; i < 600; ++i) {
+    const PageId antes = reabierto.page_count();
+    reabierto.insert(puntos[i].point, puntos[i].rid);
+    if (reabierto.page_count() > antes) {
+      ++crecimientos;
+      EXPECT_EQ(reabierto.free_pages(), 0u) << "crecio con paginas libres, insercion " << i;
+    }
+  }
+  std::cout << "[ R-Tree ] reabierto: " << paginas << " paginas y " << libres
+            << " libres antes de reinsertar; " << reabierto.page_count() << " paginas, "
+            << reabierto.free_pages() << " libres y " << crecimientos
+            << " inserciones que agrandaron el archivo despues\n";
   EXPECT_EQ(reabierto.check_invariants(), "");
-  EXPECT_LE(reabierto.page_count(), paginas + 1);
   EXPECT_EQ(claves(reabierto.scan()), claves(puntos));
 }
 

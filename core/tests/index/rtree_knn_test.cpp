@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "azar_portable.hpp"
 #include "quipudb/error.hpp"
 #include "quipudb/index/distance.hpp"
 #include "quipudb/index/rtree.hpp"
@@ -47,8 +48,8 @@ constexpr Point kLima{-77.0428, -12.0464};
 
 std::vector<RTreeLeafEntry> alrededor_de_lima(std::size_t cuantos, unsigned semilla = 20'260'927) {
   std::mt19937 generador(semilla);
-  std::uniform_real_distribution<double> lon(-77.3, -76.8);
-  std::uniform_real_distribution<double> lat(-12.3, -11.8);
+  prueba::RealUniforme lon(-77.3, -76.8);
+  prueba::RealUniforme lat(-12.3, -11.8);
 
   std::vector<RTreeLeafEntry> puntos;
   puntos.reserve(cuantos);
