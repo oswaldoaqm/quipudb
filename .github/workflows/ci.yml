@@ -40,8 +40,17 @@ jobs:
       # fastapi, pydantic, httpx y python-multipart los necesitan las pruebas
       # de engine/api:
       # sin ellos pytest ni siquiera puede importarlas y el job pasaria en
-      # verde sin haber probado la API.
-      - run: pip install ruff pytest fastapi pydantic httpx python-multipart
+      # verde sin haber probado la API. opencv-python-headless lo necesita la
+      # extraccion de descriptores de engine/multimedia (#176).
+      - run: >
+          pip install ruff pytest fastapi pydantic httpx python-multipart
+          opencv-python-headless
+      # Las pruebas de SIFT se saltan solas cuando falta cv2, para no romperle
+      # la suite a quien todavia no instalo las dependencias. Aqui no pueden
+      # saltarse: sin esta comprobacion el job pasaria en verde sin haber
+      # probado la extraccion.
+      - name: Comprobar que OpenCV trae SIFT antes de probarlo
+        run: python -c "import cv2; assert hasattr(cv2, 'SIFT_create'), cv2.__version__"
       - run: ruff check engine benchmarks
       - run: python -m pytest -q
 

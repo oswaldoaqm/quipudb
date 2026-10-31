@@ -4,6 +4,13 @@ uvicorn[standard]>=0.32
 pydantic>=2.9
 python-multipart>=0.0.9  # lo pide FastAPI para recibir archivos (#114)
 
+# Extraccion de caracteristicas multimedia (seccion 2.4.1)
+# Va la variante headless y no opencv-python: el CI corre sin pantalla y el
+# paquete normal arrastra libGL. SIFT vive en el modulo principal desde la
+# 4.4, cuando vencio la patente de Lowe; antes estaba solo en
+# opencv-contrib-python (#176).
+opencv-python-headless>=4.4
+
 # Benchmarks y comparacion experimental (seccion 2.1.6)
 psycopg[binary]>=3.2
 pandas>=2.2
@@ -13,3 +20,4 @@ matplotlib>=3.9
 pytest>=8.3
 ruff>=0.7
 httpx>=0.27          # lo pide TestClient de FastAPI
+pillow>=10.0         # solo para regenerar la imagen de ejemplo de SIFT (#176)
