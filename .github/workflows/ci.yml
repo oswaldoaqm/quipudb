@@ -44,13 +44,15 @@ jobs:
       # extraccion de descriptores de engine/multimedia (#176).
       - run: >
           pip install ruff pytest fastapi pydantic httpx python-multipart
-          opencv-python-headless
-      # Las pruebas de SIFT se saltan solas cuando falta cv2, para no romperle
-      # la suite a quien todavia no instalo las dependencias. Aqui no pueden
-      # saltarse: sin esta comprobacion el job pasaria en verde sin haber
-      # probado la extraccion.
+          opencv-python-headless soundfile
+      # Las pruebas de extraccion se saltan solas cuando falta cv2 o
+      # soundfile, para no romperle la suite a quien todavia no instalo las
+      # dependencias. Aqui no pueden saltarse: sin esta comprobacion el job
+      # pasaria en verde sin haber probado la extraccion.
       - name: Comprobar que OpenCV trae SIFT antes de probarlo
         run: python -c "import cv2; assert hasattr(cv2, 'SIFT_create'), cv2.__version__"
+      - name: Comprobar que soundfile importa antes de probar MFCC
+        run: python -c "import soundfile; print(soundfile.__libsndfile_version__)"
       - run: ruff check engine benchmarks
       - run: python -m pytest -q
 
