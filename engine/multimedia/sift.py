@@ -22,6 +22,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from engine.multimedia.errors import FeatureExtractionError
+
 DESCRIPTOR_LENGTH = 128
 """Valores que tiene un descriptor SIFT. Lo fija el algoritmo: una rejilla de
 4x4 celdas alrededor del punto clave, con un histograma de 8 orientaciones en
@@ -31,23 +33,6 @@ SIFT_DESDE = "4.4"
 """Primera version de OpenCV que trae SIFT en el paquete principal. Estuvo
 anos solo en opencv-contrib (xfeatures2d) por la patente de Lowe, que vencio
 en marzo de 2020."""
-
-
-class FeatureExtractionError(ValueError):
-    """No se pudieron extraer descriptores de un archivo.
-
-    Cubre una ruta que no se puede leer, un archivo que no es una imagen y una
-    imagen sin puntos de interes. Es un error del objeto, no del proceso:
-    quien recorre una carpeta entera lo atrapa, anota el archivo y sigue con
-    el siguiente, igual que ``CsvLoadError`` en la carga masiva.
-
-    ``path`` es el archivo que fallo, cuando el problema tiene uno.
-    """
-
-    def __init__(self, message: str, path: Path | None = None) -> None:
-        super().__init__(message)
-        self.message = message
-        self.path = path
 
 
 def read_grayscale(path: str | Path) -> np.ndarray:
