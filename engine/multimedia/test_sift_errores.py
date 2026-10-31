@@ -66,6 +66,25 @@ def test_el_error_dice_que_archivo_fallo(tmp_path: Path) -> None:
     assert error.value.path == ruta
 
 
+def test_un_archivo_corrupto_da_un_error_claro(tmp_path: Path) -> None:
+    # Cabecera PNG valida y el resto basura: es el caso de una descarga a
+    # medias, y no lo cubre la prueba del archivo que no es imagen porque
+    # aqui el decodificador si reconoce el formato y falla despues.
+    ruta = tmp_path / "corrupto.png"
+    ruta.write_bytes(EJEMPLO.read_bytes()[:60] + b"\x00" * 200)
+    with pytest.raises(FeatureExtractionError, match="no es una imagen"):
+        extract_sift(ruta)
+
+
+def test_una_carpeta_en_vez_de_un_archivo_da_un_error_claro(tmp_path: Path) -> None:
+    # read_bytes lanza IsADirectoryError en Linux y PermissionError en
+    # Windows: por eso el mensaje se arma con strerror y no con el tipo.
+    carpeta = tmp_path / "imagenes"
+    carpeta.mkdir()
+    with pytest.raises(FeatureExtractionError, match="no se puede leer"):
+        extract_sift(carpeta)
+
+
 def test_una_imagen_sin_puntos_no_tumba_el_proceso(tmp_path: Path) -> None:
     liso = _png_de_un_solo_color(tmp_path / "liso.png")
     extraidos, fallidos = [], []
