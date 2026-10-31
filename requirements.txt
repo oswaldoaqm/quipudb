@@ -10,6 +10,11 @@ python-multipart>=0.0.9  # lo pide FastAPI para recibir archivos (#114)
 # 4.4, cuando vencio la patente de Lowe; antes estaba solo en
 # opencv-contrib-python (#176).
 opencv-python-headless>=4.4
+# Solo para DECODIFICAR el audio: el pipeline MFCC (preenfasis, ventaneo,
+# FFT, banco mel, log y DCT) esta escrito con numpy en engine/multimedia/
+# mfcc.py. Se evito librosa a proposito, que para lo mismo arrastra numba,
+# llvmlite y scikit-learn al CI de todo el equipo (#177).
+soundfile>=0.12
 
 # Benchmarks y comparacion experimental (seccion 2.1.6)
 psycopg[binary]>=3.2
