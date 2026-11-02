@@ -209,8 +209,8 @@ SELECT activo, AVG(promedio) FROM alumnos GROUP BY activo;
 
 Reglas mínimas:
 
-- `CREATE TABLE` admite los tipos `INT`, `DOUBLE`, `VARCHAR(n)`, `BOOL`, `DATE`
-  y, desde #126, `POINT`.
+- `CREATE TABLE` admite los tipos `INT`, `DOUBLE`, `VARCHAR(n)`, `BOOL`, `DATE`,
+  desde #126 `POINT` y desde #180 `VECTOR(dim)`.
 - Se exigirá exactamente una columna `PRIMARY KEY`, porque `Schema` siempre necesita `key_column`.
 - `USING HEAP` y `USING SEQUENTIAL` eligen la organización. Se propondrá `HEAP` como valor por
   defecto si la cláusula se omite; esta sintaxis se fijará en el ADR antes de codificar.
@@ -261,6 +261,17 @@ adicional requiere actualizar primero este plan y el ADR.
 > sobre una tabla sin WHERE/GROUP BY usa `knn_search/rtree -> fetch`; en los
 > demás casos ordena todas las filas candidatas por distancia con ExternalSort.
 > EXPLAIN, API y panel de planes conservan la distinción entre ambos caminos.
+> El issue #180 agrega el tipo `VECTOR(dim)` y su literal `VECTOR(c1, c2, ...)`.
+> `VECTOR` nombra el tipo en un `CREATE TABLE` y construye el literal en un
+> `INSERT`, igual que `POINT`: la posicion decide cual es cual, porque en la
+> declaracion de una columna va un entero (la dimension) y en una lista de
+> valores van las componentes. La dimension es parte del tipo, como la
+> capacidad de un `VARCHAR`, asi que un vector de otra dimension es un error
+> de tipo y no un valor fuera de rango. Cada componente se guarda como un
+> float de 32 bits -- SIFT, MFCC y el histograma de #181 ya trabajan en
+> float32 --, de modo que un `VECTOR(128)` ocupa 512 bytes y el tope por
+> pagina del registro limita la dimension a 1020 componentes en una tabla con
+> una sola clave entera.
 
 ## Issues verificados y orden de entrega
 

@@ -28,7 +28,7 @@ bool is_index_kind(std::string_view s) noexcept {
 
 std::optional<DataType> parse_type(std::string_view s) noexcept {
   for (const auto t : {DataType::Int, DataType::Double, DataType::Varchar, DataType::Bool,
-                       DataType::Date, DataType::Point}) {
+                       DataType::Date, DataType::Point, DataType::Vector}) {
     if (to_string(t) == s) return t;
   }
   return std::nullopt;
@@ -87,13 +87,20 @@ void Catalog::validate(const Schema& schema) {
     if (!seen.insert(c.name).second) {
       throw SchemaError("columna repetida en " + schema.table_name + ": " + c.name);
     }
+    // VARCHAR y VECTOR son los dos tipos cuyo tamano no sale del tipo solo:
+    // el numero entre parentesis dice bytes en uno y componentes en el otro.
+    const bool lleva_numero = c.type == DataType::Varchar || c.type == DataType::Vector;
     if (c.type == DataType::Varchar && c.length == 0) {
       throw SchemaError("columna " + c.name + " de " + schema.table_name +
                         ": VARCHAR necesita una longitud mayor que 0");
     }
-    if (c.type != DataType::Varchar && c.length != 0) {
+    if (c.type == DataType::Vector && c.length == 0) {
       throw SchemaError("columna " + c.name + " de " + schema.table_name +
-                        ": solo VARCHAR lleva longitud");
+                        ": VECTOR necesita una dimension mayor que 0");
+    }
+    if (!lleva_numero && c.length != 0) {
+      throw SchemaError("columna " + c.name + " de " + schema.table_name +
+                        ": solo VARCHAR y VECTOR llevan un numero entre parentesis");
     }
   }
   if (schema.key_column >= schema.columns.size()) {
@@ -253,7 +260,12 @@ void Catalog::save() const {
         << info.schema.columns.size() << '\n';
     for (const auto& c : info.schema.columns) {
       out << "column " << c.name << ' ' << to_string(c.type);
-      if (c.type == DataType::Varchar) out << ' ' << c.length;
+      // VARCHAR guarda su capacidad y VECTOR su dimension. Sin esto, una
+      // tabla con un vector se reabriria con dimension 0 y el registro
+      // quedaria de otro tamano que el archivo que ya existe en disco.
+      if (c.type == DataType::Varchar || c.type == DataType::Vector) {
+        out << ' ' << c.length;
+      }
       out << '\n';
     }
     for (const auto& ix : info.indexes) {
@@ -341,10 +353,13 @@ void Catalog::load() {
       const auto t = parse_type(type);
       if (!t) throw bad(n, "tipo desconocido: " + type);
       c.type = *t;
-      if (c.type == DataType::Varchar) {
+      if (c.type == DataType::Varchar || c.type == DataType::Vector) {
+        const bool es_texto = c.type == DataType::Varchar;
         unsigned len = 0;
         in >> len;
-        if (!in || len == 0 || len > 65535) throw bad(n, "VARCHAR sin longitud valida");
+        if (!in || len == 0 || len > 65535) {
+          throw bad(n, es_texto ? "VARCHAR sin longitud valida" : "VECTOR sin dimension valida");
+        }
         c.length = static_cast<std::uint16_t>(len);
       }
       current->schema.columns.push_back(std::move(c));

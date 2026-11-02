@@ -18,8 +18,24 @@ interface ResultsPanelProps {
 const ALTO_FILA = 26;
 const ANCHO_COLUMNA = 110;
 
+const COMPONENTES_A_LA_VISTA = 3;
+
 function formatear(valor: CellValue): string {
   if (typeof valor === "boolean") return valor ? "true" : "false";
+  // Antes que la rama de POINT: un arreglo tambien es `object` en JavaScript,
+  // y sin esto un VECTOR se dibujaria como `POINT(undefined, undefined)`.
+  if (Array.isArray(valor)) {
+    // Un vector de 128 componentes no cabe en una celda ni se lee. Se
+    // muestran las primeras y cuantas hay, que es lo que deja reconocer la
+    // fila; el vector entero es para el indice, no para el ojo.
+    const cabeza = valor
+      .slice(0, COMPONENTES_A_LA_VISTA)
+      .map((componente) => componente.toFixed(3))
+      .join(", ");
+    return valor.length <= COMPONENTES_A_LA_VISTA
+      ? `VECTOR(${cabeza})`
+      : `VECTOR(${cabeza}, ... ${valor.length} comp.)`;
+  }
   if (typeof valor === "object" && valor !== null) {
     return `POINT(${valor.latitude}, ${valor.longitude})`;
   }

@@ -67,6 +67,7 @@ _KEYWORDS = {
         TokenKind.BOOL,
         TokenKind.DATE,
         TokenKind.POINT,
+        TokenKind.VECTOR,
         TokenKind.TRUE,
         TokenKind.FALSE,
         TokenKind.BEGIN,

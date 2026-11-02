@@ -73,6 +73,7 @@ class TokenKind(StrEnum):
     BOOL = "BOOL"
     DATE = "DATE"
     POINT = "POINT"
+    VECTOR = "VECTOR"
     TRUE = "TRUE"
     FALSE = "FALSE"
     BEGIN = "BEGIN"

@@ -131,6 +131,21 @@ struct type_caster<Value> {
       value = src.cast<std::string>();
       return true;
     }
+    // Una lista o tupla de numeros es un VECTOR (#180). Se comprueban list y
+    // tuple y no "cualquier secuencia" a proposito: una cadena tambien es una
+    // secuencia en Python y ya se resolvio arriba como VARCHAR.
+    if (py::isinstance<py::list>(src) || py::isinstance<py::tuple>(src)) {
+      VectorValue vec;
+      for (const auto& item : py::reinterpret_borrow<py::sequence>(src)) {
+        if (PyBool_Check(item.ptr()) ||
+            (!PyFloat_Check(item.ptr()) && !PyLong_Check(item.ptr()))) {
+          return false;
+        }
+        vec.push_back(static_cast<float>(item.cast<double>()));
+      }
+      value = std::move(vec);
+      return true;
+    }
     (void)convertir;
     return false;
   }
@@ -259,7 +274,8 @@ PYBIND11_MODULE(quipudb_native, m) {
       .value("VARCHAR", DataType::Varchar)
       .value("BOOL", DataType::Bool)
       .value("DATE", DataType::Date)
-      .value("POINT", DataType::Point);
+      .value("POINT", DataType::Point)
+      .value("VECTOR", DataType::Vector);
 
   py::class_<Date>(m, "Date", "Dias desde 1970-01-01")
       .def(py::init<>())

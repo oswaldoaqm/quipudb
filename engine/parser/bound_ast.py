@@ -26,6 +26,13 @@ _FIXED_TYPE_SIZES = {
     SqlTypeName.POINT: 16,
 }
 
+VECTOR_COMPONENT_SIZE = 4
+"""Bytes por componente de un VECTOR: float de 32 bits.
+
+No double: SIFT y MFCC producen float32 y el histograma de #181 tambien,
+asi que guardar en double duplicaria el registro sin agregar informacion.
+Un VECTOR(128) ocupa 512 bytes."""
+
 
 @dataclass(frozen=True, slots=True)
 class BoundColumn:
@@ -43,6 +50,10 @@ class BoundColumn:
             if self.length is None:
                 raise ValueError("VARCHAR necesita una longitud")
             return self.length
+        if self.data_type is SqlTypeName.VECTOR:
+            if self.length is None:
+                raise ValueError("VECTOR necesita una dimension")
+            return self.length * VECTOR_COMPONENT_SIZE
         return _FIXED_TYPE_SIZES[self.data_type]
 
 
@@ -89,7 +100,7 @@ class PointValue:
     longitude: float
 
 
-BoundValue: TypeAlias = int | float | str | bool | date | PointValue
+BoundValue: TypeAlias = int | float | str | bool | date | PointValue | tuple[float, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,6 +354,7 @@ class BoundDropTableStatement:
 
 
 __all__ = [
+    "VECTOR_COMPONENT_SIZE",
     "BoundAggregateCall",
     "BoundBetweenCondition",
     "BoundColumn",

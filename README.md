@@ -65,7 +65,7 @@ flowchart TB
 | `core/storage` | Páginas de 4 KiB con cabecera de 8 bytes; `DiskManager` lee, escribe y asigna páginas (la 0 guarda metadatos). Heap File con lista libre LIFO y reutilización de slots; Archivo Secuencial con overflow por grupo, borrado lazy y reorganización al superar 30 % de desperdicio. |
 | `core/index` | Árbol B+ persistente (tabla agrupada y índice no agrupado), hash extensible con FNV-1a, R-Tree con split cuadrático, métricas euclidiana y Haversine, y la búsqueda espacial secuencial usada como línea base. |
 | `core/external` | Ordenamiento externo con mezcla k-way, agrupación externa por hash con caída a sort, hash join externo e index nested loop. |
-| `core/catalog` | Tipos (`INT`, `DOUBLE`, `BOOL`, `DATE`, `VARCHAR(n)`, `POINT`), codificación de registros de ancho fijo, catálogo y apertura de tablas e índices. |
+| `core/catalog` | Tipos (`INT`, `DOUBLE`, `BOOL`, `DATE`, `VARCHAR(n)`, `POINT`, `VECTOR(dim)`), codificación de registros de ancho fijo, catálogo y apertura de tablas e índices. |
 | `bindings/` | Módulo `quipudb_native`: expone el núcleo a Python con las mismas excepciones. |
 | `engine/parser` | Lexer con posiciones, parser descendente recursivo, AST inmutable y validación semántica. |
 | `engine/planner` | Elige el acceso por reglas (clave primaria, índice secundario, R-Tree o recorrido) y construye el plan de ejecución. |
