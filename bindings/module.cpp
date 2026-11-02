@@ -68,6 +68,7 @@
 #include "quipudb/index/bplus_clustered_table.hpp"
 #include "quipudb/index/distance.hpp"
 #include "quipudb/index/hnsw.hpp"
+#include "quipudb/index/hnsw_index.hpp"
 #include "quipudb/index/ivf.hpp"
 #include "quipudb/index/ivf_index.hpp"
 #include "quipudb/index/rtree_index.hpp"
@@ -270,6 +271,7 @@ PYBIND11_MODULE(quipudb_native, m) {
   kinds.attr("RTREE") = std::string(kind::kRTree);
   kinds.attr("INVERTED_INDEX") = std::string(kind::kInvertedIndex);
   kinds.attr("IVF") = std::string(kind::kIvf);
+  kinds.attr("HNSW") = std::string(kind::kHnsw);
 
   // --- tipos ----------------------------------------------------------------
 
@@ -662,6 +664,17 @@ PYBIND11_MODULE(quipudb_native, m) {
             return std::vector<float>(v.begin(), v.end());
           },
           py::arg("node"))
+      .def(
+          "search",
+          [](Hnsw& h, const Vector& query, std::size_t k, VectorMetric metric,
+             std::size_t ef_search) { return h.search(query, k, metric, ef_search); },
+          py::arg("query"), py::arg("k"), py::arg("metric"), py::arg("ef_search"),
+          "Los k vivos mas cercanos con ef_search candidatos en la capa 0 (#186)")
+      .def(
+          "remove", [](Hnsw& h, RID rid, const Vector& v) { return h.remove(rid, v); },
+          py::arg("rid"), py::arg("vector"), "Marca el nodo como borrado; False si no estaba")
+      .def("deleted", &Hnsw::deleted, py::arg("node"))
+      .def_property_readonly("live_size", &Hnsw::live_size)
       .def("max_neighbors", &Hnsw::max_neighbors, py::arg("layer"))
       .def("check_invariants", &Hnsw::check_invariants)
       .def_property_readonly("size", &Hnsw::size)
@@ -677,6 +690,18 @@ PYBIND11_MODULE(quipudb_native, m) {
       .def("stats", &Hnsw::stats, py::return_value_policy::copy)
       .def("reset_stats", &Hnsw::reset_stats)
       .def("flush", &Hnsw::flush);
+
+  py::class_<HnswIndex, Index>(m, "HnswIndex",
+                               "Indice HNSW secundario sobre una columna VECTOR")
+      .def(
+          "k_nearest",
+          [](HnswIndex& index, const Vector& query, std::size_t k, VectorMetric metric,
+             std::size_t ef_search) { return index.k_nearest(query, k, metric, ef_search); },
+          py::arg("query"), py::arg("k"), py::arg("metric"), py::arg("ef_search"),
+          "Los k vectores mas parecidos con ef_search candidatos, de mas cerca a mas lejos")
+      .def_property_readonly(
+          "hnsw", [](HnswIndex& index) -> Hnsw& { return index.hnsw(); },
+          py::return_value_policy::reference_internal);
 
   py::class_<IvfIndex, Index>(m, "IvfIndex",
                               "Indice IVF secundario sobre una columna VECTOR")
@@ -815,6 +840,11 @@ PYBIND11_MODULE(quipudb_native, m) {
            py::return_value_policy::reference_internal,
            "Registra un IVF con estos centroides (de engine/multimedia/kmeans.py) y lo "
            "construye sobre los datos existentes")
+      .def("create_hnsw_index", &Database::create_hnsw_index, py::arg("table"),
+           py::arg("index_name"), py::arg("column"), py::arg("metric"),
+           py::arg("params") = HnswParams{}, py::return_value_policy::reference_internal,
+           "Registra un HNSW con esta metrica y estos parametros y lo construye sobre los "
+           "datos existentes")
       .def("index", &Database::index, py::arg("table"), py::arg("index_name"),
            py::return_value_policy::reference_internal)
       .def("drop_table", &Database::drop_table, py::arg("name"))

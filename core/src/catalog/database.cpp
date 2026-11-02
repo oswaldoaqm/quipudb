@@ -6,6 +6,7 @@
 #include "quipudb/index/bplus_clustered_table.hpp"
 #include "quipudb/index/bplus_unclustered_index.hpp"
 #include "quipudb/index/extendible_hash_index.hpp"
+#include "quipudb/index/hnsw_index.hpp"
 #include "quipudb/index/ivf_index.hpp"
 #include "quipudb/index/rtree_index.hpp"
 #include "quipudb/index/text_index.hpp"
@@ -126,6 +127,9 @@ std::unique_ptr<Index> Database::abrir_indice(const TableInfo& tabla, const Inde
   if (info.kind == kind::kIvf) {
     return std::make_unique<IvfIndex>(ruta, col, datos, tabla.page_size);
   }
+  if (info.kind == kind::kHnsw) {
+    return std::make_unique<HnswIndex>(ruta, col, datos, tabla.page_size);
+  }
   throw Unsupported("el indice '" + info.name + "' de " + tabla.schema.table_name +
                     " es de tipo '" + info.kind + "', que no esta implementado");
 }
@@ -134,6 +138,9 @@ Index& Database::create_index(std::string_view table, std::string_view index_nam
                               std::string_view column, std::string_view kind) {
   if (kind == kind::kIvf) {
     throw SchemaError("un indice IVF necesita centroides: creelo con create_ivf_index");
+  }
+  if (kind == kind::kHnsw) {
+    throw SchemaError("un indice HNSW necesita su metrica: creelo con create_hnsw_index");
   }
   // El catalogo valida todo lo que puede fallar (tabla, columna, nombre
   // repetido, tipo de indice, organizacion de la tabla) antes de que aqui se
@@ -170,6 +177,29 @@ Index& Database::create_ivf_index(std::string_view table, std::string_view index
     handle->build();
   } catch (...) {
     // Ni el catalogo ni el disco se quedan con un indice a medio crear.
+    handle.reset();
+    catalog_.drop_index(table, index_name);
+    std::error_code ignorado;
+    std::filesystem::remove(ruta, ignorado);
+    throw;
+  }
+  auto [it, _] = indices_.emplace(clave_indice(table, index_name), std::move(handle));
+  return *it->second;
+}
+
+Index& Database::create_hnsw_index(std::string_view table, std::string_view index_name,
+                                   std::string_view column, VectorMetric metric,
+                                   HnswParams params) {
+  const IndexInfo info = catalog_.create_index(table, index_name, column, kind::kHnsw);
+  const TableInfo& tabla = catalog_.table(table);
+  const auto ruta = catalog_.resolve(info.file);
+  TableFile& datos = this->table(table);
+  std::unique_ptr<HnswIndex> handle;
+  try {
+    handle = std::make_unique<HnswIndex>(ruta, tabla.schema.columns.at(info.column), datos,
+                                         tabla.page_size, metric, params);
+    handle->build();
+  } catch (...) {
     handle.reset();
     catalog_.drop_index(table, index_name);
     std::error_code ignorado;
@@ -265,6 +295,8 @@ void Database::flush() {
       t->flush();
     } else if (auto* v = dynamic_cast<IvfIndex*>(handle.get())) {
       v->flush();
+    } else if (auto* g = dynamic_cast<HnswIndex*>(handle.get())) {
+      g->flush();
     }
   }
   for (auto& [nombre, handle] : abiertas_) {
