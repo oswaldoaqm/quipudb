@@ -59,6 +59,7 @@
 #include <vector>
 
 #include "quipudb/catalog/catalog.hpp"
+#include "quipudb/index/hnsw.hpp"
 #include "quipudb/catalog/table.hpp"
 
 namespace quipudb {
@@ -123,6 +124,16 @@ class Database {
   Index& create_ivf_index(std::string_view table, std::string_view index_name,
                           std::string_view column,
                           const std::vector<std::vector<float>>& centroids);
+
+  /// Crea un indice HNSW (#186) sobre la columna VECTOR `column`, con esta
+  /// metrica y estos parametros, y lo llena con los vectores que la tabla ya
+  /// tenga. La metrica queda fija: las busquedas tienen que pedir la misma.
+  /// Ademas de los errores de `create_index`, lanza SchemaError si M o
+  /// efConstruction no son validos. Si algo falla al construir, el indice
+  /// sale del catalogo y su archivo se borra.
+  Index& create_hnsw_index(std::string_view table, std::string_view index_name,
+                           std::string_view column, VectorMetric metric,
+                           HnswParams params = {});
 
   /// Handle de un indice ya registrado, abriendolo la primera vez. Siempre el
   /// mismo objeto, montado sobre el mismo handle de tabla que devuelve
