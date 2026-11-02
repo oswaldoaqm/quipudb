@@ -161,3 +161,40 @@ def test_cuantizar_funciona_con_mas_descriptores_que_un_bloque() -> None:
     codebook = build_codebook(_grupos(), k=3, seed=0)
     muchos = np.tile(_grupos(), (60, 1))
     assert len(codebook.assign(muchos)) == len(muchos)
+
+
+# ---------------------------------------------------------------------------
+# Comparar dos codebooks
+# ---------------------------------------------------------------------------
+
+
+def test_dos_codebooks_iguales_comparan_iguales() -> None:
+    # El __eq__ que genera dataclass compara los campos con ==, y entre dos
+    # ndarray eso devuelve un ARREGLO cuyo valor de verdad es ambiguo: no
+    # daba False, lanzaba ValueError.
+    datos = _grupos()
+    assert build_codebook(datos, k=3, seed=4) == build_codebook(datos, k=3, seed=4)
+
+
+def test_dos_codebooks_distintos_no_comparan_iguales() -> None:
+    datos = _grupos(por_grupo=300)
+    uno = build_codebook(datos, k=3, seed=1, max_descriptors=100)
+    otro = build_codebook(datos, k=3, seed=2, max_descriptors=100)
+    assert uno != otro
+
+
+def test_un_codebook_no_es_igual_a_otra_cosa() -> None:
+    assert build_codebook(_grupos(), k=3, seed=0) != "un codebook"
+
+
+def test_se_pueden_comparar_listas_de_codebooks() -> None:
+    # Es donde mas duele: una prueba con assert sobre una lista reventaba
+    # con ValueError en vez de fallar o pasar.
+    datos = _grupos()
+    assert [build_codebook(datos, k=3, seed=4)] == [build_codebook(datos, k=3, seed=4)]
+
+
+def test_el_codebook_releido_es_igual_al_original(tmp_path: Path) -> None:
+    original = build_codebook(_grupos(), k=3, seed=4)
+    original.save(tmp_path / "v.npz")
+    assert Codebook.load(tmp_path / "v.npz") == original
