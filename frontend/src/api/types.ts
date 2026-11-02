@@ -108,7 +108,15 @@ export interface PolygonContext {
 
 export type SpatialContext = RadiusContext | PolygonContext;
 
-export type CellValue = string | number | boolean | PointValue | null;
+/** Una celda. `number[]` es un VECTOR: llega como arreglo de componentes
+ *  porque la API serializa la tupla del motor como array JSON (#180). */
+export type CellValue =
+  | string
+  | number
+  | boolean
+  | PointValue
+  | number[]
+  | null;
 
 /** Espejo de QueryResult; los tipos vienen del esquema, incluso sin filas. */
 export interface QueryResult {
@@ -128,7 +136,10 @@ export type DataType =
   | "DOUBLE"
   | "BOOL"
   | "DATE"
-  | "POINT";
+  | "POINT"
+  /** `VECTOR(dim)`: el vector de un objeto multimedia (#180). `size` trae la
+   *  dimension, igual que VARCHAR trae su capacidad. */
+  | "VECTOR";
 
 export interface ColumnInfo {
   name: string;

@@ -21,7 +21,7 @@ const CREATE_TABLE =
   /^\s*CREATE\s+TABLE\s+([a-zA-Z_]\w*)\s*\(([\s\S]*)\)\s*(?:USING\s+([a-zA-Z_]\w*))?\s*;?\s*$/i;
 
 const COLUMNA =
-  /^([a-zA-Z_]\w*)\s+(INT|VARCHAR|DOUBLE|BOOL|DATE|POINT)(?:\s*\(\s*(\d+)\s*\))?(?:\s+PRIMARY\s+KEY)?$/i;
+  /^([a-zA-Z_]\w*)\s+(INT|VARCHAR|DOUBLE|BOOL|DATE|POINT|VECTOR)(?:\s*\(\s*(\d+)\s*\))?(?:\s+PRIMARY\s+KEY)?$/i;
 
 const ES_CLAVE = /\bPRIMARY\s+KEY\b/i;
 
@@ -290,8 +290,12 @@ export function ejecutarCreateTable(sql: string): string {
     columns.push({
       name: nombreColumna.toLowerCase(),
       type: tipo,
-      // Solo VARCHAR declara tamano; el resto lo tiene fijo por tipo.
-      size: tipo === "VARCHAR" ? Number(tamano ?? 0) || null : null,
+      // VARCHAR declara su capacidad en bytes y VECTOR su dimension en
+      // componentes; el resto tiene tamano fijo por tipo.
+      size:
+        tipo === "VARCHAR" || tipo === "VECTOR"
+          ? Number(tamano ?? 0) || null
+          : null,
       is_primary_key: ES_CLAVE.test(declaracion),
     });
     tipos.push(tipo);
