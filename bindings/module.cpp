@@ -73,6 +73,7 @@
 #include "quipudb/index/text_ranking.hpp"
 #include "quipudb/index/text_tokenizer.hpp"
 #include "quipudb/index/vector_metric.hpp"
+#include "quipudb/index/vector_scan.hpp"
 #include "quipudb/storage/heap_file.hpp"
 #include "quipudb/storage/sequential_file.hpp"
 #include "quipudb/version.hpp"
@@ -507,6 +508,23 @@ PYBIND11_MODULE(quipudb_native, m) {
         "Deshace vector_distance y devuelve el valor natural de la metrica");
   m.def("higher_is_better", &higher_is_better, py::arg("metric"),
         "Si el valor natural de la metrica es una similitud (mayor es mejor)");
+
+  py::class_<VectorMatch>(m, "VectorMatch",
+                          "Un resultado vectorial: RID y distancia (menor es mejor)")
+      .def_readonly("rid", &VectorMatch::rid)
+      .def_readonly("distance", &VectorMatch::distance)
+      .def("__repr__", [](const VectorMatch& v) {
+        return "VectorMatch(rid=(" + std::to_string(v.rid.page) + ", " +
+               std::to_string(v.rid.slot) + "), distance=" + std::to_string(v.distance) + ")";
+      });
+
+  m.def(
+      "scan_k_nearest_vector",
+      [](TableFile& table, std::string_view column, const Vector& query, std::size_t k,
+         VectorMetric metric) { return scan_k_nearest_vector(table, column, query, k, metric); },
+      py::arg("table"), py::arg("column"), py::arg("query"), py::arg("k"), py::arg("metric"),
+      "Los k vectores mas cercanos recorriendo la tabla entera (#182), de mas cerca a mas "
+      "lejos");
 
   py::class_<RTreeIndex, Index>(m, "RTreeIndex",
                                 "Indice espacial secundario sobre una columna POINT")
