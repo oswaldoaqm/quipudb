@@ -67,6 +67,7 @@
 #include "quipudb/external/external_sort.hpp"
 #include "quipudb/index/bplus_clustered_table.hpp"
 #include "quipudb/index/distance.hpp"
+#include "quipudb/index/hnsw.hpp"
 #include "quipudb/index/ivf.hpp"
 #include "quipudb/index/ivf_index.hpp"
 #include "quipudb/index/rtree_index.hpp"
@@ -601,6 +602,81 @@ PYBIND11_MODULE(quipudb_native, m) {
       .def("stats", &Ivf::stats, py::return_value_policy::copy)
       .def("reset_stats", &Ivf::reset_stats)
       .def("flush", &Ivf::flush);
+
+  // --- HNSW (#185) ---------------------------------------------------------
+
+  py::class_<HnswParams>(m, "HnswParams", "M, efConstruction y semilla de un HNSW")
+      .def(py::init([](std::size_t mm, std::size_t ef, std::uint64_t seed) {
+             return HnswParams{.m = mm, .ef_construction = ef, .seed = seed};
+           }),
+           py::arg("m") = 16, py::arg("ef_construction") = 200, py::arg("seed") = 0)
+      .def_readwrite("m", &HnswParams::m)
+      .def_readwrite("ef_construction", &HnswParams::ef_construction)
+      .def_readwrite("seed", &HnswParams::seed);
+
+  py::class_<Hnsw>(m, "Hnsw", "Grafo jerarquico de mundo pequeno navegable (HNSW)")
+      .def_static("create", &Hnsw::create, py::arg("path"), py::arg("dim"), py::arg("metric"),
+                  py::arg("params") = HnswParams{}, py::arg("page_size") = kDefaultPageSize,
+                  "Crea un HNSW vacio; la metrica queda fija")
+      .def_static("open", &Hnsw::open, py::arg("path"), py::arg("page_size") = kDefaultPageSize,
+                  "Abre un HNSW existente y carga el grafo")
+      .def_static("level_for", &Hnsw::level_for, py::arg("seed"), py::arg("id"), py::arg("m"),
+                  "Nivel que le toca al nodo id con esta semilla y este M")
+      .def(
+          "build",
+          [](Hnsw& h, const std::vector<RID>& rids, const std::vector<std::vector<float>>& vectors) {
+            if (vectors.size() != rids.size()) {
+              throw InvalidRecord("build: llegaron " + std::to_string(rids.size()) + " RIDs y " +
+                                  std::to_string(vectors.size()) + " vectores");
+            }
+            std::vector<float> plano;
+            plano.reserve(vectors.size() * h.dim());
+            for (const auto& v : vectors) {
+              if (v.size() != h.dim()) {
+                throw InvalidRecord("build: un vector tiene dimension " +
+                                    std::to_string(v.size()) + " y el indice es de dimension " +
+                                    std::to_string(h.dim()));
+              }
+              plano.insert(plano.end(), v.begin(), v.end());
+            }
+            h.build(rids, plano);
+          },
+          py::arg("rids"), py::arg("vectors"),
+          "Inserta todos en orden y escribe cada pagina una vez")
+      .def(
+          "insert", [](Hnsw& h, RID rid, const Vector& v) { h.insert(rid, v); }, py::arg("rid"),
+          py::arg("vector"))
+      .def(
+          "neighbors",
+          [](const Hnsw& h, std::size_t node, std::size_t layer) {
+            const auto v = h.neighbors(node, layer);
+            return std::vector<std::uint32_t>(v.begin(), v.end());
+          },
+          py::arg("node"), py::arg("layer"), "Vecinos de un nodo en una capa")
+      .def("level", &Hnsw::level, py::arg("node"))
+      .def("rid", &Hnsw::rid, py::arg("node"))
+      .def(
+          "vector",
+          [](const Hnsw& h, std::size_t node) {
+            const auto v = h.vector(node);
+            return std::vector<float>(v.begin(), v.end());
+          },
+          py::arg("node"))
+      .def("max_neighbors", &Hnsw::max_neighbors, py::arg("layer"))
+      .def("check_invariants", &Hnsw::check_invariants)
+      .def_property_readonly("size", &Hnsw::size)
+      .def_property_readonly("dim", &Hnsw::dim)
+      .def_property_readonly("metric", &Hnsw::metric)
+      .def_property_readonly("m", &Hnsw::m)
+      .def_property_readonly("ef_construction", &Hnsw::ef_construction)
+      .def_property_readonly("seed", &Hnsw::seed)
+      .def_property_readonly("max_level", &Hnsw::max_level)
+      .def_property_readonly("entry_point", &Hnsw::entry_point)
+      .def_property_readonly("page_count", &Hnsw::page_count)
+      .def_property_readonly("last_build_ms", &Hnsw::last_build_ms)
+      .def("stats", &Hnsw::stats, py::return_value_policy::copy)
+      .def("reset_stats", &Hnsw::reset_stats)
+      .def("flush", &Hnsw::flush);
 
   py::class_<IvfIndex, Index>(m, "IvfIndex",
                               "Indice IVF secundario sobre una columna VECTOR")
