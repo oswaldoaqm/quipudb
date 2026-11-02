@@ -41,6 +41,7 @@ class _DataType(StrEnum):
     BOOL = "BOOL"
     DATE = "DATE"
     POINT = "POINT"
+    VECTOR = "VECTOR"
 
 
 class _Kind:

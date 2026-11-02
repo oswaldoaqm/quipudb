@@ -43,6 +43,7 @@ def to_native_schema(schema: BoundSchema, native: Any) -> Any:
         SqlTypeName.BOOL: native.DataType.BOOL,
         SqlTypeName.DATE: native.DataType.DATE,
         SqlTypeName.POINT: native.DataType.POINT,
+        SqlTypeName.VECTOR: native.DataType.VECTOR,
     }
     columns = [
         native.Column(column.name, data_types[column.data_type], column.length or 0)
@@ -61,6 +62,7 @@ def from_native_schema(schema: Any, native: Any) -> BoundSchema:
         (native.DataType.BOOL, SqlTypeName.BOOL),
         (native.DataType.DATE, SqlTypeName.DATE),
         (native.DataType.POINT, SqlTypeName.POINT),
+        (native.DataType.VECTOR, SqlTypeName.VECTOR),
     )
     columns: list[BoundColumn] = []
     for column in schema.columns:
@@ -70,7 +72,11 @@ def from_native_schema(schema: Any, native: Any) -> BoundSchema:
         )
         if sql_type is None:
             raise RuntimeError(f"tipo nativo desconocido en la columna {column.name!r}")
-        length = int(column.length) if sql_type is SqlTypeName.VARCHAR else None
+        # VARCHAR guarda su capacidad y VECTOR su dimension; los dos viajan
+        # en el mismo campo del core. Sin esto, una tabla reabierta
+        # volveria con VECTOR(None) y `byte_size` no sabria cuanto ocupa.
+        lleva_numero = sql_type in (SqlTypeName.VARCHAR, SqlTypeName.VECTOR)
+        length = int(column.length) if lleva_numero else None
         columns.append(BoundColumn(str(column.name), sql_type, length))
 
     return BoundSchema(
@@ -106,6 +112,17 @@ def from_native_record(record: Any, schema: BoundSchema) -> tuple[BoundValue, ..
 
     converted: list[BoundValue] = []
     for value, column in zip(record, schema.columns, strict=True):
+        if column.data_type is SqlTypeName.VECTOR:
+            # El core devuelve una lista; el modelo semantico usa tuplas, que
+            # es lo que produce `_bind_vector` al insertar. Si no coincidieran,
+            # comparar lo insertado con lo leido fallaria por el tipo.
+            try:
+                converted.append(tuple(float(componente) for componente in value))
+            except (TypeError, ValueError) as error:
+                raise RuntimeError(
+                    f"el core devolvio un VECTOR invalido en la columna {column.name!r}"
+                ) from error
+            continue
         if column.data_type is SqlTypeName.DATE:
             if isinstance(value, date) and not isinstance(value, bool):
                 converted.append(value)
@@ -169,6 +186,14 @@ def native_range_bounds(column: BoundColumn, native: Any) -> tuple[object, objec
         return native.Date(_INT32_MIN), native.Date(_INT32_MAX)
     if column.data_type is SqlTypeName.POINT:
         return native.GeoPoint(-90.0, -180.0), native.GeoPoint(90.0, 180.0)
+    if column.data_type is SqlTypeName.VECTOR:
+        # Un vector se compara por similitud (#183 a #186), no por orden: un
+        # rango entre dos vectores no significa nada. El analisis semantico ya
+        # impide indexar la columna con B+ o hash, asi que llegar aqui seria
+        # un error de cableado, no del usuario.
+        raise AssertionError(
+            f"columna {column.name!r}: un VECTOR no tiene rango; se busca por similitud"
+        )
     raise AssertionError(f"tipo SQL desconocido: {column.data_type!r}")
 
 
