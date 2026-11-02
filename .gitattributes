@@ -30,6 +30,20 @@ CMakeLists.txt  text eol=lf
 *.png  binary
 *.jpg  binary
 *.jpeg binary
+*.bmp  binary
+*.tif  binary
+*.tiff binary
+*.webp binary
+# Audio y vocabularios de la Parte 4 (#176 a #181). Hasta ahora se
+# salvaban solo por la auto-deteccion de Git, que mira si hay bytes
+# nulos cerca del principio: un WAV de 8 bits o un audio muy corto
+# podrian no tenerlos y Git les cambiaria los finales de linea,
+# dejando el archivo inservible sin que nada avise.
+*.wav  binary
+*.flac binary
+*.ogg  binary
+*.mp3  binary
+*.npz  binary
 *.pdf  binary
 *.dat  binary
 *.idx  binary
