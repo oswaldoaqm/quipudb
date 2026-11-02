@@ -113,6 +113,17 @@ class Database {
   Index& create_index(std::string_view table, std::string_view index_name,
                       std::string_view column, std::string_view kind);
 
+  /// Crea un indice IVF (#184) sobre la columna VECTOR `column`, con estos
+  /// centroides, y lo llena con los vectores que la tabla ya tenga. Los
+  /// centroides salen del K-Means de engine/multimedia/kmeans.py (#178); por
+  /// eso un IVF no se puede crear con `create_index`, que no los recibe.
+  /// Ademas de los errores de `create_index`, lanza SchemaError si los
+  /// centroides no tienen la dimension de la columna. Si algo falla al
+  /// construir, el indice sale del catalogo y su archivo se borra.
+  Index& create_ivf_index(std::string_view table, std::string_view index_name,
+                          std::string_view column,
+                          const std::vector<std::vector<float>>& centroids);
+
   /// Handle de un indice ya registrado, abriendolo la primera vez. Siempre el
   /// mismo objeto, montado sobre el mismo handle de tabla que devuelve
   /// `table()`. Lanza SchemaError si la tabla o el indice no estan en el

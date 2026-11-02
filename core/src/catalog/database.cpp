@@ -6,6 +6,7 @@
 #include "quipudb/index/bplus_clustered_table.hpp"
 #include "quipudb/index/bplus_unclustered_index.hpp"
 #include "quipudb/index/extendible_hash_index.hpp"
+#include "quipudb/index/ivf_index.hpp"
 #include "quipudb/index/rtree_index.hpp"
 #include "quipudb/index/text_index.hpp"
 #include "quipudb/storage/heap_file.hpp"
@@ -122,12 +123,18 @@ std::unique_ptr<Index> Database::abrir_indice(const TableInfo& tabla, const Inde
   if (info.kind == kind::kInvertedIndex) {
     return std::make_unique<TextIndex>(ruta, col, datos, tabla.page_size);
   }
+  if (info.kind == kind::kIvf) {
+    return std::make_unique<IvfIndex>(ruta, col, datos, tabla.page_size);
+  }
   throw Unsupported("el indice '" + info.name + "' de " + tabla.schema.table_name +
                     " es de tipo '" + info.kind + "', que no esta implementado");
 }
 
 Index& Database::create_index(std::string_view table, std::string_view index_name,
                               std::string_view column, std::string_view kind) {
+  if (kind == kind::kIvf) {
+    throw SchemaError("un indice IVF necesita centroides: creelo con create_ivf_index");
+  }
   // El catalogo valida todo lo que puede fallar (tabla, columna, nombre
   // repetido, tipo de indice, organizacion de la tabla) antes de que aqui se
   // cree ningun archivo.
@@ -144,6 +151,30 @@ Index& Database::create_index(std::string_view table, std::string_view index_nam
     r->build();
   } else if (auto* t = dynamic_cast<TextIndex*>(handle.get())) {
     t->build();
+  }
+  auto [it, _] = indices_.emplace(clave_indice(table, index_name), std::move(handle));
+  return *it->second;
+}
+
+Index& Database::create_ivf_index(std::string_view table, std::string_view index_name,
+                                  std::string_view column,
+                                  const std::vector<std::vector<float>>& centroids) {
+  const IndexInfo info = catalog_.create_index(table, index_name, column, kind::kIvf);
+  const TableInfo& tabla = catalog_.table(table);
+  const auto ruta = catalog_.resolve(info.file);
+  TableFile& datos = this->table(table);
+  std::unique_ptr<IvfIndex> handle;
+  try {
+    handle = std::make_unique<IvfIndex>(ruta, tabla.schema.columns.at(info.column), datos,
+                                        tabla.page_size, centroids);
+    handle->build();
+  } catch (...) {
+    // Ni el catalogo ni el disco se quedan con un indice a medio crear.
+    handle.reset();
+    catalog_.drop_index(table, index_name);
+    std::error_code ignorado;
+    std::filesystem::remove(ruta, ignorado);
+    throw;
   }
   auto [it, _] = indices_.emplace(clave_indice(table, index_name), std::move(handle));
   return *it->second;
@@ -232,6 +263,8 @@ void Database::flush() {
       r->flush();
     } else if (auto* t = dynamic_cast<TextIndex*>(handle.get())) {
       t->flush();
+    } else if (auto* v = dynamic_cast<IvfIndex*>(handle.get())) {
+      v->flush();
     }
   }
   for (auto& [nombre, handle] : abiertas_) {
