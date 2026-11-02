@@ -38,6 +38,7 @@ from engine.parser.ast import (
     StorageKind,
     StringLiteral,
     TableRef,
+    VectorLiteral,
     Wildcard,
 )
 from engine.parser.bound_ast import (
@@ -196,6 +197,17 @@ def bind_create_index(
     if statement.kind is not IndexKind.RTREE and indexed_column.data_type is SqlTypeName.POINT:
         _fail(
             f"la columna {statement.column.name!r} es POINT y requiere un indice R-Tree",
+            statement.column.span,
+            source,
+        )
+    # Un vector se compara por similitud, no por igualdad ni por orden: un B+
+    # o un hash sobre el no responderia ninguna consulta util, y un rango
+    # entre dos vectores no significa nada. Los indices que si le sirven son
+    # IVF y HNSW (#183 a #186), que todavia no existen.
+    if indexed_column.data_type is SqlTypeName.VECTOR:
+        _fail(
+            f"la columna {statement.column.name!r} es VECTOR y se busca por similitud; "
+            f"{statement.kind.value} indexa por igualdad u orden",
             statement.column.span,
             source,
         )
@@ -802,8 +814,22 @@ def _validate_type(
         if length is None or length <= 0:
             _fail("VARCHAR necesita una longitud mayor que 0", span, source)
         return length
+    if data_type is SqlTypeName.VECTOR:
+        # La dimension de un VECTOR es el numero entre parentesis, igual que
+        # la capacidad de un VARCHAR, pero cuenta componentes y no bytes: el
+        # tamano en disco lo saca `BoundColumn.byte_size` multiplicando por
+        # VECTOR_COMPONENT_SIZE. El tope por pagina lo impone despues
+        # `bind_create_table`, que ya senala la columna que desborda.
+        if length is None or length <= 0:
+            _fail("VECTOR necesita una dimension mayor que 0", span, source)
+        return length
     if length is not None:
-        _fail(f"solo VARCHAR admite longitud; {data_type.value} no la usa", span, source)
+        _fail(
+            f"solo VARCHAR y VECTOR admiten un numero entre parentesis; "
+            f"{data_type.value} no lo usa",
+            span,
+            source,
+        )
     return None
 
 
@@ -837,6 +863,8 @@ def _bind_value(literal: Literal, column: BoundColumn, source: str | None) -> Bo
         return literal.value
     if column.data_type is SqlTypeName.POINT:
         return _bind_point(literal, column, source)
+    if column.data_type is SqlTypeName.VECTOR:
+        return _bind_vector(literal, column, source)
     raise AssertionError(f"tipo SQL desconocido: {column.data_type!r}")
 
 
@@ -936,6 +964,45 @@ def _bind_point(literal: Literal, column: BoundColumn, source: str | None) -> Po
             source,
         )
     return PointValue(literal.latitude, literal.longitude)
+
+
+def _bind_vector(
+    literal: Literal, column: BoundColumn, source: str | None
+) -> tuple[float, ...]:
+    """Valida un ``VECTOR(...)`` contra la dimension declarada de la columna.
+
+    La dimension es parte del tipo, como la capacidad de un VARCHAR, asi que
+    un vector de otra dimension no es un valor fuera de rango sino un valor de
+    otro tipo. El error senala la primera componente que sobra, o el literal
+    entero cuando faltan, para que se vea donde hay que corregir.
+    """
+
+    if not isinstance(literal, VectorLiteral):
+        _wrong_type(literal, column, source)
+    if column.length is None:
+        raise AssertionError(f"columna {column.name}: VECTOR sin dimension en el esquema")
+
+    if len(literal.components) != column.length:
+        sobran = len(literal.components) > column.length
+        span = literal.component_spans[column.length] if sobran else literal.span
+        _fail(
+            f"columna {column.name}: el vector tiene {len(literal.components)} componentes "
+            f"y la columna declara VECTOR({column.length})",
+            span,
+            source,
+        )
+
+    for posicion, componente in enumerate(literal.components):
+        # Un infinito o un NaN haria falsa cualquier distancia posterior y el
+        # objeto quedaria en un lugar arbitrario del ranking sin que nada lo
+        # denuncie. Es la misma regla que ya aplica DOUBLE con NaN.
+        if not math.isfinite(componente):
+            _fail(
+                f"columna {column.name}: la componente {posicion + 1} del vector no es finita",
+                literal.component_spans[posicion],
+                source,
+            )
+    return literal.components
 
 
 def _wrong_type(literal: Literal, column: BoundColumn, source: str | None) -> None:
