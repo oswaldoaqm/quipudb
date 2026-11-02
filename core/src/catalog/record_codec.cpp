@@ -71,6 +71,19 @@ void RecordCodec::encode_value(const Column& col, const Value& v, std::span<std:
       put(out.subspan(sizeof(double)), point.longitude);
       break;
     }
+    case DataType::Vector: {
+      // La dimension ya la verifico Schema::validate; aqui se comprueba otra
+      // vez porque encode_value es publica y se usa suelta en las pruebas.
+      const auto& vec = std::get<VectorValue>(v);
+      if (vec.size() != col.length) {
+        throw InvalidRecord("columna " + col.name + ": el vector tiene " +
+                            std::to_string(vec.size()) +
+                            " componentes y la columna declara VECTOR(" +
+                            std::to_string(col.length) + ")");
+      }
+      std::memcpy(out.data(), vec.data(), vec.size() * sizeof(float));
+      break;
+    }
   }
 }
 
@@ -95,6 +108,11 @@ Value RecordCodec::decode_value(const Column& col, std::span<const std::byte> in
       return Date{get<std::int32_t>(in)};
     case DataType::Point:
       return GeoPoint{get<double>(in), get<double>(in.subspan(sizeof(double)))};
+    case DataType::Vector: {
+      VectorValue vec(col.length);
+      std::memcpy(vec.data(), in.data(), vec.size() * sizeof(float));
+      return vec;
+    }
   }
   throw InvalidRecord("columna " + col.name + ": tipo desconocido");
 }
