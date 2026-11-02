@@ -23,7 +23,7 @@ bool is_table_storage(std::string_view s) noexcept {
 
 bool is_index_kind(std::string_view s) noexcept {
   return s == kind::kBPlusUnclustered || s == kind::kExtendibleHash || s == kind::kRTree ||
-         s == kind::kInvertedIndex || s == kind::kIvf;
+         s == kind::kInvertedIndex || s == kind::kIvf || s == kind::kHnsw;
 }
 
 std::optional<DataType> parse_type(std::string_view s) noexcept {
@@ -195,7 +195,7 @@ IndexInfo Catalog::create_index(std::string_view table, std::string_view index_n
                       std::string(kind::kBPlusUnclustered) + ", " +
                       std::string(kind::kExtendibleHash) + ", " +
                       std::string(kind::kRTree) + ", " + std::string(kind::kInvertedIndex) +
-                      ", " + std::string(kind::kIvf) + ")");
+                      ", " + std::string(kind::kIvf) + ", " + std::string(kind::kHnsw) + ")");
   }
   const bool point_column = info.schema.columns[*col].type == DataType::Point;
   if (kind == kind::kRTree && !point_column) {
@@ -210,14 +210,15 @@ IndexInfo Catalog::create_index(std::string_view table, std::string_view index_n
   // Un vector solo tiene sentido en un indice vectorial: un B+ lo ordenaria
   // componente por componente y un hash solo encontraria copias exactas.
   const bool vector_column = info.schema.columns[*col].type == DataType::Vector;
-  if (kind == kind::kIvf && !vector_column) {
-    throw SchemaError("la columna " + std::string(column) +
-                      " no es VECTOR: un indice IVF requiere vectores");
+  const bool vectorial = kind == kind::kIvf || kind == kind::kHnsw;
+  if (vectorial && !vector_column) {
+    throw SchemaError("la columna " + std::string(column) + " no es VECTOR: un indice " +
+                      std::string(kind) + " requiere vectores");
   }
-  if (kind != kind::kIvf && vector_column) {
+  if (!vectorial && vector_column) {
     throw SchemaError("la columna " + std::string(column) +
                       " es VECTOR: requiere un indice vectorial (" + std::string(kind::kIvf) +
-                      ")");
+                      " o " + std::string(kind::kHnsw) + ")");
   }
   if (kind != kind::kRTree && point_column) {
     throw SchemaError("la columna " + std::string(column) +

@@ -80,6 +80,8 @@ inline constexpr std::string_view kRTree = "rtree";
 inline constexpr std::string_view kInvertedIndex = "inverted_index";
 /// Indice de archivo invertido para vectores (#183, #184).
 inline constexpr std::string_view kIvf = "ivf";
+/// Grafo HNSW para vectores (#185, #186).
+inline constexpr std::string_view kHnsw = "hnsw";
 }  // namespace kind
 
 // ---------------------------------------------------------------------------
