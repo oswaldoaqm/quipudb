@@ -49,7 +49,7 @@ class CodebookError(ValueError):
     """El codebook no se puede construir, leer o aplicar."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class Codebook:
     """Las K palabras del vocabulario, con que semilla salieron y su huella.
 
@@ -62,6 +62,24 @@ class Codebook:
     centroids: np.ndarray
     seed: int
     identifier: str
+
+    def __eq__(self, other: object) -> bool:
+        """Dos codebooks son el mismo si tienen los mismos centroides.
+
+        Hace falta escribirlo: el ``__eq__`` que genera dataclass compara los
+        campos con ``==``, y entre dos ndarray eso devuelve un ARREGLO de
+        booleanos cuyo valor de verdad es ambiguo. El resultado no era un
+        `False` incorrecto sino un ValueError, que aparecia tambien al meter
+        un codebook en una lista y compararla, o al usarlo en un assert.
+        """
+
+        if not isinstance(other, Codebook):
+            return NotImplemented
+        return (
+            self.seed == other.seed
+            and self.identifier == other.identifier
+            and np.array_equal(self.centroids, other.centroids)
+        )
 
     @property
     def k(self) -> int:
