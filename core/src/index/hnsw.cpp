@@ -173,6 +173,13 @@ void Hnsw::load() {
       }
       levels_.push_back(nivel);
       first_upper_.push_back(primero);
+      const auto muerto = scratch_.read<std::uint8_t>(off + 7);
+      muerto_.push_back(muerto != 0 ? 1 : 0);
+      if (muerto != 0) {
+        ++borrados_;
+      } else {
+        por_rid_[rids_.back()].push_back(static_cast<std::uint32_t>(rids_.size() - 1));
+      }
       const auto bytes = scratch_.read_bytes(off + kNodeFixed, dim_ * sizeof(float));
       const std::size_t inicio = vectors_.size();
       vectors_.resize(inicio + dim_);
@@ -267,7 +274,8 @@ void Hnsw::check_vector(std::span<const float> vector, const char* where) const 
 
 std::vector<Hnsw::Candidato> Hnsw::search_layer(std::span<const float> query,
                                                 const std::vector<Candidato>& entrada,
-                                                std::size_t ef, std::size_t layer) {
+                                                std::size_t ef, std::size_t layer,
+                                                bool solo_vivos) {
   if (visitado_.size() < rids_.size()) visitado_.resize(rids_.size(), 0);
   if (++vuelta_ == 0) {
     std::fill(visitado_.begin(), visitado_.end(), 0);
@@ -282,6 +290,7 @@ std::vector<Hnsw::Candidato> Hnsw::search_layer(std::span<const float> query,
     if (visitado_[c.node] == vuelta_) continue;
     visitado_[c.node] = vuelta_;
     por_ver.push(c);
+    if (solo_vivos && muerto_[c.node] != 0) continue;
     mejores.push(c);
     if (mejores.size() > ef) mejores.pop();
   }
@@ -297,7 +306,9 @@ std::vector<Hnsw::Candidato> Hnsw::search_layer(std::span<const float> query,
       visitado_[v] = vuelta_;
       const Candidato nuevo{distance(query, vector(v)), v};
       if (mejores.size() < ef || nuevo < mejores.top()) {
+        // Un borrado sirve para seguir navegando, pero no es resultado.
         por_ver.push(nuevo);
+        if (solo_vivos && muerto_[v] != 0) continue;
         mejores.push(nuevo);
         if (mejores.size() > ef) mejores.pop();
       }
@@ -357,6 +368,8 @@ void Hnsw::add_node(RID rid, std::span<const float> v) {
 
   rids_.push_back(rid);
   levels_.push_back(static_cast<std::uint8_t>(nivel));
+  muerto_.push_back(0);
+  por_rid_[rid].push_back(id);
   first_upper_.push_back(nivel > 0 ? upper_count_ : kSinCapas);
   upper_count_ += static_cast<std::uint32_t>(nivel);
   upper_owner_.insert(upper_owner_.end(), nivel, id);
@@ -528,6 +541,59 @@ void Hnsw::build(std::span<const RID> rids, std::span<const float> vectors) {
 }
 
 // ---------------------------------------------------------------------------
+// Buscar y borrar (#186)
+// ---------------------------------------------------------------------------
+
+std::vector<VectorMatch> Hnsw::search(std::span<const float> query, std::size_t k,
+                                      VectorMetric metric, std::size_t ef_search) {
+  if (metric != metric_) {
+    throw SchemaError("el HNSW se construyo con " + std::string(name_of(metric_)) +
+                      " y la consulta pide " + std::string(name_of(metric)) +
+                      ": el grafo solo sirve para la metrica con la que se armo");
+  }
+  if (ef_search == 0) throw InvalidRecord("search: ef_search tiene que ser al menos 1");
+  check_vector(query, "search");
+  std::vector<VectorMatch> out;
+  if (k == 0 || live_size() == 0) return out;
+
+  // Bajada voraz hasta la capa 1 y busqueda ampliada en la 0.
+  std::vector<Candidato> puntos{{distance(query, vector(entry_)), entry_}};
+  for (auto capa = static_cast<std::size_t>(max_level_); capa > 0; --capa) {
+    puntos = {search_layer(query, puntos, 1, capa).front()};
+  }
+  const auto mejores = search_layer(query, puntos, std::max(ef_search, k), 0, true);
+
+  // El mismo orden que la busqueda exacta: distancia y, si empatan, RID.
+  out.reserve(mejores.size());
+  for (const Candidato& c : mejores) out.push_back(VectorMatch{rids_[c.node], c.distance});
+  std::sort(out.begin(), out.end(), [](const VectorMatch& a, const VectorMatch& b) {
+    return a.distance != b.distance ? a.distance < b.distance : a.rid < b.rid;
+  });
+  if (out.size() > k) out.resize(k);
+  stats_.records_returned += out.size();
+  return out;
+}
+
+bool Hnsw::remove(RID rid, std::span<const float> v) {
+  check_vector(v, "remove");
+  const auto it = por_rid_.find(rid);
+  if (it == por_rid_.end()) return false;
+  auto& nodos = it->second;
+  for (auto n = nodos.begin(); n != nodos.end(); ++n) {
+    const auto guardado = vector(*n);
+    if (!std::equal(guardado.begin(), guardado.end(), v.begin(), v.end())) continue;
+    muerto_[*n] = 1;
+    ++borrados_;
+    mark_dirty(*n, 0);
+    nodos.erase(n);
+    if (nodos.empty()) por_rid_.erase(it);
+    write_dirty();
+    return true;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Escribir
 // ---------------------------------------------------------------------------
 
@@ -552,6 +618,7 @@ void Hnsw::write_node_page(std::size_t index) {
     scratch_.write<PageId>(off, rids_[id].page);
     scratch_.write<SlotId>(off + sizeof(PageId), rids_[id].slot);
     scratch_.write<std::uint8_t>(off + 6, levels_[id]);
+    scratch_.write<std::uint8_t>(off + 7, muerto_[id]);
     scratch_.write<std::uint32_t>(off + 8, first_upper_[id]);
     scratch_.write_bytes(off + kNodeFixed, std::as_bytes(vector(id)));
     const std::size_t lnk = off + kNodeFixed + dim_ * sizeof(float);

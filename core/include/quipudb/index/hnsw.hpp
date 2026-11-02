@@ -1,7 +1,7 @@
 #pragma once
 
 // HNSW, grafo jerarquico de mundo pequeno navegable: capas, insercion y
-// persistencia (#185). La busqueda con ef_search es el #186.
+// persistencia (#185), y busqueda k-NN con ef_search y borrado (#186).
 //
 // La idea, de Malkov y Yashunin (2018): cada vector es un nodo de un grafo
 // donde los vecinos son vectores cercanos. Hay varias capas; la 0 tiene a
@@ -88,10 +88,44 @@
 //   El vector va en el registro del nodo, como en el IVF, para comparar sin
 //   leer la tabla. Con dimension 256 y M = 16 un nodo ocupa 1 168 bytes y en
 //   una pagina de 4 KB entran 3.
+//
+//   El byte que sigue al nivel marca si el nodo esta borrado (#186). En el
+//   #185 se escribia siempre en 0, asi que el formato no cambia de version.
+//
+// Buscar (#186)
+// -------------
+//
+//   El algoritmo 5 del paper: desde el punto de entrada se baja de forma
+//   voraz, con un solo candidato, hasta la capa 1, y en la capa 0 se hace la
+//   busqueda ampliada con ef_search candidatos. Se devuelven los k mejores.
+//   ef_search menor que k se toma como k.
+//
+//   Bajar por las capas cuesta unas log_M(N) comparaciones por capa, y la
+//   capa 0 cuesta del orden de ef_search * 2M: por eso las comparaciones
+//   crecen como log N y no como N. ef_search es el equivalente de nprobe en
+//   el IVF: con uno mas grande se miran mas nodos y el Recall@k sube. A
+//   diferencia del IVF, que el recall no baje al subir ef_search no esta
+//   garantizado consulta por consulta, porque la busqueda es voraz y puede
+//   tomar otro camino; en promedio si sube. Con ef_search >= N la busqueda
+//   no puede parar antes de ver todo lo alcanzable, y como el grafo esta
+//   conectado (#185) el resultado es exactamente el de la busqueda exacta.
+//
+//   La metrica de la consulta tiene que ser la del grafo: los vecinos se
+//   eligieron con esa distancia, y con otra el grafo no lleva a los mas
+//   cercanos. Pedir otra es SchemaError.
+//
+// Borrar (#186)
+// -------------
+//
+//   Sacar un nodo de verdad obliga a reconectar a sus vecinos. Aqui se marca
+//   como borrado: la busqueda sigue pasando por el para navegar, pero no lo
+//   devuelve. El nodo sigue ocupando lugar y contando en `size()`; los vivos
+//   son `live_size()`.
 
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <set>
 #include <span>
@@ -101,6 +135,7 @@
 #include "quipudb/catalog/table.hpp"
 #include "quipudb/catalog/types.hpp"
 #include "quipudb/index/vector_metric.hpp"
+#include "quipudb/index/vector_scan.hpp"
 #include "quipudb/storage/disk_manager.hpp"
 #include "quipudb/storage/page.hpp"
 
@@ -160,7 +195,23 @@ class Hnsw {
   /// sus capas.
   [[nodiscard]] std::string check_invariants() const;
 
+  /// Los `k` vectores vivos mas cercanos a `query`, de mas cerca a mas lejos,
+  /// con distancias de `vector_distance` y empates por RID, como
+  /// `scan_k_nearest_vector`. SchemaError si `metric` no es la del grafo;
+  /// InvalidRecord si ef_search es 0 o la consulta no tiene la dimension del
+  /// indice.
+  [[nodiscard]] std::vector<VectorMatch> search(std::span<const float> query, std::size_t k,
+                                                VectorMetric metric, std::size_t ef_search);
+
+  /// Marca como borrado el nodo vivo con este RID y este vector. Devuelve si
+  /// existia.
+  bool remove(RID rid, std::span<const float> vector);
+
+  /// Nodos en el grafo, vivos y borrados.
   [[nodiscard]] std::size_t size() const noexcept { return rids_.size(); }
+  /// Nodos que una busqueda puede devolver.
+  [[nodiscard]] std::size_t live_size() const noexcept { return rids_.size() - borrados_; }
+  [[nodiscard]] bool deleted(std::size_t node) const { return muerto_.at(node) != 0; }
   [[nodiscard]] bool empty() const noexcept { return rids_.empty(); }
   [[nodiscard]] std::size_t dim() const noexcept { return dim_; }
   [[nodiscard]] VectorMetric metric() const noexcept { return metric_; }
@@ -237,10 +288,12 @@ class Hnsw {
   /// Agrega el nodo al grafo en memoria y marca las paginas que cambian.
   void add_node(RID rid, std::span<const float> vector);
   /// Busqueda en una capa con `ef` candidatos, desde `entrada`. Devuelve los
-  /// mejores de mas cerca a mas lejos.
+  /// mejores de mas cerca a mas lejos. Con `solo_vivos` pasa por los nodos
+  /// borrados pero no los devuelve.
   [[nodiscard]] std::vector<Candidato> search_layer(std::span<const float> query,
                                                     const std::vector<Candidato>& entrada,
-                                                    std::size_t ef, std::size_t layer);
+                                                    std::size_t ef, std::size_t layer,
+                                                    bool solo_vivos = false);
   /// Heuristica de seleccion de vecinos (algoritmo 4).
   [[nodiscard]] std::vector<std::uint32_t> select_neighbors(
       const std::vector<Candidato>& candidatos, std::size_t max);
@@ -273,6 +326,11 @@ class Hnsw {
 
   std::vector<RID> rids_;
   std::vector<std::uint8_t> levels_;
+  /// 1 si el nodo esta borrado.
+  std::vector<std::uint8_t> muerto_;
+  std::size_t borrados_ = 0;
+  /// Nodos vivos de cada RID, para borrar sin recorrer todo el grafo.
+  std::map<RID, std::vector<std::uint32_t>> por_rid_;
   std::vector<std::uint32_t> first_upper_;
   std::vector<float> vectors_;
   /// links_[nodo][capa] son los vecinos del nodo en esa capa.
