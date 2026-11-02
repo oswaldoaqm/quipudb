@@ -29,4 +29,16 @@ class FeatureExtractionError(ValueError):
         self.path = path
 
 
-__all__ = ["FeatureExtractionError"]
+class EmptyObjectError(FeatureExtractionError):
+    """El archivo se leyo bien, pero no hay nada que describir.
+
+    Una imagen de un solo color o un audio mas corto que una ventana son
+    objetos validos y vacios, no archivos rotos. La diferencia importa:
+    ``ExtractFeatures`` (#181) le da al objeto vacio un vector definido -- el
+    nulo --, mientras que un archivo corrupto tiene que seguir siendo un
+    error. Si no se distinguieran, un .jpg a medio descargar entraria al
+    dataset como si fuera una foto en blanco.
+    """
+
+
+__all__ = ["EmptyObjectError", "FeatureExtractionError"]

@@ -43,7 +43,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from engine.multimedia.errors import FeatureExtractionError
+from engine.multimedia.errors import EmptyObjectError, FeatureExtractionError
 
 N_MFCC = 13
 """Coeficientes que se conservan tras la DCT. Trece es el valor clasico: del
@@ -233,7 +233,7 @@ def extract_mfcc(
     marcos = frame_signal(realzada, largo, salto)
     if len(marcos) == 0:
         duracion = len(senal) / frecuencia
-        raise FeatureExtractionError(
+        raise EmptyObjectError(
             f"{ruta.name!r} dura {duracion * 1000:.0f} ms y no alcanza para una ventana "
             f"de {frame_ms:.0f} ms",
             ruta,
@@ -256,6 +256,7 @@ __all__ = [
     "PREENFASIS",
     "SALTO_MS",
     "VENTANA_MS",
+    "EmptyObjectError",
     "FeatureExtractionError",
     "dct_matrix",
     "extract_mfcc",

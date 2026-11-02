@@ -22,7 +22,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from engine.multimedia.errors import FeatureExtractionError
+from engine.multimedia.errors import EmptyObjectError, FeatureExtractionError
 
 DESCRIPTOR_LENGTH = 128
 """Valores que tiene un descriptor SIFT. Lo fija el algoritmo: una rejilla de
@@ -114,7 +114,7 @@ def extract_sift(path: str | Path, *, max_keypoints: int | None = None) -> np.nd
     # esta rama el llamador revienta con AttributeError al pedir .shape, que
     # es exactamente el "tumbar el proceso" que el issue prohibe.
     if descriptores is None or len(descriptores) == 0:
-        raise FeatureExtractionError(
+        raise EmptyObjectError(
             f"{ruta.name!r} no tiene puntos de interes: SIFT no encontro ninguno", ruta
         )
     if max_keypoints is not None and len(descriptores) > max_keypoints:
@@ -149,6 +149,7 @@ def _mejores(
 __all__ = [
     "DESCRIPTOR_LENGTH",
     "SIFT_DESDE",
+    "EmptyObjectError",
     "FeatureExtractionError",
     "create_detector",
     "extract_sift",
