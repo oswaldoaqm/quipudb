@@ -67,6 +67,7 @@
 #include "quipudb/external/external_sort.hpp"
 #include "quipudb/index/bplus_clustered_table.hpp"
 #include "quipudb/index/distance.hpp"
+#include "quipudb/index/ivf.hpp"
 #include "quipudb/index/rtree_index.hpp"
 #include "quipudb/index/spatial_scan.hpp"
 #include "quipudb/index/text_index.hpp"
@@ -525,6 +526,65 @@ PYBIND11_MODULE(quipudb_native, m) {
       py::arg("table"), py::arg("column"), py::arg("query"), py::arg("k"), py::arg("metric"),
       "Los k vectores mas cercanos recorriendo la tabla entera (#182), de mas cerca a mas "
       "lejos");
+
+  // --- IVF (#183) ----------------------------------------------------------
+  //
+  // Los centroides y los vectores llegan como listas de listas (o arreglos 2D
+  // de numpy). Los centroides salen de engine/multimedia/kmeans.py.
+
+  py::class_<Ivf>(m, "Ivf", "Indice de archivo invertido para vectores (IVF)")
+      .def_static("create", &Ivf::create, py::arg("path"), py::arg("centroids"),
+                  py::arg("page_size") = kDefaultPageSize,
+                  "Crea un IVF vacio con estos centroides, uno por fila")
+      .def_static("open", &Ivf::open, py::arg("path"), py::arg("page_size") = kDefaultPageSize,
+                  "Abre un IVF existente")
+      .def(
+          "build",
+          [](Ivf& ivf, const std::vector<RID>& rids, const std::vector<std::vector<float>>& vectors) {
+            if (vectors.size() != rids.size()) {
+              throw InvalidRecord("build: llegaron " + std::to_string(rids.size()) + " RIDs y " +
+                                  std::to_string(vectors.size()) + " vectores");
+            }
+            std::vector<float> plano;
+            plano.reserve(vectors.size() * ivf.dim());
+            for (const auto& v : vectors) {
+              if (v.size() != ivf.dim()) {
+                throw InvalidRecord("build: un vector tiene dimension " +
+                                    std::to_string(v.size()) + " y el indice es de dimension " +
+                                    std::to_string(ivf.dim()));
+              }
+              plano.insert(plano.end(), v.begin(), v.end());
+            }
+            ivf.build(rids, plano);
+          },
+          py::arg("rids"), py::arg("vectors"),
+          "Agrega todos los vectores de una vez, cada uno a la lista de su centroide")
+      .def(
+          "insert", [](Ivf& ivf, RID rid, const Vector& v) { ivf.insert(rid, v); },
+          py::arg("rid"), py::arg("vector"))
+      .def(
+          "nearest_list", [](const Ivf& ivf, const Vector& v) { return ivf.nearest_list(v); },
+          py::arg("vector"), "Lista del centroide mas cercano en distancia euclidiana")
+      .def("list_entries", &Ivf::list_entries, py::arg("list"),
+           "Pares (RID, vector) de una lista, leyendo sus paginas")
+      .def("list_size", &Ivf::list_size, py::arg("list"))
+      .def(
+          "centroid",
+          [](const Ivf& ivf, std::size_t list) {
+            const auto c = ivf.centroid(list);
+            return std::vector<float>(c.begin(), c.end());
+          },
+          py::arg("list"))
+      .def("check_invariants", &Ivf::check_invariants)
+      .def_property_readonly("dim", &Ivf::dim)
+      .def_property_readonly("nlist", &Ivf::nlist)
+      .def_property_readonly("size", &Ivf::size)
+      .def_property_readonly("entries_per_page", &Ivf::entries_per_page)
+      .def_property_readonly("page_count", &Ivf::page_count)
+      .def_property_readonly("last_build_ms", &Ivf::last_build_ms)
+      .def("stats", &Ivf::stats, py::return_value_policy::copy)
+      .def("reset_stats", &Ivf::reset_stats)
+      .def("flush", &Ivf::flush);
 
   py::class_<RTreeIndex, Index>(m, "RTreeIndex",
                                 "Indice espacial secundario sobre una columna POINT")
