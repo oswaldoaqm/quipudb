@@ -1,7 +1,7 @@
 #pragma once
 
-// IVF, indice de archivo invertido para vectores (issue #183): construccion,
-// listas en disco y persistencia. La busqueda con nprobe es el #184.
+// IVF, indice de archivo invertido para vectores: construccion, listas en
+// disco y persistencia (#183), y busqueda k-NN con nprobe y borrado (#184).
 //
 // La idea: se reparte el espacio en `nlist` celdas, una por centroide, y cada
 // vector se guarda en la lista de su centroide mas cercano. Al buscar se miran
@@ -43,6 +43,25 @@
 //                agrega siempre en la cola, asi que insertar lee y escribe una
 //                pagina mas la del directorio.
 //
+//   Borrar tapa el hueco con la ultima entrada de la lista. Si la ultima
+//   pagina queda vacia, sale de la cadena y va a una free list, de donde la
+//   toma la proxima pagina que se necesite (en cualquier lista).
+//
+// Busqueda (#184)
+// ---------------
+//
+//   Se ordenan los centroides por distancia euclidiana a la consulta -- la
+//   misma con la que se armaron las listas -- y se recorren las `nprobe`
+//   listas mas cercanas comparando con la metrica pedida. Se comparan unos
+//   N * nprobe / nlist vectores en vez de N: ese es todo el ahorro, y es lo
+//   que cuentan las estadisticas en `records_examined`.
+//
+//   Con nprobe = nlist se recorren todas las listas y el resultado es
+//   exactamente el de la busqueda exacta (#182), con el mismo desempate por
+//   RID. Al subir nprobe el Recall@k nunca baja: las listas que se miran con
+//   nprobe + 1 incluyen a las de nprobe, y un vecino verdadero que ya estaba
+//   no puede salir.
+//
 //   El vector se copia en la lista a proposito: al buscar se compara ahi
 //   mismo, sin leer la tabla por cada candidato, igual que el R-Tree guarda el
 //   punto en la hoja. Cuesta espacio: con dimension 256 una entrada ocupa 1 030
@@ -60,6 +79,8 @@
 
 #include "quipudb/catalog/table.hpp"
 #include "quipudb/catalog/types.hpp"
+#include "quipudb/index/vector_metric.hpp"
+#include "quipudb/index/vector_scan.hpp"
 #include "quipudb/storage/disk_manager.hpp"
 #include "quipudb/storage/page.hpp"
 
@@ -69,7 +90,8 @@ class Ivf {
  public:
   /// Version del formato. Si cambia el layout sube, y un archivo viejo se
   /// rechaza con IoError en vez de leerse mal.
-  static constexpr std::uint32_t kMetaVersion = 1;
+  /// La 2 agrego la free list del borrado (#184).
+  static constexpr std::uint32_t kMetaVersion = 2;
   /// Bytes de un RID dentro de una entrada de lista.
   static constexpr std::size_t kRidSize = sizeof(PageId) + sizeof(SlotId);
   /// Bytes fijos de una entrada de directorio, ademas del centroide.
@@ -97,6 +119,26 @@ class Ivf {
 
   /// Agrega un vector a la lista de su centroide mas cercano.
   void insert(RID rid, std::span<const float> vector);
+
+  /// Quita la entrada (rid, vector). Devuelve si existia. La busca solo en la
+  /// lista del centroide de `vector`, que es donde la pudo poner `insert`.
+  bool remove(RID rid, std::span<const float> vector);
+
+  /// Los `k` vectores mas cercanos a `query` mirando solo las `nprobe` listas
+  /// de centroides mas proximos, de mas cerca a mas lejos (#184). Mismo
+  /// contrato que `scan_k_nearest_vector`: distancias de `vector_distance` y
+  /// empates por RID. Un nprobe mayor que nlist se toma como nlist. Lanza
+  /// InvalidRecord si nprobe es 0 o la consulta no tiene la dimension del
+  /// indice.
+  [[nodiscard]] std::vector<VectorMatch> search(std::span<const float> query, std::size_t k,
+                                                VectorMetric metric, std::size_t nprobe);
+
+  /// Las listas en el orden en que las visitaria una busqueda: de centroide
+  /// mas cercano a mas lejano, con empates para el de menor indice.
+  [[nodiscard]] std::vector<std::size_t> probe_order(std::span<const float> query) const;
+
+  /// Paginas en la free list.
+  [[nodiscard]] std::size_t free_pages();
 
   /// Indice de la lista a la que va `vector`: la de su centroide mas cercano en
   /// distancia euclidiana, con empates para el de menor indice.
@@ -135,6 +177,8 @@ class Ivf {
     std::uint32_t dim = 0;
     std::uint32_t nlist = 0;
     PageId dir_head = kInvalidPage;
+    PageId free_head = kInvalidPage;
+    std::uint32_t reservado = 0;
     std::uint64_t count = 0;
   };
 
@@ -153,6 +197,8 @@ class Ivf {
   }
 
   void load();
+  [[nodiscard]] PageId allocate();
+  void free_page(PageId id);
   void save_meta();
   void write_directory_entry(std::size_t list);
   void check_vector(std::span<const float> vector, const char* where) const;
@@ -168,6 +214,7 @@ class Ivf {
   std::size_t dir_per_page_ = 0;
   std::uint64_t count_ = 0;
   PageId dir_head_ = kInvalidPage;
+  PageId free_head_ = kInvalidPage;
   std::vector<PageId> dir_pages_;
   std::vector<List> lists_;
   OpStats stats_;

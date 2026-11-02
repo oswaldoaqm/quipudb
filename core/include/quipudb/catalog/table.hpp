@@ -78,6 +78,8 @@ inline constexpr std::string_view kExtendibleHash = "extendible_hash";
 inline constexpr std::string_view kRTree = "rtree";
 /// Indice invertido de texto (#166): SPIMI con rankings TF-IDF y BM25.
 inline constexpr std::string_view kInvertedIndex = "inverted_index";
+/// Indice de archivo invertido para vectores (#183, #184).
+inline constexpr std::string_view kIvf = "ivf";
 }  // namespace kind
 
 // ---------------------------------------------------------------------------

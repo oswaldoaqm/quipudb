@@ -68,6 +68,7 @@
 #include "quipudb/index/bplus_clustered_table.hpp"
 #include "quipudb/index/distance.hpp"
 #include "quipudb/index/ivf.hpp"
+#include "quipudb/index/ivf_index.hpp"
 #include "quipudb/index/rtree_index.hpp"
 #include "quipudb/index/spatial_scan.hpp"
 #include "quipudb/index/text_index.hpp"
@@ -267,6 +268,7 @@ PYBIND11_MODULE(quipudb_native, m) {
   kinds.attr("EXTENDIBLE_HASH") = std::string(kind::kExtendibleHash);
   kinds.attr("RTREE") = std::string(kind::kRTree);
   kinds.attr("INVERTED_INDEX") = std::string(kind::kInvertedIndex);
+  kinds.attr("IVF") = std::string(kind::kIvf);
 
   // --- tipos ----------------------------------------------------------------
 
@@ -563,6 +565,19 @@ PYBIND11_MODULE(quipudb_native, m) {
           "insert", [](Ivf& ivf, RID rid, const Vector& v) { ivf.insert(rid, v); },
           py::arg("rid"), py::arg("vector"))
       .def(
+          "remove", [](Ivf& ivf, RID rid, const Vector& v) { return ivf.remove(rid, v); },
+          py::arg("rid"), py::arg("vector"),
+          "Quita esa entrada de la lista de su centroide; False si no estaba")
+      .def(
+          "search",
+          [](Ivf& ivf, const Vector& query, std::size_t k, VectorMetric metric,
+             std::size_t nprobe) { return ivf.search(query, k, metric, nprobe); },
+          py::arg("query"), py::arg("k"), py::arg("metric"), py::arg("nprobe"),
+          "Los k mas cercanos mirando solo las nprobe listas de centroide mas cercano (#184)")
+      .def(
+          "probe_order", [](const Ivf& ivf, const Vector& v) { return ivf.probe_order(v); },
+          py::arg("vector"), "Orden en que search visita las listas para esta consulta")
+      .def(
           "nearest_list", [](const Ivf& ivf, const Vector& v) { return ivf.nearest_list(v); },
           py::arg("vector"), "Lista del centroide mas cercano en distancia euclidiana")
       .def("list_entries", &Ivf::list_entries, py::arg("list"),
@@ -581,10 +596,23 @@ PYBIND11_MODULE(quipudb_native, m) {
       .def_property_readonly("size", &Ivf::size)
       .def_property_readonly("entries_per_page", &Ivf::entries_per_page)
       .def_property_readonly("page_count", &Ivf::page_count)
+      .def_property_readonly("free_pages", &Ivf::free_pages)
       .def_property_readonly("last_build_ms", &Ivf::last_build_ms)
       .def("stats", &Ivf::stats, py::return_value_policy::copy)
       .def("reset_stats", &Ivf::reset_stats)
       .def("flush", &Ivf::flush);
+
+  py::class_<IvfIndex, Index>(m, "IvfIndex",
+                              "Indice IVF secundario sobre una columna VECTOR")
+      .def(
+          "k_nearest",
+          [](IvfIndex& index, const Vector& query, std::size_t k, VectorMetric metric,
+             std::size_t nprobe) { return index.k_nearest(query, k, metric, nprobe); },
+          py::arg("query"), py::arg("k"), py::arg("metric"), py::arg("nprobe"),
+          "Los k vectores mas parecidos mirando nprobe listas, de mas cerca a mas lejos")
+      .def_property_readonly(
+          "ivf", [](IvfIndex& index) -> Ivf& { return index.ivf(); },
+          py::return_value_policy::reference_internal);
 
   py::class_<RTreeIndex, Index>(m, "RTreeIndex",
                                 "Indice espacial secundario sobre una columna POINT")
@@ -706,6 +734,11 @@ PYBIND11_MODULE(quipudb_native, m) {
       .def("create_index", &Database::create_index, py::arg("table"), py::arg("index_name"),
            py::arg("column"), py::arg("kind"), py::return_value_policy::reference_internal,
            "Registra el indice, crea su archivo y lo construye sobre los datos existentes")
+      .def("create_ivf_index", &Database::create_ivf_index, py::arg("table"),
+           py::arg("index_name"), py::arg("column"), py::arg("centroids"),
+           py::return_value_policy::reference_internal,
+           "Registra un IVF con estos centroides (de engine/multimedia/kmeans.py) y lo "
+           "construye sobre los datos existentes")
       .def("index", &Database::index, py::arg("table"), py::arg("index_name"),
            py::return_value_policy::reference_internal)
       .def("drop_table", &Database::drop_table, py::arg("name"))

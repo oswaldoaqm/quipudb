@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <numeric>
+#include <queue>
 
 #include "quipudb/error.hpp"
 
@@ -78,7 +80,7 @@ std::unique_ptr<Ivf> Ivf::create(const std::filesystem::path& path,
 
   // El directorio se escribe completo, una vez por pagina.
   const std::size_t paginas = (centroids.size() + ivf->dir_per_page_ - 1) / ivf->dir_per_page_;
-  for (std::size_t p = 0; p < paginas; ++p) ivf->dir_pages_.push_back(ivf->disk_.allocate_page());
+  for (std::size_t p = 0; p < paginas; ++p) ivf->dir_pages_.push_back(ivf->allocate());
   ivf->dir_head_ = ivf->dir_pages_.front();
   for (std::size_t i = 0; i < centroids.size(); ++i) ivf->write_directory_entry(i);
   ivf->save_meta();
@@ -108,6 +110,7 @@ void Ivf::load() {
   dim_ = m.dim;
   count_ = m.count;
   dir_head_ = m.dir_head;
+  free_head_ = m.free_head;
   const std::size_t body = scratch_.body_size();
   entries_per_page_ = body / entry_size();
   dir_per_page_ = body / dir_entry_size();
@@ -141,6 +144,7 @@ void Ivf::save_meta() {
   m.dim = static_cast<std::uint32_t>(dim_);
   m.nlist = static_cast<std::uint32_t>(lists_.size());
   m.dir_head = dir_head_;
+  m.free_head = free_head_;
   m.count = count_;
   std::vector<std::byte> buf(sizeof(Meta));
   std::memcpy(buf.data(), &m, sizeof(Meta));
@@ -221,7 +225,7 @@ void Ivf::append(std::size_t list, std::span<const RID> rids,
     ++stats_.pages_read;
     n = scratch_.record_count();
   } else {
-    actual = disk_.allocate_page();
+    actual = allocate();
     scratch_.clear();
     l.head = actual;
   }
@@ -244,7 +248,7 @@ void Ivf::append(std::size_t list, std::span<const RID> rids,
     }
     // La pagina se lleno y quedan entradas: se enlaza una nueva antes de
     // escribir esta, para no tener que volver a leerla.
-    const PageId nueva = disk_.allocate_page();
+    const PageId nueva = allocate();
     scratch_.set_next(nueva);
     disk_.write_page(actual, scratch_);
     ++stats_.pages_written;
@@ -305,6 +309,185 @@ void Ivf::build(std::span<const RID> rids, std::span<const float> vectors) {
   last_build_ms_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
                                                              inicio)
                        .count();
+}
+
+// ---------------------------------------------------------------------------
+// Free list
+// ---------------------------------------------------------------------------
+
+PageId Ivf::allocate() {
+  if (free_head_ == kInvalidPage) return disk_.allocate_page();
+  // Pagina propia y no scratch_: `append` pide una pagina nueva mientras
+  // todavia tiene en scratch_ la que esta llenando.
+  Page libre(disk_.page_size());
+  disk_.read_page(free_head_, libre);
+  ++stats_.pages_read;
+  const PageId id = free_head_;
+  free_head_ = libre.next();
+  return id;
+}
+
+void Ivf::free_page(PageId id) {
+  Page libre(disk_.page_size());
+  libre.set_next(free_head_);
+  disk_.write_page(id, libre);
+  ++stats_.pages_written;
+  free_head_ = id;
+}
+
+std::size_t Ivf::free_pages() {
+  std::size_t n = 0;
+  Page libre(disk_.page_size());
+  for (PageId p = free_head_; p != kInvalidPage && n <= disk_.page_count(); ++n) {
+    disk_.read_page(p, libre);
+    p = libre.next();
+  }
+  return n;
+}
+
+// ---------------------------------------------------------------------------
+// Borrar (#184)
+// ---------------------------------------------------------------------------
+
+bool Ivf::remove(RID rid, std::span<const float> vector) {
+  const std::size_t list = nearest_list(vector);
+  List& l = lists_[list];
+  if (l.size == 0) return false;
+
+  // Se recorre la cadena entera: hace falta saber donde esta la entrada y cual
+  // es la penultima pagina, por si la ultima queda vacia.
+  const auto buscado = std::as_bytes(vector);
+  std::vector<PageId> paginas;
+  PageId hueco_pagina = kInvalidPage;
+  std::size_t hueco_slot = 0;
+  for (PageId p = l.head; p != kInvalidPage && paginas.size() <= disk_.page_count();
+       p = scratch_.next()) {
+    paginas.push_back(p);
+    disk_.read_page(p, scratch_);
+    ++stats_.pages_read;
+    for (std::size_t j = 0; hueco_pagina == kInvalidPage && j < scratch_.record_count(); ++j) {
+      const std::size_t off = j * entry_size();
+      const RID r{scratch_.read<PageId>(off), scratch_.read<SlotId>(off + sizeof(PageId))};
+      const auto v = scratch_.read_bytes(off + kRidSize, buscado.size());
+      if (r == rid && std::equal(v.begin(), v.end(), buscado.begin())) {
+        hueco_pagina = p;
+        hueco_slot = j;
+      }
+    }
+  }
+  if (hueco_pagina == kInvalidPage) return false;
+
+  // La ultima entrada de la lista tapa el hueco.
+  const PageId cola = paginas.back();
+  disk_.read_page(cola, scratch_);
+  ++stats_.pages_read;
+  const std::size_t n = scratch_.record_count();
+  const auto ultima_span = scratch_.read_bytes((n - 1) * entry_size(), entry_size());
+  const std::vector<std::byte> ultima(ultima_span.begin(), ultima_span.end());
+
+  if (hueco_pagina != cola) {
+    disk_.read_page(hueco_pagina, scratch_);
+    ++stats_.pages_read;
+    scratch_.write_bytes(hueco_slot * entry_size(), ultima);
+    disk_.write_page(hueco_pagina, scratch_);
+    ++stats_.pages_written;
+    disk_.read_page(cola, scratch_);
+    ++stats_.pages_read;
+  } else if (hueco_slot != n - 1) {
+    scratch_.write_bytes(hueco_slot * entry_size(), ultima);
+  }
+
+  if (n > 1) {
+    scratch_.set_record_count(static_cast<std::uint16_t>(n - 1));
+    disk_.write_page(cola, scratch_);
+    ++stats_.pages_written;
+  } else if (paginas.size() == 1) {
+    // Era la unica entrada de la lista.
+    free_page(cola);
+    l.head = l.tail = kInvalidPage;
+  } else {
+    // La ultima pagina quedo vacia: sale de la cadena.
+    const PageId penultima = paginas[paginas.size() - 2];
+    disk_.read_page(penultima, scratch_);
+    ++stats_.pages_read;
+    scratch_.set_next(kInvalidPage);
+    disk_.write_page(penultima, scratch_);
+    ++stats_.pages_written;
+    free_page(cola);
+    l.tail = penultima;
+  }
+
+  --l.size;
+  --count_;
+  write_directory_entry(list);
+  save_meta();
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Buscar (#184)
+// ---------------------------------------------------------------------------
+
+std::vector<std::size_t> Ivf::probe_order(std::span<const float> query) const {
+  check_vector(query, "probe_order");
+  std::vector<double> d(lists_.size());
+  for (std::size_t i = 0; i < lists_.size(); ++i) d[i] = l2_cuadrado(query, lists_[i].centroid);
+  std::vector<std::size_t> orden(lists_.size());
+  std::iota(orden.begin(), orden.end(), std::size_t{0});
+  std::stable_sort(orden.begin(), orden.end(),
+                   [&](std::size_t a, std::size_t b) { return d[a] < d[b]; });
+  return orden;
+}
+
+std::vector<VectorMatch> Ivf::search(std::span<const float> query, std::size_t k,
+                                     VectorMetric metric, std::size_t nprobe) {
+  check_vector(query, "search");
+  if (nprobe == 0) throw InvalidRecord("search: nprobe tiene que ser al menos 1");
+  std::vector<VectorMatch> out;
+  if (k == 0) return out;
+
+  // El mismo orden total que la busqueda exacta: distancia y, si empatan, RID.
+  auto antes = [](const VectorMatch& a, const VectorMatch& b) {
+    return a.distance != b.distance ? a.distance < b.distance : a.rid < b.rid;
+  };
+  std::priority_queue<VectorMatch, std::vector<VectorMatch>, decltype(antes)> mejores(antes);
+
+  const auto orden = probe_order(query);
+  const std::size_t listas = std::min(nprobe, lists_.size());
+  std::vector<float> v(dim_);
+  for (std::size_t i = 0; i < listas; ++i) {
+    const List& l = lists_[orden[i]];
+    std::size_t paginas = 0;
+    for (PageId p = l.head; p != kInvalidPage && paginas <= disk_.page_count(); ++paginas) {
+      disk_.read_page(p, scratch_);
+      ++stats_.pages_read;
+      for (std::size_t j = 0; j < scratch_.record_count(); ++j) {
+        const std::size_t off = j * entry_size();
+        // Se copia a un buffer: los floats de la pagina no estan alineados.
+        std::memcpy(v.data(), scratch_.read_bytes(off + kRidSize, dim_ * sizeof(float)).data(),
+                    dim_ * sizeof(float));
+        const VectorMatch candidato{
+            RID{scratch_.read<PageId>(off), scratch_.read<SlotId>(off + sizeof(PageId))},
+            vector_distance(query, v, metric)};
+        ++stats_.records_examined;
+        if (mejores.size() < k) {
+          mejores.push(candidato);
+        } else if (antes(candidato, mejores.top())) {
+          mejores.pop();
+          mejores.push(candidato);
+        }
+      }
+      p = scratch_.next();
+    }
+  }
+
+  out.resize(mejores.size());
+  for (auto it = out.rbegin(); it != out.rend(); ++it) {
+    *it = mejores.top();
+    mejores.pop();
+  }
+  stats_.records_returned += out.size();
+  return out;
 }
 
 // ---------------------------------------------------------------------------
