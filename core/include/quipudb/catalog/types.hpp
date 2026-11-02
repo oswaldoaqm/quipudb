@@ -8,6 +8,7 @@
 // tabla. Las estructuras de disco (paginas, buckets, nodos) NO aparecen aqui:
 // son detalle de implementacion de cada modulo.
 
+#include <algorithm>
 #include <cmath>
 #include <compare>
 #include <cstddef>
@@ -66,7 +67,8 @@ enum class DataType : std::uint8_t {
   Varchar,  // texto de hasta `length` bytes, relleno con '\0'
   Bool,     // 1 byte
   Date,     // dias desde 1970-01-01, int32, 4 bytes
-  Point     // latitud y longitud, dos IEEE 754, 16 bytes
+  Point,    // latitud y longitud, dos IEEE 754, 16 bytes
+  Vector    // `length` componentes float de 32 bits (issue #180)
 };
 
 [[nodiscard]] constexpr std::string_view to_string(DataType t) noexcept {
@@ -77,6 +79,7 @@ enum class DataType : std::uint8_t {
     case DataType::Bool: return "BOOL";
     case DataType::Date: return "DATE";
     case DataType::Point: return "POINT";
+    case DataType::Vector: return "VECTOR";
   }
   return "?";
 }
@@ -98,7 +101,14 @@ struct GeoPoint {
 
 /// Valor de una celda. El indice del variant coincide con `DataType`, y
 /// `type_of` lo hace explicito.
-using Value = std::variant<std::int32_t, double, std::string, bool, Date, GeoPoint>;
+/// Vector de caracteristicas: lo que produce ExtractFeatures (#181). Se
+/// guarda en float y no en double porque SIFT, MFCC y el histograma ya
+/// trabajan en float32: duplicarlo no agregaria informacion y si duplicaria
+/// el tamano del registro, que esta acotado por la pagina.
+using VectorValue = std::vector<float>;
+
+using Value =
+    std::variant<std::int32_t, double, std::string, bool, Date, GeoPoint, VectorValue>;
 
 /// Clave de busqueda. Es un Value cualquiera; el esquema dice de que columna.
 using Key = Value;
@@ -144,6 +154,17 @@ using Record = std::vector<Value>;
         } else if constexpr (std::is_same_v<std::decay_t<decltype(lhs)>, GeoPoint>) {
           const int latitude = compare_double(lhs.latitude, rhs.latitude);
           return latitude != 0 ? latitude : compare_double(lhs.longitude, rhs.longitude);
+        } else if constexpr (std::is_same_v<std::decay_t<decltype(lhs)>, VectorValue>) {
+          // Lexicografico componente a componente, con la misma regla de NaN
+          // que los double. El `operator<` de std::vector compararia los NaN
+          // con `<` a secas y KeyLess dejaria de ser un orden estricto.
+          const std::size_t comun = std::min(lhs.size(), rhs.size());
+          for (std::size_t i = 0; i < comun; ++i) {
+            const int c = compare_double(lhs[i], rhs[i]);
+            if (c != 0) return c;
+          }
+          if (lhs.size() != rhs.size()) return lhs.size() < rhs.size() ? -1 : 1;
+          return 0;
         }
         if (lhs < rhs) return -1;
         if (rhs < lhs) return 1;
@@ -179,6 +200,7 @@ struct Column {
       case DataType::Bool: return 1;
       case DataType::Date: return 4;
       case DataType::Point: return 16;
+      case DataType::Vector: return length * sizeof(float);
     }
     return 0;
   }
@@ -241,6 +263,25 @@ struct Schema {
       // igual a cualquier clave y que remove borre el registro equivocado.
       if (columns[i].type == DataType::Double && std::isnan(std::get<double>(r[i]))) {
         throw InvalidRecord("columna " + columns[i].name + ": NaN no es un valor valido");
+      }
+      // La dimension es parte del tipo, como la capacidad de un VARCHAR: un
+      // vector de otra dimension no es un valor fuera de rango sino un valor
+      // de otro tipo. Validar aqui, al insertar, es lo que permite que las
+      // metricas de #179 no tengan que revalidar en cada comparacion.
+      if (columns[i].type == DataType::Vector) {
+        const auto& vec = std::get<VectorValue>(r[i]);
+        if (vec.size() != columns[i].length) {
+          throw InvalidRecord("columna " + columns[i].name + ": el vector tiene " +
+                              std::to_string(vec.size()) +
+                              " componentes y la columna declara VECTOR(" +
+                              std::to_string(columns[i].length) + ")");
+        }
+        for (std::size_t j = 0; j < vec.size(); ++j) {
+          if (!std::isfinite(vec[j])) {
+            throw InvalidRecord("columna " + columns[i].name + ": la componente " +
+                                std::to_string(j + 1) + " del vector no es finita");
+          }
+        }
       }
       if (columns[i].type == DataType::Point) {
         const auto& point = std::get<GeoPoint>(r[i]);
