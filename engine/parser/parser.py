@@ -52,6 +52,7 @@ from engine.parser.ast import (
     StringLiteral,
     TableRef,
     TextRanking,
+    VectorLiteral,
     Wildcard,
 )
 from engine.parser.errors import SQLParseError, SQLUnsupportedError
@@ -313,9 +314,30 @@ class _Parser:
                 length,
                 combine_spans(start.span, end.span),
             )
+        if self._match(TokenKind.VECTOR):
+            start = self._previous()
+            self._expect(TokenKind.LPAREN, "se esperaba '(' despues de VECTOR")
+            dimension_token = self._expect(
+                TokenKind.INTEGER,
+                "se esperaba una dimension entera para VECTOR",
+            )
+            if dimension_token.lexeme.startswith("-"):
+                raise self._error(
+                    dimension_token,
+                    "la dimension de VECTOR debe ser un entero sin signo",
+                )
+            end = self._expect(
+                TokenKind.RPAREN,
+                "se esperaba ')' despues de la dimension de VECTOR",
+            )
+            return SqlType(
+                SqlTypeName.VECTOR,
+                int(dimension_token.value),
+                combine_spans(start.span, end.span),
+            )
         raise self._error(
             self._peek(),
-            "se esperaba un tipo INT, DOUBLE, VARCHAR(n), BOOL, DATE o POINT",
+            "se esperaba un tipo INT, DOUBLE, VARCHAR(n), BOOL, DATE, POINT o VECTOR(d)",
         )
 
     def _insert(self, start: Token) -> InsertStatement:
@@ -748,13 +770,49 @@ class _Parser:
             return DateLiteral(parsed, combine_spans(start.span, value_token.span))
         if self._match(TokenKind.POINT):
             return self._point_literal(self._previous())
+        if self._match(TokenKind.VECTOR):
+            return self._vector_literal(self._previous())
 
         token = self._peek()
         if self._word(token) == "NULL":
             self._raise_unsupported(token)
         raise self._error(
             token,
-            "se esperaba un literal entero, double, string, booleano, DATE o POINT",
+            "se esperaba un literal entero, double, string, booleano, DATE, POINT o VECTOR",
+        )
+
+    def _vector_literal(self, start: Token) -> VectorLiteral:
+        """``VECTOR(c1, c2, ...)``. La dimension la valida el analisis semantico.
+
+        Aqui no se sabe contra que columna va, asi que se acepta cualquier
+        cantidad de componentes y se guarda donde esta cada una. Lo unico que
+        se rechaza en esta etapa es un vector vacio, que no es un valor de
+        ninguna dimension.
+        """
+
+        self._expect(TokenKind.LPAREN, "se esperaba '(' despues de VECTOR")
+        componentes: list[float] = []
+        spans: list[Span] = []
+        while True:
+            token = self._peek()
+            if token.kind not in {TokenKind.INTEGER, TokenKind.DOUBLE_LITERAL}:
+                raise self._error(
+                    token,
+                    f"se esperaba un numero en la componente {len(componentes) + 1} de VECTOR",
+                )
+            self._advance()
+            componentes.append(float(token.value))
+            spans.append(token.span)
+            if not self._match(TokenKind.COMMA):
+                break
+        end = self._expect(
+            TokenKind.RPAREN,
+            "se esperaba ',' o ')' despues de una componente de VECTOR",
+        )
+        return VectorLiteral(
+            components=tuple(componentes),
+            component_spans=tuple(spans),
+            span=combine_spans(start.span, end.span),
         )
 
     def _point_literal(self, start: Token) -> PointLiteral:

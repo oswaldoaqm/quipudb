@@ -23,6 +23,7 @@ class SqlTypeName(StrEnum):
     BOOL = "BOOL"
     DATE = "DATE"
     POINT = "POINT"
+    VECTOR = "VECTOR"
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,8 +92,32 @@ class PointLiteral:
     span: Span
 
 
+@dataclass(frozen=True, slots=True)
+class VectorLiteral:
+    """``VECTOR(0.1, 0.2, ...)``: las componentes en el orden del SQL.
+
+    ``VECTOR`` nombra el tipo en un CREATE TABLE y construye el literal en un
+    INSERT, igual que ``POINT``. No hay ambiguedad porque la posicion decide:
+    en la declaracion de una columna va un entero (la dimension) y en una
+    lista de valores van las componentes.
+
+    ``component_spans`` guarda donde esta cada componente para que un error
+    de dimension pueda senalar la primera que sobra, y no el literal entero.
+    """
+
+    components: tuple[float, ...]
+    component_spans: tuple[Span, ...]
+    span: Span
+
+
 Literal: TypeAlias = (
-    IntegerLiteral | DoubleLiteral | StringLiteral | BooleanLiteral | DateLiteral | PointLiteral
+    IntegerLiteral
+    | DoubleLiteral
+    | StringLiteral
+    | BooleanLiteral
+    | DateLiteral
+    | PointLiteral
+    | VectorLiteral
 )
 
 
