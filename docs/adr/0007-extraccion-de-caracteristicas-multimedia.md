@@ -111,10 +111,52 @@ Entra la forma ademas de los valores porque los mismos numeros como 2x4 o como
 | La huella se **recalcula** al leer en vez de creerle a la guardada | Un archivo a medio escribir o editado a mano daria centroides plausibles |
 | El numero de formato se guarda y se comprueba | Si cambia la forma de guardarlo, un archivo viejo se rechaza en vez de leerse mal |
 
+### 6. El histograma usa las formulas TF-IDF de la Parte 3
+
+`ExtractFeatures(objeto)` decide el pipeline por la extension del archivo,
+cuenta en cuantos descriptores cae cada palabra del codebook y pesa el conteo.
+Las formulas son **las mismas** que usa la busqueda de texto, definidas en
+`core/include/quipudb/index/text_weights.hpp`:
+
+    idf(w) = log10(N / df_w)        tf_w = 1 + log10(tf)  |  tf
+
+| Decision | Por que |
+|---|---|
+| Las formulas de la Parte 3, no una variante propia | Si el histograma visual pesara distinto que el textual, los numeros del informe no se podrian comparar entre las partes 3 y 4, y nadie se enteraria hasta escribirlo |
+| El `df` se cuenta por OBJETO, no por descriptor | Es lo mismo que en texto: importa en cuantos documentos esta un termino, no cuantas veces en total. Un objeto con cincuenta descriptores en la misma palabra la cuenta una vez |
+| El vector sale normalizado a norma 1 | Con vectores normalizados el producto punto vale lo mismo que el coseno (ver `vector_metric.hpp`), asi que el indice se ahorra dos normas por comparacion |
+| El pipeline se elige por la extension | Probar los dos extractores con cada objeto costaria el doble en el caso malo, y un error de OpenCV sobre un `.wav` no diria que el problema es el pipeline elegido |
+| El IDF viaja con el codebook en el mismo archivo | El codebook dice QUE palabras hay y el IDF CUANTO pesa cada una. Aplicar uno con el IDF de otro dataset da histogramas bien formados y falsos |
+
+**Un objeto sin descriptores devuelve el vector nulo**, no un error (criterio 4
+de #181). Lo distingue `EmptyObjectError`, que los extractores lanzan solo
+cuando leyeron bien el archivo y no habia nada que describir; un archivo roto
+sigue siendo un error, porque un `.jpg` a medio descargar no es una foto en
+blanco. Hay que saber lo que significa el vector nulo: bajo similitud del
+coseno queda a **distancia 1 de todo, incluido de si mismo**, asi que esos
+objetos no son alcanzables por una busqueda y conviene no indexarlos.
+`tiene_contenido` existe para filtrarlos al armar el dataset.
+
+**Un vocabulario demasiado chico colapsa los vectores.** Si K es menor que la
+estructura real de los datos, casi toda palabra aparece en casi todos los
+objetos, su idf es 0 y los histogramas salen nulos. **Medido** sobre doce
+variantes de la imagen de ejemplo:
+
+| K | palabras con idf 0 | vectores nulos |
+|---|---|---|
+| 8 | 6 de 8 | 1 de 12 |
+| 32 | 9 de 32 | 0 de 12 |
+| 64 | 6 de 64 | 0 de 12 |
+
+No es un defecto del idf: es la senal de que el vocabulario hay que agrandarlo.
+
 ## Consecuencias
 
-- `ExtractFeatures` (#181) recibe el codebook, no lo construye: la consulta y
-  el dataset pasan por el mismo objeto y la huella permite comprobarlo.
+- `ExtractFeatures` recibe el vocabulario, no lo construye: la consulta y el
+  dataset pasan por el mismo objeto y la huella permite comprobarlo.
+- Quien arma el dataset decide que hacer con los objetos vacios. El pipeline
+  les da un vector definido y los deja reconocer; no los descarta por su
+  cuenta, porque eso es politica del dataset y no de la extraccion.
 - El vocabulario es un **artefacto del dataset**. Reconstruirlo con otra
   semilla, otra muestra u otro K invalida todos los histogramas ya indexados.
 - Si #183 implementa IVF en el core, hay que decidir si porta este K-Means a
