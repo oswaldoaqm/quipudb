@@ -72,6 +72,7 @@
 #include "quipudb/index/text_index.hpp"
 #include "quipudb/index/text_ranking.hpp"
 #include "quipudb/index/text_tokenizer.hpp"
+#include "quipudb/index/vector_metric.hpp"
 #include "quipudb/storage/heap_file.hpp"
 #include "quipudb/storage/sequential_file.hpp"
 #include "quipudb/version.hpp"
@@ -452,6 +453,44 @@ PYBIND11_MODULE(quipudb_native, m) {
   py::enum_<Metric>(m, "Metric", "Metrica elegida por una consulta espacial")
       .value("EUCLIDEAN", Metric::kEuclidean)
       .value("HAVERSINE", Metric::kHaversine);
+
+  // --- metricas de similitud entre vectores (#179) ---------------------
+  //
+  // Los vectores llegan como `std::vector<float>`: pybind11 convierte listas y
+  // arreglos de numpy de una dimension. Una copia por llamada no importa aqui;
+  // los indices de #182 a #186 comparan dentro del core, sin cruzar el binding.
+
+  py::enum_<VectorMetric>(m, "VectorMetric", "Metrica elegida por una consulta vectorial")
+      .value("EUCLIDEAN", VectorMetric::kEuclidean)
+      .value("DOT_PRODUCT", VectorMetric::kDotProduct)
+      .value("COSINE", VectorMetric::kCosine);
+
+  using Vector = std::vector<float>;
+  m.def("euclidean_distance",
+        [](const Vector& a, const Vector& b) { return euclidean_distance(a, b); },
+        py::arg("a"), py::arg("b"), "Distancia euclidiana: menor es mejor");
+  m.def("dot_product", [](const Vector& a, const Vector& b) { return dot_product(a, b); },
+        py::arg("a"), py::arg("b"), "Producto punto: mayor es mejor, depende de la norma");
+  m.def("cosine_similarity",
+        [](const Vector& a, const Vector& b) { return cosine_similarity(a, b); }, py::arg("a"),
+        py::arg("b"), "Coseno en [-1, 1]; 0 si alguno tiene norma cero");
+  m.def(
+      "vector_similarity",
+      [](const Vector& a, const Vector& b, VectorMetric metric) {
+        return vector_similarity(a, b, metric);
+      },
+      py::arg("a"), py::arg("b"), py::arg("metric"), "El valor natural de la metrica");
+  m.def(
+      "vector_distance",
+      [](const Vector& a, const Vector& b, VectorMetric metric) {
+        return vector_distance(a, b, metric);
+      },
+      py::arg("a"), py::arg("b"), py::arg("metric"),
+      "La metrica en la escala comun donde menor es mejor, la que usan los indices");
+  m.def("from_distance", &from_distance, py::arg("distance"), py::arg("metric"),
+        "Deshace vector_distance y devuelve el valor natural de la metrica");
+  m.def("higher_is_better", &higher_is_better, py::arg("metric"),
+        "Si el valor natural de la metrica es una similitud (mayor es mejor)");
 
   py::class_<RTreeIndex, Index>(m, "RTreeIndex",
                                 "Indice espacial secundario sobre una columna POINT")
