@@ -494,6 +494,29 @@ ya entrega los documentos de mayor a menor puntaje, así que `DESC` es ese
 orden y `ASC` su inverso. `SCORE()` necesita `MATCH` en el `WHERE` y no se
 combina con `GROUP BY` ni con un `ORDER BY` sobre otra columna.
 
+### SQL multimedia
+
+Desde #188, `SIMILAR_TO` extrae el archivo de consulta con el mismo vocabulario
+TF-IDF del dataset y busca vecinos con el índice elegido:
+
+```sql
+CREATE INDEX fotos_vecinos ON fotos (rasgos) USING HNSW WITH METRIC=cosine;
+CREATE INDEX fotos_listas ON fotos (rasgos) USING IVF;
+SELECT * FROM fotos
+WHERE SIMILAR_TO('fotos_demo/foto_0.png', k=10) USING HNSW WITH METRIC=cosine;
+```
+
+`WITH METRIC` acepta `euclidean`, `cosine` y `dot` (cosine por defecto).
+HNSW requiere la métrica con la que se construyó su grafo. Sin el índice
+solicitado se usa k-NN exacto, sin sustituir IVF por HNSW ni al revés.
+El plan declara `knn_search -> fetch`, su estructura y el campo `metric`;
+EXPLAIN no extrae ni busca y EXPLAIN ANALYZE sí mide la ejecución.
+
+La API requiere `QUIPUDB_MEDIA_VOCABULARIES='{"fotos":"fotos_demo.npz"}'`
+y los archivos dentro de `QUIPUDB_MEDIA_ROOT`. El
+[manual SQL multimedia](docs/consultas-multimedia.md) explica la preparación,
+creación de índices, configuración por tabla, parámetros y límites.
+
 ### API REST
 
 | Ruta | Qué hace |
@@ -677,6 +700,7 @@ protocolos completos de cada suite.
 | [`docs/informe/`](docs/informe/) | Informe modular: dominio, archivos e índices, SQL, transacciones, interfaz, búsqueda de texto y experimentos |
 | [`benchmarks/README.md`](benchmarks/README.md) | Datasets, protocolos y reproducción de las corridas |
 | [`docs/ingesta-multimedia.md`](docs/ingesta-multimedia.md) | Ingesta de carpetas de imágenes/audio, trabajos REST y ejemplo reproducible |
+| [`docs/consultas-multimedia.md`](docs/consultas-multimedia.md) | SIMILAR_TO, creación SQL de IVF/HNSW, métricas y vocabularios |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Ramas, commits y pull requests |
 
 ## Equipo

@@ -173,6 +173,35 @@ contrato previo del core y entregan un vector; en esas rutas el adaptador evita
 una segunda copia, pero volver el rango completamente incremental exigiría
 ampliar la interfaz compartida de 2.1.2.
 
+## SQL multimedia y contrato del plan (#188)
+
+`SIMILAR_TO([columna,] 'archivo', [k=] entero) USING HNSW|IVF
+[WITH METRIC=euclidean|cosine|dot]` se analiza y enlaza sin dependencias
+multimedia. La columna implícita exige un único VECTOR; se rechazan JOIN,
+GROUP BY y DELETE por similitud. El planner elige solo la estructura
+solicitada, o el k-NN exacto si no existe un índice de ese tipo.
+
+Antes del acceso, el ejecutor carga el vocabulario configurado por
+tabla/columna y llama a ExtractFeatures. La API toma esa asociación de
+`QUIPUDB_MEDIA_VOCABULARIES`, y las rutas se validan contra la misma raíz
+de la ingesta. EXPLAIN valida rutas sin extraer ni ejecutar la búsqueda.
+La configuración debe conservar el vocabulario e IDF exactos del dataset;
+la identidad todavía no se persiste en el catálogo.
+
+`CREATE INDEX ... USING HNSW [WITH METRIC=...]` delega al core con una métrica
+fija; `USING IVF` entrena centroides sobre una muestra acotada de los vectores
+almacenados y delega su construcción. DML y transacciones conservan el
+mantenimiento de índices existente. Los índices se declaran como `ivf` o
+`hnsw` en GET /tables, con `supports_range=false`.
+
+El plan reutiliza `knn_search -> fetch` y añade `metric` como campo nullable.
+Una búsqueda exacta informa la estructura real de la tabla y su detalle de
+fallback, no un índice inexistente. Búsqueda y fetch reinician y copian
+contadores por separado; el tiempo total incluye extracción. El frontend
+reconoce los nuevos índices y muestra la métrica. Los parámetros y límites
+están en [el manual](consultas-multimedia.md) y la decisión en
+[ADR 0008](adr/0008-consultas-vectoriales-similar-to.md).
+
 ## Ingesta multimedia por REST
 
 Desde #187, `POST /tables/{tabla}/load-media` acepta una carpeta del servidor y

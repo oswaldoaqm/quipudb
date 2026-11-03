@@ -38,6 +38,8 @@ Step
   time_ms    : float    tiempo propio del paso, sin incluir hijos
   ranking    : str|null ranking de una busqueda de texto: "tf_idf" o "bm25" en
                         text_search, null en los demas pasos (desde #170)
+  metric     : str|null "euclidean", "cosine" o "dot" en k-NN vectorial;
+                        null en los demas pasos (desde #188)
   children   : Step[]   pasos que se ejecutan antes y le entregan su salida
 
 Stats                   espejo exacto de OpStats del core
@@ -85,7 +87,7 @@ y cuantos documentos se le pidieron al indice (`top-k` cuando el `LIMIT` bajo,
 o todos). `ORDER BY relevancia` aparece como `sort/memory`: el orden ya lo
 entrega el indice y no hay external sort (#169).
 
-Los siete primeros son, letra por letra, las constantes `kind::` de
+Los nueve primeros son, letra por letra, las constantes `kind::` de
 `core/include/quipudb/catalog/table.hpp`. Los tres ultimos solo existen en la
 capa Python.
 
@@ -98,11 +100,19 @@ capa Python.
 | `extendible_hash` | index (implementa `Index`) |
 | `rtree` | index (implementa `Index`) |
 | `inverted_index` | index (implementa `Index`; indice de texto) |
+| `ivf` / `hnsw` | index (implementan `Index`; similitud vectorial) |
 | `external_sort` | external |
 | `external_hash` | external |
 | `memory` | el paso no toco disco: `filter`, `project`, `limit` |
 
 ### Reglas que el planner respeta al armar el plan
+
+Desde #188, `knn_search/ivf` o `knn_search/hnsw` seguido de `fetch` representa
+SIMILAR_TO. El campo `metric` declara la métrica consultada, también en
+EXPLAIN. Sin índice aplicable, `knn_search` lleva la estructura de tabla
+(`heap`, `sequential`, `bplus_clustered`) y explica el fallback exacto.
+No se confunde este acceso con el k-NN espacial `knn_search/rtree`.
+Los planes anteriores sin `metric` siguen leyéndose como `metric: null`.
 
 1. Una busqueda que resuelve un indice secundario siempre son **dos pasos**:
    `index_search` / `index_range` -- o `radius_search`, `knn_search`,
