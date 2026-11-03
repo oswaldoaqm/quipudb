@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from engine.executor.bulk_load import INT32_MAX, INT32_MIN, MAX_REPORTED_ERRORS
 from engine.parser.ast import SqlTypeName
@@ -12,6 +14,28 @@ from engine.parser.bound_ast import BoundSchema
 
 class MediaLoadError(ValueError):
     """La configuracion de una carga multimedia no es valida."""
+
+
+def media_path(root: Path, value: str, *, directory: bool) -> Path:
+    """Rechaza escapes y symlinks, tambien los que apuntan dentro de la raiz."""
+
+    supplied = Path(value)
+    candidate = Path(os.path.abspath(supplied if supplied.is_absolute() else root / supplied))
+    if not candidate.is_relative_to(root):
+        raise MediaLoadError("la ruta debe estar dentro de QUIPUDB_MEDIA_ROOT")
+    current = root
+    for part in candidate.relative_to(root).parts:
+        current /= part
+        if current.is_symlink():
+            raise MediaLoadError("no se admiten enlaces simbolicos en las rutas multimedia")
+    try:
+        resolved = candidate.resolve(strict=True)
+        valid = resolved.is_dir() if directory else resolved.is_file()
+    except (OSError, ValueError, RuntimeError) as error:
+        raise MediaLoadError(f"no se puede abrir la ruta: {error}") from None
+    if not valid or not resolved.is_relative_to(root):
+        raise MediaLoadError("se esperaba una carpeta" if directory else "se esperaba un archivo")
+    return resolved
 
 
 @dataclass(frozen=True, slots=True)

@@ -29,7 +29,7 @@ class Op(StrEnum):
     INDEX_SEARCH = "index_search"  # busqueda puntual en un indice secundario: devuelve RIDs
     INDEX_RANGE = "index_range"  # busqueda por rango en un indice secundario: devuelve RIDs
     RADIUS_SEARCH = "radius_search"  # busqueda espacial por radio en R-Tree: devuelve RIDs
-    KNN_SEARCH = "knn_search"  # k vecinos mas cercanos en R-Tree, ordenados: devuelve RIDs
+    KNN_SEARCH = "knn_search"  # k vecinos espaciales/vectoriales, por indice o scan: devuelve RIDs
     POLYGON_SEARCH = "polygon_search"  # puntos dentro de un poligono en R-Tree: devuelve RIDs
     TEXT_SEARCH = "text_search"  # MATCH en el indice invertido, por relevancia: devuelve RIDs
     FETCH = "fetch"  # lee de la tabla los registros de los RIDs que entrega el hijo
@@ -45,7 +45,7 @@ class Op(StrEnum):
 
 
 class Structure(StrEnum):
-    """Que estructura ejecuto el paso. Las siete primeras son `kind::` del core."""
+    """Que estructura ejecuto el paso. Las nueve primeras son `kind::` del core."""
 
     HEAP = "heap"
     SEQUENTIAL = "sequential"
@@ -54,6 +54,8 @@ class Structure(StrEnum):
     EXTENDIBLE_HASH = "extendible_hash"
     RTREE = "rtree"
     INVERTED_INDEX = "inverted_index"  # indice de texto de la Parte 3 (#166)
+    IVF = "ivf"
+    HNSW = "hnsw"
     EXTERNAL_SORT = "external_sort"  # external/ del core: k-way merge
     EXTERNAL_HASH = "external_hash"  # external/ del core: particiones en disco
     MEMORY = "memory"  # el paso no toco disco (filter, project, limit)
@@ -102,6 +104,9 @@ class Step:
     en el paso `text_search`, ``None`` en los demas. Es un campo y no parte de
     `detail` por la regla 4 del ADR 0002: un dato que alguien necesita leer no
     se esconde en texto libre.
+
+    `metric` identifica la metrica de SIMILAR_TO (#188), tambien en su fallback
+    exacto; es ``None`` en los demas pasos, incluido el k-NN espacial previo.
     """
 
     op: Op
@@ -113,6 +118,7 @@ class Step:
     time_ms: float = 0.0
     children: list[Step] = field(default_factory=list)
     ranking: str | None = None
+    metric: str | None = None
 
     def subtree_stats(self) -> Stats:
         total = self.stats
@@ -141,6 +147,7 @@ class Step:
             "stats": self.stats.to_dict(),
             "time_ms": round(self.time_ms, 3),
             "ranking": self.ranking,
+            "metric": self.metric,
             "children": [c.to_dict() for c in self.children],
         }
 
@@ -156,6 +163,7 @@ class Step:
             time_ms=float(d.get("time_ms", 0.0)),
             children=[cls.from_dict(c) for c in d.get("children", [])],
             ranking=d.get("ranking"),
+            metric=d.get("metric"),
         )
 
 

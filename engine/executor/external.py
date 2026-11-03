@@ -452,7 +452,9 @@ def _candidate_pipeline(
 ) -> _CandidatePipeline:
     statement = plan.statement
 
-    if isinstance(plan.source, PhysicalJoin):
+    if isinstance(plan.source, PhysicalJoin) or plan.route in {
+        AccessRoute.VECTOR_KNN, AccessRoute.VECTOR_SCAN,
+    }:
         # El join ya produce un flujo con su propio Step medido; ordenar o
         # agrupar por encima solo tiene que consumirlo. Las rutas de una sola
         # tabla siguen siendo incrementales y no pasan por aqui.

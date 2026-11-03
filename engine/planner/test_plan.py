@@ -105,6 +105,7 @@ def test_el_json_tiene_las_claves_que_consume_el_panel() -> None:
         "children",
         # #170: el ranking de una busqueda de texto es un campo, no texto libre.
         "ranking",
+        "metric",
     }
     assert d["root"]["ranking"] is None  # null en todo paso que no es text_search
     assert set(d["root"]["stats"]) == {
