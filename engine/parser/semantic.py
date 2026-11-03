@@ -10,10 +10,10 @@ from dataclasses import dataclass
 from engine.parser.ast import (
     AggregateCall,
     AggregateFunction,
-    BetweenCondition,
     BooleanLiteral,
     ColumnReference,
     ComparisonCondition,
+    Condition,
     CreateIndexStatement,
     CreateTableStatement,
     DateLiteral,
@@ -34,6 +34,7 @@ from engine.parser.ast import (
     ScoreCall,
     ScoreOrderBy,
     SelectStatement,
+    SimilarCondition,
     SqlTypeName,
     StorageKind,
     StringLiteral,
@@ -65,6 +66,7 @@ from engine.parser.bound_ast import (
     BoundScoreOrderBy,
     BoundScoreProjection,
     BoundSelectStatement,
+    BoundSimilarCondition,
     BoundSource,
     BoundTableRef,
     BoundValue,
@@ -200,11 +202,10 @@ def bind_create_index(
             statement.column.span,
             source,
         )
-    # Un vector se compara por similitud, no por igualdad ni por orden: un B+
-    # o un hash sobre el no responderia ninguna consulta util, y un rango
-    # entre dos vectores no significa nada. Los indices que si le sirven son
-    # IVF y HNSW (#183 a #186), que todavia no existen.
-    if indexed_column.data_type is SqlTypeName.VECTOR:
+    vector_index = statement.kind in {IndexKind.IVF, IndexKind.HNSW}
+    if vector_index and indexed_column.data_type is not SqlTypeName.VECTOR:
+        _fail("IVF y HNSW requieren una columna VECTOR", statement.column.span, source)
+    if indexed_column.data_type is SqlTypeName.VECTOR and not vector_index:
         _fail(
             f"la columna {statement.column.name!r} es VECTOR y se busca por similitud; "
             f"{statement.kind.value} indexa por igualdad u orden",
@@ -217,6 +218,7 @@ def bind_create_index(
         column_name=statement.column.name,
         kind=statement.kind,
         span=statement.span,
+        metric=statement.metric,
     )
 
 
@@ -354,6 +356,13 @@ def bind_select(
         {schemas.table_name: schemas} if isinstance(schemas, BoundSchema) else schemas
     )
     bound_source = _bind_source(statement.source, catalogo, source)
+    if isinstance(statement.where, SimilarCondition) and (
+        not isinstance(bound_source, BoundTableRef) or statement.group_by is not None
+    ):
+        raise SQLUnsupportedError(
+            "SIMILAR_TO requiere una sola tabla sin JOIN ni GROUP BY",
+            statement.where.span, source,
+        )
     scope = _Scope.of(bound_source)
     schema = scope.schema
 
@@ -578,6 +587,8 @@ def bind_delete(
         )
 
     where = _bind_condition(statement.where, _Scope.of(BoundTableRef(schema, statement.span)), source)
+    if isinstance(where, BoundSimilarCondition):
+        raise SQLUnsupportedError("SIMILAR_TO solo se admite en SELECT", where.span, source)
     if isinstance(where, BoundMatchCondition):
         raise SQLUnsupportedError(
             "MATCH solo se admite en SELECT: un DELETE no borra por relevancia",
@@ -630,14 +641,42 @@ def _bind_projection(
 
 
 def _bind_condition(
-    condition: (
-        ComparisonCondition | BetweenCondition | DistanceCondition | PolygonCondition | None
-    ),
+    condition: Condition | None,
     scope: _Scope,
     source: str | None,
 ) -> BoundCondition | None:
     if condition is None:
         return None
+
+    if isinstance(condition, SimilarCondition):
+        if condition.column is None:
+            candidates = [
+                (index, column) for index, column in enumerate(scope.schema.columns)
+                if column.data_type is SqlTypeName.VECTOR
+            ]
+            if len(candidates) != 1:
+                _fail(
+                    "SIMILAR_TO necesita una unica columna VECTOR o una columna explicita",
+                    condition.span, source,
+                )
+            index, candidate = candidates[0]
+            column = BoundColumnReference(index, candidate, condition.span)
+        else:
+            column = _resolve_column(condition.column, scope, source)
+        if column.column.data_type is not SqlTypeName.VECTOR:
+            _fail("SIMILAR_TO requiere una columna VECTOR", column.span, source)
+        if not condition.query.value or "\0" in condition.query.value:
+            _fail("SIMILAR_TO requiere una ruta de archivo valida", condition.query.span, source)
+        if (
+            isinstance(condition.k.value, bool)
+            or not isinstance(condition.k.value, int)
+            or condition.k.value < 0
+        ):
+            _fail("k requiere un entero no negativo", condition.k.span, source)
+        return BoundSimilarCondition(
+            column, condition.query.value, condition.k.value, condition.kind, condition.metric,
+            condition.query.span, condition.metric_span, condition.span,
+        )
 
     column = _resolve_column(condition.column, scope, source)
     if isinstance(condition, MatchCondition):
