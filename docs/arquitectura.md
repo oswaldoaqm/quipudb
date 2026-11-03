@@ -173,6 +173,30 @@ contrato previo del core y entregan un vector; en esas rutas el adaptador evita
 una segunda copia, pero volver el rango completamente incremental exigiría
 ampliar la interfaz compartida de 2.1.2.
 
+## Ingesta multimedia por REST
+
+Desde #187, `POST /tables/{tabla}/load-media` acepta una carpeta del servidor y
+un vocabulario persistido de #181 y devuelve 202 con `job_id`.
+`GET /tables/{tabla}/load-media/{job_id}` expone progreso, archivos insertados
+y fallidos, hasta 100 errores y tiempo transcurrido. La carga CSV y SQL
+conservan sus contratos. El ejemplo y los limites estan en
+[ingesta-multimedia.md](ingesta-multimedia.md).
+
+`engine/api/media_load.py` gestiona un trabajo activo por proceso y hasta 32
+reportes recientes. Recorre archivos incrementalmente y extrae un vector a
+la vez, con el mismo vocabulario para todos los lotes. Solo entra en
+`Motor.en_uso` para validar metadatos y llamar a
+`QueryProcessor.load_media_batch`; la extraccion SIFT/MFCC queda fuera de ese
+lock. Este metodo valida las cuatro columnas, la dimension y cada registro,
+adquiere el lock exclusivo de tabla durante el lote y reutiliza el DML que
+mantiene indices secundarios. No altera una transaccion SQL ajena.
+
+Las rutas deben estar bajo `QUIPUDB_MEDIA_ROOT` y no se siguen enlaces
+simbolicos. Las cargas son parciales, y los trabajos se consultan solo durante
+la vida del proceso: no hay una cola durable ni reanudacion automatica tras
+reiniciar. Se exige un unico proceso de API; el frontend puede consultar
+progreso sin esperar la extraccion completa.
+
 ## Por que el plan de ejecucion es un contrato y no un detalle
 
 La seccion 2.1.5 exige un Panel de Plan de Ejecucion que muestre que indices se
