@@ -141,6 +141,53 @@ class LoadResponse(BaseModel):
     errors_truncated: bool
 
 
+class MediaColumnsRequest(BaseModel):
+    """Nombres de las cuatro columnas; el orden fisico es libre."""
+
+    id: str = "id"
+    name: str = "nombre"
+    path: str = "ruta"
+    vector: str = "rasgos"
+
+
+class MediaLoadRequest(BaseModel):
+    """Carpeta del servidor y vocabulario ya entrenado; no rutas del navegador."""
+
+    folder: str = Field(min_length=1, max_length=4096)
+    vocabulary: str = Field(min_length=1, max_length=4096)
+    columns: MediaColumnsRequest = Field(default_factory=MediaColumnsRequest)
+    start_id: int = Field(default=1, ge=0, le=2**31 - 1, strict=True)
+    batch_size: int = Field(default=32, ge=1, le=256, strict=True)
+    recursive: bool = False
+    max_file_bytes: int = Field(default=32 * 1024**2, ge=1, le=64 * 1024**2, strict=True)
+    max_keypoints: int = Field(default=500, ge=1, le=5000, strict=True)
+    max_audio_seconds: float = Field(default=30.0, gt=0, le=300, allow_inf_nan=False)
+
+
+class MediaFileErrorResponse(BaseModel):
+    path: str
+    error: str
+
+
+class MediaJobResponse(BaseModel):
+    """Progreso consultable sin tomar el lock del motor ni devolver vectores."""
+
+    job_id: str
+    table: str
+    status: Literal["pending", "running", "completed", "failed", "cancelled"]
+    discovered: int
+    processed: int
+    inserted: int
+    failed: int
+    next_id: int
+    errors: list[MediaFileErrorResponse]
+    errors_truncated: bool
+    elapsed_ms: float
+    codebook_id: str | None = None
+    dimension: int | None = None
+    error: str | None = None
+
+
 __all__ = [
     "ColumnInfo",
     "ErrorKind",
@@ -148,6 +195,10 @@ __all__ = [
     "IndexStructure",
     "LoadResponse",
     "LoadRowError",
+    "MediaColumnsRequest",
+    "MediaFileErrorResponse",
+    "MediaJobResponse",
+    "MediaLoadRequest",
     "QueryErrorResponse",
     "QueryRequest",
     "QueryResponse",
