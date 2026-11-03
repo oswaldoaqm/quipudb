@@ -13,9 +13,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-sf = pytest.importorskip("soundfile", reason="se necesita soundfile")
+pytest.importorskip("soundfile", reason="se necesita soundfile")
 
 from engine.multimedia.mfcc import N_MFCC, extract_mfcc, load_mono
+
+sf = pytest.importorskip("soundfile", reason="se necesita soundfile")
 
 EJEMPLO = Path(__file__).parent / "datos" / "ejemplo.wav"
 

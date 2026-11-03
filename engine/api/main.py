@@ -1,7 +1,9 @@
 """API HTTP del motor: lo unico que el frontend (2.1.5) consume.
 
 `POST /query` y `GET /tables`, con la forma que fija
-`frontend/src/api/types.ts`, y `POST /tables/{tabla}/load` para cargar un CSV. Levantar con:
+`frontend/src/api/types.ts`, y `POST /tables/{tabla}/load` para cargar un CSV.
+`POST /tables/{tabla}/load-media` inicia una carga multimedia; su progreso
+se consulta en `GET /tables/{tabla}/load-media/{job_id}`. Levantar con:
 
     uvicorn engine.api.main:app --reload --port 8000
 
@@ -14,7 +16,7 @@ from __future__ import annotations
 import io
 import os
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from threading import Lock
 from typing import Annotated, Any
@@ -23,9 +25,13 @@ from fastapi import FastAPI, File, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
+from engine.api.media_load import MediaJobs, MediaLoadConflict
 from engine.api.schemas import (
     LoadResponse,
+    MediaJobResponse,
+    MediaLoadRequest,
     QueryErrorResponse,
     QueryRequest,
     QueryResponse,
@@ -34,6 +40,7 @@ from engine.api.schemas import (
 from engine.api.service import describe_catalog, to_error, to_load_response, to_response
 from engine.executor import QueryProcessor
 from engine.executor.bulk_load import CsvLoadError, detect_encoding
+from engine.executor.media_load import MediaLoadError
 from engine.executor.native import load_native
 from engine.parser.errors import SQLError
 from engine.transactions import TransactionError
@@ -91,6 +98,7 @@ def create_app(
     processor: QueryProcessor | None = None,
     database: Any = None,
     native: Any = None,
+    media_root: Path | None = None,
 ) -> FastAPI:
     """Construye la aplicacion.
 
@@ -98,9 +106,25 @@ def create_app(
     modulo nativo no hace falta variable de entorno ni catalogo en disco.
     """
 
+    motor = Motor(catalog=catalog, processor=processor, database=database, native=native)
+    media_jobs = MediaJobs(
+        motor,
+        media_root if media_root is not None else Path(
+            os.environ.get("QUIPUDB_MEDIA_ROOT", "datos/multimedia")
+        ),
+    )
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        try:
+            yield
+        finally:
+            await run_in_threadpool(media_jobs.close)
+
     app = FastAPI(
         title="QuipuDB",
         description="Motor de base de datos multimodal escrito desde cero (UTEC, BD2 2026-2)",
+        lifespan=lifespan,
     )
     app.add_middleware(
         CORSMiddleware,
@@ -108,8 +132,8 @@ def create_app(
         allow_methods=["GET", "POST"],
         allow_headers=["Content-Type"],
     )
-    motor = Motor(catalog=catalog, processor=processor, database=database, native=native)
     app.state.motor = motor
+    app.state.media_jobs = media_jobs
 
     @app.exception_handler(SQLError)
     async def _sql_error(_: Request, error: SQLError) -> JSONResponse:
@@ -156,6 +180,45 @@ def create_app(
             # Sin detach, cerrar el envoltorio cerraria el archivo de Starlette.
             texto.detach()
         return to_load_response(reporte, codificacion)
+
+    @app.post(
+        "/tables/{tabla}/load-media",
+        response_model=MediaJobResponse,
+        status_code=202,
+        responses={
+            400: {"model": QueryErrorResponse},
+            404: {"model": QueryErrorResponse},
+            409: {"model": QueryErrorResponse},
+        },
+    )
+    def cargar_multimedia(tabla: str, peticion: MediaLoadRequest) -> MediaJobResponse | JSONResponse:
+        with motor.en_uso() as (_, catalogo, _native):
+            if not catalogo.has_table(tabla):
+                return JSONResponse(
+                    status_code=404,
+                    content=QueryErrorResponse(error=f"la tabla {tabla!r} no existe").model_dump(),
+                )
+        return media_jobs.start(tabla, peticion)
+
+    @app.get("/tables/{tabla}/load-media/{job_id}", response_model=MediaJobResponse)
+    def progreso_multimedia(tabla: str, job_id: str) -> MediaJobResponse | JSONResponse:
+        try:
+            return media_jobs.get(tabla, job_id)
+        except KeyError:
+            return JSONResponse(
+                status_code=404,
+                content=QueryErrorResponse(error="el trabajo multimedia no existe").model_dump(),
+            )
+
+    @app.exception_handler(MediaLoadConflict)
+    async def _media_conflict(_: Request, error: MediaLoadConflict) -> JSONResponse:
+        return JSONResponse(
+            status_code=409, content=QueryErrorResponse(error=str(error)).model_dump()
+        )
+
+    @app.exception_handler(MediaLoadError)
+    async def _media_error(_: Request, error: MediaLoadError) -> JSONResponse:
+        return _sin_ubicacion(error)
 
     @app.exception_handler(CsvLoadError)
     async def _csv_error(_: Request, error: CsvLoadError) -> JSONResponse:

@@ -13,14 +13,14 @@ from __future__ import annotations
 
 import pytest
 
+from engine.executor.processor import QueryProcessor
+from engine.parser.ast import SqlTypeName
+from engine.parser.errors import SQLSemanticError
+
 quipudb = pytest.importorskip(
     "quipudb_native",
     reason="los bindings no estan compilados: cmake -DQUIPUDB_BUILD_PYTHON=ON",
 )
-
-from engine.executor.processor import QueryProcessor
-from engine.parser.ast import SqlTypeName
-from engine.parser.errors import SQLSemanticError
 
 CREAR = "CREATE TABLE fotos (id INT PRIMARY KEY, ruta VARCHAR(20), v VECTOR(3)) USING HEAP"
 

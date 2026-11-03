@@ -501,6 +501,8 @@ combina con `GROUP BY` ni con un `ORDER BY` sobre otra columna.
 | `POST /query` | Ejecuta SQL (`{"sql": "..."}`) y devuelve columnas, tipos, filas, plan y, si hay una condición espacial, un `spatial_context` (`kind: "radius"` con centro y radio, o `kind: "polygon"` con los vértices) |
 | `GET /tables` | Describe cada tabla: columnas, organización, índices y número de registros |
 | `POST /tables/{tabla}/load` | Carga un CSV en una tabla existente |
+| `POST /tables/{tabla}/load-media` | Inicia la ingesta de una carpeta del servidor y devuelve 202 con un identificador de trabajo |
+| `GET /tables/{tabla}/load-media/{job_id}` | Consulta progreso, archivos insertados/fallidos, errores y tiempo de la ingesta multimedia |
 
 #### Carga masiva desde CSV
 
@@ -561,6 +563,42 @@ with open("alumnos.csv", encoding="utf-8-sig", newline="") as archivo:
     reporte = processor.load_csv("alumnos", archivo)
 print(reporte.inserted, reporte.failed)
 ```
+
+#### Carga de carpetas multimedia
+
+La ingesta de #187 recibe una carpeta del **servidor**, no una ruta del equipo
+del navegador. Reutiliza un vocabulario `.npz` de #181, con su codebook e IDF,
+y guarda una fila por imagen o audio con nombre, ruta y `VECTOR(K)`.
+
+```sql
+CREATE TABLE fotos (
+    id INT PRIMARY KEY,
+    nombre VARCHAR(128),
+    ruta VARCHAR(1024),
+    rasgos VECTOR(8)
+) USING HEAP;
+```
+
+Con `QUIPUDB_MEDIA_ROOT=datos/multimedia` (valor por defecto), una carpeta
+`datos/multimedia/fotos_demo` y un vocabulario de **8 palabras** en
+`datos/multimedia/fotos_demo.npz`:
+
+```bash
+curl -X POST http://localhost:8000/tables/fotos/load-media \
+  -H 'Content-Type: application/json' \
+  -d '{"folder":"fotos_demo","vocabulary":"fotos_demo.npz","batch_size":32}'
+```
+
+La respuesta incluye `job_id`. Consúltalo en
+`GET /tables/fotos/load-media/{job_id}` hasta que `status` sea `completed` o
+`failed`. `inserted` y `failed` cuentan archivos; se muestran los primeros
+100 errores. El trabajo extrae un archivo a la vez y escribe lotes breves,
+dejando libre el motor durante SIFT/MFCC. La carga es parcial, como el CSV
+por defecto, y mantiene los índices secundarios. No admite una transacción
+SQL abierta ni sigue enlaces simbólicos.
+
+El [manual de ingesta multimedia](docs/ingesta-multimedia.md) incluye la
+preparación de una carpeta pequeña, parámetros, límites y pruebas.
 
 ### Interfaz
 
@@ -638,6 +676,7 @@ protocolos completos de cada suite.
 | [`docs/adr/`](docs/adr/) | Decisiones: núcleo (0001), plan de ejecución (0002), SQL (0003), transacciones (0004), locks (0005), índice invertido y rankings (0006) |
 | [`docs/informe/`](docs/informe/) | Informe modular: dominio, archivos e índices, SQL, transacciones, interfaz, búsqueda de texto y experimentos |
 | [`benchmarks/README.md`](benchmarks/README.md) | Datasets, protocolos y reproducción de las corridas |
+| [`docs/ingesta-multimedia.md`](docs/ingesta-multimedia.md) | Ingesta de carpetas de imágenes/audio, trabajos REST y ejemplo reproducible |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Ramas, commits y pull requests |
 
 ## Equipo

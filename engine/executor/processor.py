@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+from collections.abc import Iterable
 from pathlib import Path
 from time import perf_counter_ns
 from typing import Any, TextIO
@@ -17,6 +18,14 @@ from engine.executor.bulk_load import (
 )
 from engine.executor.dml import collect_delete_candidates, delete_with_indexes, insert_with_indexes
 from engine.executor.external import ExternalExecutionOptions, execute_external_select
+from engine.executor.media_load import (
+    MediaColumns,
+    MediaLoadError,
+    MediaLoadReport,
+    MediaRow,
+    media_values,
+    validate_media_schema,
+)
 from engine.executor.native import (
     from_native_schema,
     load_native,
@@ -281,6 +290,49 @@ class QueryProcessor:
         finally:
             if transaction is None:
                 self._lock_manager.release(table_name, self._autocommit_owner)
+        return report
+
+    def load_media_batch(
+        self,
+        table_name: str,
+        rows: Iterable[MediaRow],
+        *,
+        columns: MediaColumns | None = None,
+        dimension: int | None = None,
+    ) -> MediaLoadReport:
+        """Inserta un lote ya extraido, sin mantener el lock durante SIFT/MFCC.
+
+        Una fila fallida no revierte las anteriores. Cada insercion conserva
+        el mantenimiento y la reversion de indices del DML habitual. Un lote
+        vacio sirve para validar el destino antes de iniciar un trabajo.
+        """
+
+        if self._transaction is not None:
+            raise TransactionError("la carga multimedia requiere terminar la transaccion activa")
+        if columns is None:
+            columns = MediaColumns()
+        try:
+            info = self._database.table_info(table_name)
+        except self._domain_errors as error:
+            raise MediaLoadError(f"la tabla {table_name!r} no existe") from error
+        schema = from_native_schema(info.schema, self._native)
+        validate_media_schema(schema, columns, dimension)
+        report = MediaLoadReport(table_name)
+        row_errors = (ValueError, TypeError, OverflowError) + self._domain_errors
+        self._lock_or_abort(table_name, LockMode.EXCLUSIVE)
+        try:
+            for row in rows:
+                try:
+                    values = media_values(row, schema, columns)
+                    insert_with_indexes(
+                        self._database, table_name, values, schema.key_column, list(info.indexes)
+                    )
+                except row_errors as error:
+                    report.fail(row.path, str(error) or type(error).__name__)
+                else:
+                    report.inserted += 1
+        finally:
+            self._release_autocommit(table_name)
         return report
 
     def _load_row(
