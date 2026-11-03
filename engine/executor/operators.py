@@ -23,11 +23,13 @@ from engine.executor.predicates import (
     spatial_search_args,
     text_search_args,
 )
+from engine.executor.vector_search import execute_vector_candidates
 from engine.parser.ast import OrderDirection, SqlTypeName
 from engine.parser.bound_ast import (
     BoundCondition,
     BoundJoinRef,
     BoundSchema,
+    BoundSimilarCondition,
     BoundSource,
     BoundValue,
 )
@@ -393,6 +395,11 @@ def _read_candidates(
 ) -> tuple[Any, Step]:
     plan = acceso
     table_name = schema.table_name
+
+    if plan.route in {AccessRoute.VECTOR_KNN, AccessRoute.VECTOR_SCAN}:
+        if not isinstance(condition, BoundSimilarCondition):
+            raise TypeError("la ruta vectorial necesita SIMILAR_TO")
+        return execute_vector_candidates(database, native, plan, condition)
 
     if plan.route is AccessRoute.SCAN:
         measured = measure_native(table, table.scan)

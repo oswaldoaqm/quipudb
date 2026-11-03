@@ -45,6 +45,7 @@ from engine.parser.ast import (
     ScoreCall,
     ScoreOrderBy,
     SelectStatement,
+    SimilarCondition,
     SqlType,
     SqlTypeName,
     Statement,
@@ -53,6 +54,7 @@ from engine.parser.ast import (
     TableRef,
     TextRanking,
     VectorLiteral,
+    VectorMetric,
     Wildcard,
 )
 from engine.parser.errors import SQLParseError, SQLUnsupportedError
@@ -241,6 +243,10 @@ class _Parser:
             kind = IndexKind.EXTENDIBLE_HASH
         elif self._match(TokenKind.RTREE):
             kind = IndexKind.RTREE
+        elif self._match(TokenKind.HNSW):
+            kind = IndexKind.HNSW
+        elif self._match(TokenKind.IVF):
+            kind = IndexKind.IVF
         elif self._match(TokenKind.FULLTEXT, TokenKind.INVERTED_INDEX):
             # El indice de texto de la Parte 3 (#167). FULLTEXT es la palabra
             # de MySQL; INVERTED_INDEX, el nombre de la estructura, como
@@ -250,14 +256,20 @@ class _Parser:
             raise self._error(
                 self._peek(),
                 "se esperaba BPLUS, BPLUS_UNCLUSTERED, HASH, EXTENDIBLE_HASH, RTREE, "
-                "FULLTEXT o INVERTED_INDEX despues de USING",
+                "FULLTEXT, INVERTED_INDEX, HNSW o IVF despues de USING",
             )
+        metric = None
+        if kind is IndexKind.HNSW:
+            metric = VectorMetric.COSINE
+            if self._match(TokenKind.WITH):
+                metric, _ = self._vector_metric()
         return CreateIndexStatement(
             index=index,
             table=table,
             column=column,
             kind=kind,
             span=combine_spans(start.span, self._previous().span),
+            metric=metric,
         )
 
     def _column_definition(self) -> ColumnDefinition:
@@ -586,7 +598,7 @@ class _Parser:
         self,
     ) -> (
         ComparisonCondition | BetweenCondition | DistanceCondition | PolygonCondition
-        | MatchCondition
+        | MatchCondition | SimilarCondition
     ):
         if self._match(TokenKind.DISTANCIA):
             return self._distance_condition(self._previous())
@@ -594,6 +606,8 @@ class _Parser:
             return self._polygon_condition(self._previous())
         if self._match(TokenKind.MATCH):
             return self._match_condition(self._previous())
+        if self._match(TokenKind.SIMILAR_TO):
+            return self._similar_condition(self._previous())
 
         column = self._column_reference("se esperaba una columna en WHERE")
         if self._match(TokenKind.BETWEEN):
@@ -647,6 +661,51 @@ class _Parser:
             radius=radius,
             metric=metric,
             span=combine_spans(start.span, radius.span),
+        )
+
+    def _vector_metric(self) -> tuple[VectorMetric, Span]:
+        self._expect(TokenKind.METRIC, "se esperaba METRIC despues de WITH")
+        self._expect(TokenKind.EQUAL, "se esperaba '=' despues de METRIC")
+        token = self._peek()
+        try:
+            metric = VectorMetric(token.lexeme.lower())
+        except ValueError:
+            raise self._error(token, "la metrica debe ser euclidean, cosine o dot") from None
+        self._advance()
+        return metric, token.span
+
+    def _similar_condition(self, start: Token) -> SimilarCondition:
+        self._expect(TokenKind.LPAREN, "se esperaba '(' despues de SIMILAR_TO")
+        column = None
+        if self._peek().kind is not TokenKind.STRING:
+            column = self._column_reference("se esperaba la columna VECTOR o el archivo")
+            self._expect(TokenKind.COMMA, "se esperaba ',' despues de la columna")
+        token = self._expect(TokenKind.STRING, "SIMILAR_TO requiere un archivo entre comillas")
+        query = StringLiteral(str(token.value), token.span)
+        self._expect(TokenKind.COMMA, "se esperaba ',' antes de k")
+        if self._peek().kind is TokenKind.IDENTIFIER:
+            name = self._advance()
+            if name.lexeme.lower() != "k":
+                raise self._error(name, "se esperaba k como parametro de SIMILAR_TO")
+            self._expect(TokenKind.EQUAL, "se esperaba '=' despues de k")
+        token = self._expect(TokenKind.INTEGER, "k requiere un entero no negativo")
+        if int(token.value) < 0:
+            raise self._error(token, "k requiere un entero no negativo")
+        k = IntegerLiteral(int(token.value), token.span)
+        self._expect(TokenKind.RPAREN, "se esperaba ')' despues de k")
+        self._expect(TokenKind.USING, "SIMILAR_TO requiere USING HNSW o IVF")
+        if self._match(TokenKind.HNSW):
+            kind = IndexKind.HNSW
+        elif self._match(TokenKind.IVF):
+            kind = IndexKind.IVF
+        else:
+            raise self._error(self._peek(), "SIMILAR_TO requiere un indice HNSW o IVF")
+        metric, metric_span = VectorMetric.COSINE, self._previous().span
+        if self._match(TokenKind.WITH):
+            metric, metric_span = self._vector_metric()
+        return SimilarCondition(
+            column, query, k, kind, metric, metric_span,
+            combine_spans(start.span, self._previous().span),
         )
 
     def _match_condition(self, start: Token) -> MatchCondition:

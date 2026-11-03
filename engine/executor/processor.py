@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import csv
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from time import perf_counter_ns
 from typing import Any, TextIO
@@ -35,6 +36,7 @@ from engine.executor.native import (
 from engine.executor.operators import execute_select
 from engine.executor.result import QueryResult
 from engine.executor.spatial import spatial_context_of
+from engine.executor.vector_search import VectorSearch, native_vector_metric
 from engine.parser import (
     BeginTransactionStatement,
     CreateIndexStatement,
@@ -51,12 +53,14 @@ from engine.parser import (
     SQLSemanticError,
     Statement,
     TableRef,
+    VectorMetric,
     parse_sql_script,
 )
 from engine.parser.bound_ast import (
     BoundMatchCondition,
     BoundSchema,
     BoundSelectStatement,
+    BoundSimilarCondition,
     BoundTableRef,
 )
 from engine.parser.semantic import (
@@ -98,6 +102,11 @@ class QueryProcessor:
         temp_dir: str | Path | None = None,
         lock_manager: LockManager | None = None,
         lock_timeout: float = DEFAULT_LOCK_TIMEOUT,
+        media_root: str | Path = "datos/multimedia",
+        media_vocabularies: Mapping[str, str | Path] | None = None,
+        vector_nprobe: int = 1,
+        vector_ef_search: int = 64,
+        ivf_nlist: int = 16,
     ) -> None:
         self._database = database
         self._native = native_module if native_module is not None else load_native()
@@ -123,6 +132,9 @@ class QueryProcessor:
         self._lock_manager = lock_manager if lock_manager is not None else LockManager()
         self._lock_timeout = lock_timeout
         self._autocommit_owner = object()
+        self._vector_search = VectorSearch(
+            Path(media_root), media_vocabularies or {}, vector_nprobe, vector_ef_search, ivf_nlist,
+        )
 
     def execute(self, source: str) -> QueryResult:
         """Ejecuta una o varias sentencias separadas por punto y coma.
@@ -515,20 +527,35 @@ class QueryProcessor:
         # Solo se lee la constante del tipo pedido: un modulo nativo que no
         # conozca los demas (el falso de las pruebas, uno compilado antes de
         # #166) sigue sirviendo para los que si conoce.
-        kind = getattr(self._native.kind, bound.kind.value)
+        vector_index = bound.kind in {IndexKind.IVF, IndexKind.HNSW}
+        kind = None if vector_index else getattr(self._native.kind, bound.kind.value)
         if bound.kind is IndexKind.INVERTED_INDEX:
             self._reject_second_text_index(table_info, schema, statement, source)
 
         self._lock_or_abort(bound.table_name, LockMode.EXCLUSIVE)
         try:
             try:
-                self._database.create_index(
-                    bound.table_name,
-                    bound.index_name,
-                    bound.column_name,
-                    kind,
-                )
-            except self._domain_errors as error:
+                if bound.kind is IndexKind.HNSW:
+                    self._database.create_hnsw_index(
+                        bound.table_name, bound.index_name, bound.column_name,
+                        native_vector_metric(bound.metric or VectorMetric.COSINE, self._native),
+                    )
+                elif bound.kind is IndexKind.IVF:
+                    position = next(
+                        index for index, column in enumerate(schema.columns)
+                        if column.name == bound.column_name
+                    )
+                    centroids = self._vector_search.centroids(
+                        self._database.table(bound.table_name), position, self._native,
+                    )
+                    self._database.create_ivf_index(
+                        bound.table_name, bound.index_name, bound.column_name, centroids,
+                    )
+                else:
+                    self._database.create_index(
+                        bound.table_name, bound.index_name, bound.column_name, kind,
+                    )
+            except (ValueError, ImportError) + self._domain_errors as error:
                 self._raise_semantic(
                     error,
                     f"no se pudo crear el indice {bound.index_name!r}",
@@ -567,6 +594,10 @@ class QueryProcessor:
         query_text: str,
     ) -> QueryResult:
         bound, physical_plan, referencias, esquemas = self._prepare_select(statement, source)
+        if isinstance(bound.where, BoundSimilarCondition):
+            condition = self._vector_search.extract(bound.schema.table_name, bound.where, source)
+            bound = replace(bound, where=condition)
+            physical_plan = replace(physical_plan, statement=bound)
 
         primera = referencias[0].table
         # Orden alfabetico, no el del FROM: dos consultas concurrentes sobre el
@@ -640,8 +671,38 @@ class QueryProcessor:
             metadata[referencia.table.name] = from_native_table_info(table_info, rows=filas)
 
         bound = bind_select(statement, esquemas, source)
+        if isinstance(bound.where, BoundSimilarCondition):
+            self._vector_search.paths(bound.schema.table_name, bound.where, source)
+            bound = replace(bound, where=replace(
+                bound.where,
+                nprobe=self._vector_search.nprobe,
+                ef_search=self._vector_search.ef_search,
+            ))
         self._require_text_index(bound, metadata, source)
         physical_plan = optimize_select(bound, metadata)
+        if (
+            isinstance(bound.where, BoundSimilarCondition)
+            and physical_plan.index is not None
+            and physical_plan.index.structure is Structure.HNSW
+        ):
+            candidates = sorted((
+                index for index in physical_plan.table.indexes
+                if index.structure is Structure.HNSW and index.column == bound.where.column.index
+            ), key=lambda index: index.name)
+            compatible = next((
+                index for index in candidates
+                if self._database.index(bound.schema.table_name, index.name).hnsw.metric
+                == native_vector_metric(bound.where.metric, self._native)
+            ), None)
+            if compatible is None:
+                raise SQLSemanticError(
+                    "la metrica solicitada no coincide con la del indice HNSW; "
+                    "crea un HNSW con esa metrica o usa IVF",
+                    bound.where.metric_span, source,
+                )
+            physical_plan = replace(
+                physical_plan, source=replace(physical_plan.access, index=compatible),
+            )
         return bound, physical_plan, referencias, esquemas
 
     @staticmethod

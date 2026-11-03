@@ -46,6 +46,8 @@ respectivamente. `VECTOR(K)` guarda el histograma de K palabras, no la matriz
 de descriptores. No se entrena un vocabulario al llamar al endpoint.
 Las consultas deben usar también los mismos límites de puntos SIFT y
 duración de audio que la ingesta para describir los objetos de igual forma.
+El [manual de SIMILAR_TO](consultas-multimedia.md) explica cómo configurar el
+mismo vocabulario y crear los índices IVF/HNSW desde SQL después de cargar.
 
 ## Iniciar la API y crear la tabla
 

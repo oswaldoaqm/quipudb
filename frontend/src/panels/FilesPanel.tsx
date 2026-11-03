@@ -63,7 +63,9 @@ function Indice({ indice }: { indice: IndexInfo }) {
             ? "· radio, k-NN y polígono"
             : indice.structure === "inverted_index"
               ? "· búsqueda de texto"
-              : indice.supports_range ? "· igualdad y rango" : "· solo igualdad"}
+              : indice.structure === "ivf" || indice.structure === "hnsw"
+                ? "· similitud vectorial k-NN"
+                : indice.supports_range ? "· igualdad y rango" : "· solo igualdad"}
         </span>
       </div>
     </li>

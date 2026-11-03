@@ -15,6 +15,7 @@ from engine.parser.ast import (
     SqlTypeName,
     StorageKind,
     TextRanking,
+    VectorMetric,
 )
 from engine.parser.span import Span
 
@@ -90,6 +91,7 @@ class BoundCreateIndexStatement:
     column_name: str
     kind: IndexKind
     span: Span
+    metric: VectorMetric | None = None
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -236,12 +238,30 @@ class BoundMatchCondition:
     span: Span
 
 
+@dataclass(frozen=True, slots=True)
+class BoundSimilarCondition:
+    """Archivo y VECTOR resueltos; la extraccion pertenece a la ejecucion."""
+
+    column: BoundColumnReference
+    query: str
+    k: int
+    kind: IndexKind
+    metric: VectorMetric
+    query_span: Span
+    metric_span: Span
+    span: Span
+    vector: tuple[float, ...] | None = None
+    nprobe: int = 1
+    ef_search: int = 64
+
+
 BoundCondition: TypeAlias = (
     BoundComparisonCondition
     | BoundBetweenCondition
     | BoundDistanceCondition
     | BoundPolygonCondition
     | BoundMatchCondition
+    | BoundSimilarCondition
 )
 
 
@@ -378,6 +398,7 @@ __all__ = [
     "BoundScoreOrderBy",
     "BoundScoreProjection",
     "BoundSelectStatement",
+    "BoundSimilarCondition",
     "BoundSource",
     "BoundTableRef",
     "BoundValue",

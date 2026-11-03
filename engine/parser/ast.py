@@ -51,6 +51,14 @@ class IndexKind(StrEnum):
     EXTENDIBLE_HASH = "EXTENDIBLE_HASH"
     RTREE = "RTREE"
     INVERTED_INDEX = "INVERTED_INDEX"
+    IVF = "IVF"
+    HNSW = "HNSW"
+
+
+class VectorMetric(StrEnum):
+    EUCLIDEAN = "euclidean"
+    COSINE = "cosine"
+    DOT = "dot"
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,8 +252,22 @@ class MatchCondition:
     span: Span
 
 
+@dataclass(frozen=True, slots=True)
+class SimilarCondition:
+    """Top-k multimedia; sin columna explicita se exige un unico VECTOR."""
+
+    column: ColumnReference | None
+    query: StringLiteral
+    k: IntegerLiteral
+    kind: IndexKind
+    metric: VectorMetric
+    metric_span: Span
+    span: Span
+
+
 Condition: TypeAlias = (
     ComparisonCondition | BetweenCondition | DistanceCondition | PolygonCondition | MatchCondition
+    | SimilarCondition
 )
 
 
@@ -310,6 +332,7 @@ class CreateIndexStatement:
     column: Identifier
     kind: IndexKind
     span: Span
+    metric: VectorMetric | None = None
 
 
 @dataclass(frozen=True, slots=True)

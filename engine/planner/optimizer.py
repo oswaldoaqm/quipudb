@@ -24,6 +24,7 @@ from engine.parser.bound_ast import (
     BoundMatchCondition,
     BoundPolygonCondition,
     BoundSelectStatement,
+    BoundSimilarCondition,
     BoundSource,
     BoundTableRef,
 )
@@ -42,6 +43,8 @@ class AccessRoute(StrEnum):
     RTREE_KNN = "rtree_knn"
     RTREE_POLYGON = "rtree_polygon"
     TEXT_SEARCH = "text_search"
+    VECTOR_KNN = "vector_knn"
+    VECTOR_SCAN = "vector_scan"
 
 
 class JoinStrategy(StrEnum):
@@ -83,6 +86,8 @@ class IndexMetadata:
             Structure.EXTENDIBLE_HASH,
             Structure.RTREE,
             Structure.INVERTED_INDEX,
+            Structure.IVF,
+            Structure.HNSW,
         }:
             raise ValueError(f"estructura de indice secundario invalida: {self.structure.value}")
         expected_range = self.structure is Structure.BPLUS_UNCLUSTERED
@@ -147,6 +152,7 @@ class PhysicalTableAccess:
             AccessRoute.RTREE_KNN,
             AccessRoute.RTREE_POLYGON,
             AccessRoute.TEXT_SEARCH,
+            AccessRoute.VECTOR_KNN,
         }
         if self.text_limit is not None:
             if self.route is not AccessRoute.TEXT_SEARCH:
@@ -170,6 +176,11 @@ class PhysicalTableAccess:
             raise ValueError("el indice elegido no pertenece a la metadata de la tabla")
         if self.route is AccessRoute.INDEX_RANGE and not self.index.supports_range:
             raise ValueError("INDEX_RANGE necesita un indice que soporte rangos")
+        if self.route is AccessRoute.VECTOR_KNN:
+            if self.index.structure not in {Structure.IVF, Structure.HNSW}:
+                raise ValueError("VECTOR_KNN necesita IVF o HNSW")
+        elif self.index.structure in {Structure.IVF, Structure.HNSW}:
+            raise ValueError("IVF y HNSW solo se usan con VECTOR_KNN")
         if self.route in {
             AccessRoute.RTREE_RADIUS,
             AccessRoute.RTREE_KNN,
@@ -547,6 +558,16 @@ def _validate_source(
             continue
         assert where is not None
         columna = where.column.index - offset
+        vector_route = fisica.route in {AccessRoute.VECTOR_KNN, AccessRoute.VECTOR_SCAN}
+        if isinstance(where, BoundSimilarCondition) != vector_route:
+            raise ValueError("SIMILAR_TO necesita una ruta vectorial y viceversa")
+        if vector_route and (
+            fisica.residual_filter or (
+                fisica.index is not None
+                and fisica.index.structure.value != where.kind.value.lower()
+            )
+        ):
+            raise ValueError("la ruta vectorial debe respetar USING y no lleva filtro residual")
         if fisica.index is not None and fisica.index.column != columna:
             raise ValueError("el indice elegido no corresponde a la columna del predicado")
         if (
@@ -609,6 +630,16 @@ def _choose_access(
 
     if where is None:
         return _AccessChoice(AccessRoute.SCAN)
+
+    if isinstance(where, BoundSimilarCondition):
+        structure = Structure(where.kind.value.lower())
+        candidates = [
+            index for index in table.indexes
+            if index.column == column and index.structure is structure
+        ]
+        if not candidates:
+            return _AccessChoice(AccessRoute.VECTOR_SCAN)
+        return _AccessChoice(AccessRoute.VECTOR_KNN, min(candidates, key=lambda index: index.name))
 
     if isinstance(where, BoundMatchCondition):
         # Sin indice de texto no hay ranking posible: no existe un "recorrer y

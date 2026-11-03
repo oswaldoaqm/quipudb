@@ -17,6 +17,8 @@ _INDEX_STRUCTURES = {
     Structure.EXTENDIBLE_HASH,
     Structure.RTREE,
     Structure.INVERTED_INDEX,
+    Structure.IVF,
+    Structure.HNSW,
 }
 
 

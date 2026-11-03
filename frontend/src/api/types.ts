@@ -37,6 +37,8 @@ export type Structure =
   | "extendible_hash"
   | "rtree"
   | "inverted_index"
+  | "ivf"
+  | "hnsw"
   | "external_sort"
   | "external_hash"
   | "memory";
@@ -70,6 +72,8 @@ export interface Step {
    * simulador no lo traen.
    */
   ranking?: string | null;
+  /** Metrica de SIMILAR_TO; null fuera del k-NN vectorial (#188). */
+  metric?: "euclidean" | "cosine" | "dot" | null;
   children: Step[];
 }
 
@@ -155,7 +159,7 @@ export interface IndexInfo {
   column: string;
   structure: Extract<
     Structure,
-    "bplus_unclustered" | "extendible_hash" | "rtree" | "inverted_index"
+    "bplus_unclustered" | "extendible_hash" | "rtree" | "inverted_index" | "ivf" | "hnsw"
   >;
   supports_range: boolean;
 }

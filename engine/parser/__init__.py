@@ -41,6 +41,7 @@ from engine.parser.ast import (
     ScoreCall,
     ScoreOrderBy,
     SelectStatement,
+    SimilarCondition,
     SqlType,
     SqlTypeName,
     Statement,
@@ -48,6 +49,7 @@ from engine.parser.ast import (
     StringLiteral,
     TableRef,
     TextRanking,
+    VectorMetric,
     Wildcard,
 )
 from engine.parser.errors import (
@@ -108,6 +110,7 @@ __all__ = [
     "ScoreCall",
     "ScoreOrderBy",
     "SelectStatement",
+    "SimilarCondition",
     "Span",
     "SqlType",
     "SqlTypeName",
@@ -119,6 +122,7 @@ __all__ = [
     "Token",
     "TokenKind",
     "TokenValue",
+    "VectorMetric",
     "Wildcard",
     "combine_spans",
     "parse_sql",

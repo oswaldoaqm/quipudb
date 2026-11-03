@@ -14,6 +14,7 @@ El catalogo sale de la variable de entorno ``QUIPUDB_CATALOG``; por defecto,
 from __future__ import annotations
 
 import io
+import json
 import os
 from collections.abc import Iterator
 from contextlib import asynccontextmanager, contextmanager
@@ -67,11 +68,13 @@ class Motor:
         processor: QueryProcessor | None = None,
         database: Any = None,
         native: Any = None,
+        media_root: Path | None = None,
     ) -> None:
         self._catalog = catalog
         self._processor = processor
         self._database = database
         self._native = native
+        self._media_root = media_root
         self._lock = Lock()
 
     @contextmanager
@@ -84,7 +87,19 @@ class Motor:
                 )
                 ruta.parent.mkdir(parents=True, exist_ok=True)
                 self._database = self._native.Database(ruta)
-                self._processor = QueryProcessor(self._database)
+                vocabularies = json.loads(os.environ.get("QUIPUDB_MEDIA_VOCABULARIES", "{}"))
+                if not isinstance(vocabularies, dict) or not all(
+                    isinstance(key, str) and isinstance(value, str)
+                    for key, value in vocabularies.items()
+                ):
+                    raise ValueError("QUIPUDB_MEDIA_VOCABULARIES debe ser un objeto JSON de rutas")
+                self._processor = QueryProcessor(
+                    self._database,
+                    media_root=self._media_root or os.environ.get(
+                        "QUIPUDB_MEDIA_ROOT", "datos/multimedia",
+                    ),
+                    media_vocabularies=vocabularies,
+                )
             yield self._processor, self._database, self._native
 
 
@@ -106,13 +121,13 @@ def create_app(
     modulo nativo no hace falta variable de entorno ni catalogo en disco.
     """
 
-    motor = Motor(catalog=catalog, processor=processor, database=database, native=native)
-    media_jobs = MediaJobs(
-        motor,
-        media_root if media_root is not None else Path(
-            os.environ.get("QUIPUDB_MEDIA_ROOT", "datos/multimedia")
-        ),
+    root = media_root if media_root is not None else Path(
+        os.environ.get("QUIPUDB_MEDIA_ROOT", "datos/multimedia")
     )
+    motor = Motor(
+        catalog=catalog, processor=processor, database=database, native=native, media_root=root,
+    )
+    media_jobs = MediaJobs(motor, root)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):

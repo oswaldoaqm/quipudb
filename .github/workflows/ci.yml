@@ -98,10 +98,12 @@ jobs:
           engine/executor/test_spatial_poligono.py
           engine/executor/test_predicates_poligono.py
           engine/executor/test_media_load.py
+          engine/executor/test_similar_native.py
           engine/api/test_main.py
           engine/api/test_carga.py
           engine/api/test_media_load.py
           engine/api/test_media_native.py
+          engine/api/test_similar_native.py
           engine/api/test_spatial_context.py -q -rs -p no:cacheprovider
 
   commits:

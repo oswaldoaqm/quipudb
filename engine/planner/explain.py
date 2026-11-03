@@ -11,6 +11,7 @@ from engine.parser.bound_ast import (
     BoundJoinRef,
     BoundMatchCondition,
     BoundSelectStatement,
+    BoundSimilarCondition,
     BoundSource,
     BoundTableRef,
 )
@@ -160,6 +161,15 @@ def _access_step(
     if access.route is AccessRoute.SCAN:
         return Step(op=Op.SCAN, structure=access.table.structure, table=table_name)
 
+    if access.route in {AccessRoute.VECTOR_KNN, AccessRoute.VECTOR_SCAN}:
+        return Step(
+            op=Op.FETCH,
+            structure=access.table.structure,
+            table=table_name,
+            detail="lee por RID conservando el orden de similitud",
+            children=[vector_search_step(access, condition)],
+        )
+
     if access.nearest is not None:
         index_step = Step(
             op=Op.KNN_SEARCH,
@@ -225,6 +235,38 @@ def _access_step(
         table=table_name,
         detail="lee los registros que indiquen los RID del indice",
         children=[index_step],
+    )
+
+
+def vector_search_step(
+    access: PhysicalTableAccess,
+    condition: BoundCondition | None,
+    *,
+    stats: Stats | None = None,
+    time_ms: float = 0.0,
+) -> Step:
+    """Mismo contrato en EXPLAIN y ejecucion, incluida la ruta exacta."""
+
+    if not isinstance(condition, BoundSimilarCondition):
+        raise TypeError("la busqueda vectorial necesita SIMILAR_TO")
+    index = access.index
+    if index is None:
+        strategy = f"busqueda exacta; sin indice {condition.kind.value} aplicable"
+    else:
+        parameter = (
+            f"nprobe={condition.nprobe}" if index.structure is Structure.IVF
+            else f"ef_search={condition.ef_search}"
+        )
+        strategy = f"indice {index.name}; {parameter}"
+    return Step(
+        op=Op.KNN_SEARCH,
+        structure=index.structure if index is not None else access.table.structure,
+        table=access.table.name,
+        column=condition.column.column.name,
+        detail=f"{strategy}; k={condition.k}; metrica {condition.metric.value}",
+        metric=condition.metric.value,
+        stats=stats if stats is not None else Stats(),
+        time_ms=time_ms,
     )
 
 
