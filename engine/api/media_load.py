@@ -19,7 +19,13 @@ from uuid import uuid4
 
 from engine.api.schemas import MediaJobResponse, MediaLoadRequest
 from engine.executor.bulk_load import INT32_MAX
-from engine.executor.media_load import MediaColumns, MediaLoadError, MediaLoadReport, MediaRow
+from engine.executor.media_load import (
+    MediaColumns,
+    MediaLoadError,
+    MediaLoadReport,
+    MediaRow,
+    media_path,
+)
 
 MAX_RETAINED_JOBS = 32
 _LOGGER = logging.getLogger(__name__)
@@ -31,28 +37,6 @@ class MediaLoadConflict(MediaLoadError):
 
 class _Cancelled(Exception):
     pass
-
-
-def media_path(root: Path, value: str, *, directory: bool) -> Path:
-    """Rechaza escapes y symlinks, tambien los que apuntan dentro de la raiz."""
-
-    supplied = Path(value)
-    candidate = Path(os.path.abspath(supplied if supplied.is_absolute() else root / supplied))
-    if not candidate.is_relative_to(root):
-        raise MediaLoadError("la ruta debe estar dentro de QUIPUDB_MEDIA_ROOT")
-    current = root
-    for part in candidate.relative_to(root).parts:
-        current /= part
-        if current.is_symlink():
-            raise MediaLoadError("no se admiten enlaces simbolicos en las rutas multimedia")
-    try:
-        resolved = candidate.resolve(strict=True)
-        valid = resolved.is_dir() if directory else resolved.is_file()
-    except OSError as error:
-        raise MediaLoadError(f"no se puede abrir la ruta: {error}") from None
-    if not valid or not resolved.is_relative_to(root):
-        raise MediaLoadError("se esperaba una carpeta" if directory else "se esperaba un archivo")
-    return resolved
 
 
 def iter_media_files(folder: Path, recursive: bool) -> Iterator[Path]:

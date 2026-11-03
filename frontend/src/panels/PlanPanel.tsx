@@ -36,6 +36,14 @@ const CATEGORIA: Record<Op, Categoria> = {
   update: "escritura",
 };
 
+function categoriaDe(paso: Step): Categoria {
+  if (paso.op === "knn_search" && paso.metric &&
+      ["heap", "sequential", "bplus_clustered"].includes(paso.structure)) {
+    return "recorrido";
+  }
+  return CATEGORIA[paso.op];
+}
+
 const ETIQUETA: Record<Categoria, string> = {
   indice: "acceso dirigido",
   recorrido: "recorre la tabla entera",
@@ -98,7 +106,7 @@ function aplanar(raiz: Step): Nodo[] {
 
 function Fila({ nodo, maximoPaginas }: { nodo: Nodo; maximoPaginas: number }) {
   const { paso, nivel, orden } = nodo;
-  const categoria = CATEGORIA[paso.op];
+  const categoria = categoriaDe(paso);
   const paginas = paso.stats.pages_read;
   const porcentaje = maximoPaginas > 0 ? (paginas / maximoPaginas) * 100 : 0;
 
@@ -134,6 +142,11 @@ function Fila({ nodo, maximoPaginas }: { nodo: Nodo; maximoPaginas: number }) {
               title="ranking de la busqueda de texto"
             >
               {paso.ranking}
+            </span>
+          )}
+          {paso.metric && (
+            <span className="font-mono text-[10px] opacity-75" title="métrica vectorial">
+              {paso.metric}
             </span>
           )}
           <span className="ml-auto shrink-0 font-mono text-[10px] opacity-75">
@@ -195,7 +208,7 @@ export function PlanPanel({ plan }: PlanPanelProps) {
     ...filas.map((f) => f.paso.stats.pages_read),
     1,
   );
-  const usadas = [...new Set(filas.map((f) => CATEGORIA[f.paso.op]))];
+  const usadas = [...new Set(filas.map((f) => categoriaDe(f.paso)))];
 
   return (
     <Panel
