@@ -63,6 +63,7 @@ _KEYWORDS = {
         TokenKind.TF_IDF,
         TokenKind.BM25,
         TokenKind.SCORE,
+        TokenKind.SIMILARITY_SCORE,
         TokenKind.AS,
         TokenKind.HAVERSINE,
         TokenKind.EUCLIDEAN,

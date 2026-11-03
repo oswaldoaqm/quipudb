@@ -12,6 +12,7 @@ from engine.parser.ast import (
     DistanceMetric,
     IndexKind,
     OrderDirection,
+    ScoreKind,
     SqlTypeName,
     StorageKind,
     TextRanking,
@@ -137,25 +138,27 @@ BoundProjection: TypeAlias = BoundColumnReference | BoundAggregateCall
 
 @dataclass(frozen=True, slots=True)
 class BoundScoreProjection:
-    """``SCORE()`` resuelto (#169): el nombre de la columna y donde va.
+    """Puntaje resuelto (#169, #189): origen, nombre y posicion de salida.
 
     No esta en ``projections`` a proposito: todo lo que recorre las
     proyecciones supone columnas o agregados de la tabla, y el puntaje no sale
-    de la tabla sino del indice de texto. ``position`` es su lugar entre las
+    de la tabla sino de la busqueda. ``position`` es su lugar entre las
     columnas de salida (con ``*``, despues de todas las de la tabla).
     """
 
     name: str
     position: int
     span: Span
+    kind: ScoreKind = ScoreKind.TEXT
 
 
 @dataclass(frozen=True, slots=True)
 class BoundScoreOrderBy:
-    """``ORDER BY`` sobre el puntaje: el alias de ``SCORE()`` o ``SCORE()`` (#169)."""
+    """``ORDER BY`` por funcion de puntaje o por su alias (#169, #189)."""
 
     direction: OrderDirection
     span: Span
+    kind: ScoreKind = ScoreKind.TEXT
 
 
 @dataclass(frozen=True, slots=True)
@@ -338,10 +341,10 @@ class BoundSelectStatement:
     order_by: BoundOrderBy | BoundDistanceOrderBy | None = None
     limit: int | None = None
     score: BoundScoreProjection | None = None
-    """``SCORE()`` en la proyeccion (#169). Solo con ``MATCH`` en el WHERE."""
+    """Puntaje en proyeccion: SCORE/MATCH o SIMILARITY_SCORE/SIMILAR_TO."""
     score_order: BoundScoreOrderBy | None = None
-    """``ORDER BY`` sobre el puntaje (#169). Va aparte de ``order_by`` porque no
-    usa el External Sorting: el indice ya entrega los documentos por relevancia."""
+    """Orden por puntaje (#169, #189), separado del orden externo por columnas:
+    la busqueda ya entrega los resultados ordenados por relevancia/cercania."""
 
     @property
     def schema(self) -> BoundSchema:
