@@ -297,7 +297,7 @@ class QueryProcessor:
         table_name: str,
         rows: Iterable[MediaRow],
         *,
-        columns: MediaColumns = MediaColumns(),
+        columns: MediaColumns | None = None,
         dimension: int | None = None,
     ) -> MediaLoadReport:
         """Inserta un lote ya extraido, sin mantener el lock durante SIFT/MFCC.
@@ -309,6 +309,8 @@ class QueryProcessor:
 
         if self._transaction is not None:
             raise TransactionError("la carga multimedia requiere terminar la transaccion activa")
+        if columns is None:
+            columns = MediaColumns()
         try:
             info = self._database.table_info(table_name)
         except self._domain_errors as error:
@@ -316,6 +318,7 @@ class QueryProcessor:
         schema = from_native_schema(info.schema, self._native)
         validate_media_schema(schema, columns, dimension)
         report = MediaLoadReport(table_name)
+        row_errors = (ValueError, TypeError, OverflowError) + self._domain_errors
         self._lock_or_abort(table_name, LockMode.EXCLUSIVE)
         try:
             for row in rows:
@@ -324,7 +327,7 @@ class QueryProcessor:
                     insert_with_indexes(
                         self._database, table_name, values, schema.key_column, list(info.indexes)
                     )
-                except Exception as error:
+                except row_errors as error:
                     report.fail(row.path, str(error) or type(error).__name__)
                 else:
                     report.inserted += 1

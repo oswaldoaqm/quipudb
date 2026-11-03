@@ -14,9 +14,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-cv2 = pytest.importorskip("cv2", reason="se necesita opencv-python-headless")
+pytest.importorskip("cv2", reason="se necesita opencv-python-headless")
 
-from engine.multimedia.sift import FeatureExtractionError, extract_sift  # noqa: E402
+from engine.multimedia.sift import FeatureExtractionError, extract_sift
+
+cv2 = pytest.importorskip("cv2", reason="se necesita opencv-python-headless")
 
 EJEMPLO = Path(__file__).parent / "datos" / "ejemplo.png"
 

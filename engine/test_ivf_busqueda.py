@@ -12,13 +12,15 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip("numpy")
+
+from engine.multimedia.kmeans import build_codebook
+
 quipudb = pytest.importorskip(
     "quipudb_native",
     reason="los bindings no estan compilados: cmake -DQUIPUDB_BUILD_PYTHON=ON",
 )
 np = pytest.importorskip("numpy")
-
-from engine.multimedia.kmeans import build_codebook  # noqa: E402
 
 DIM = 8
 NLIST = 16

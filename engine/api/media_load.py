@@ -6,6 +6,7 @@ codebooks durante la carga: hay que reutilizar el vocabulario del dataset.
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -21,6 +22,7 @@ from engine.executor.bulk_load import INT32_MAX
 from engine.executor.media_load import MediaColumns, MediaLoadError, MediaLoadReport, MediaRow
 
 MAX_RETAINED_JOBS = 32
+_LOGGER = logging.getLogger(__name__)
 
 
 class MediaLoadConflict(MediaLoadError):
@@ -193,7 +195,7 @@ class MediaJobs:
                     batch.append(
                         MediaRow(identifier, path.name, str(path), tuple(float(v) for v in vector))
                     )
-                except Exception as error:
+                except Exception as error:  # noqa: BLE001 - aislar cada archivo del extractor
                     with self._lock:
                         job.report.fail(str(path), str(error) or type(error).__name__)
                 if len(batch) >= options.batch_size:
@@ -204,6 +206,7 @@ class MediaJobs:
         except _Cancelled:
             terminal_status = "cancelled"
         except Exception as error:
+            _LOGGER.exception("fallo global del trabajo multimedia %s", job.job_id)
             terminal_status = "failed"
             fatal_error = (str(error) or type(error).__name__)[:1024]
         finally:

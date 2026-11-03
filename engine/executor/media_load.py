@@ -105,12 +105,14 @@ def media_values(row: MediaRow, schema: BoundSchema, columns: MediaColumns) -> l
     }
     for column in schema.columns:
         value = values[column.name]
-        if column.data_type is SqlTypeName.VARCHAR:
-            if not isinstance(value, str) or len(value.encode("utf-8")) > column.length:
-                raise ValueError(f"el valor de {column.name!r} excede VARCHAR({column.length})")
-        if column.data_type is SqlTypeName.VECTOR:
-            if len(row.vector) != column.length or any(
+        if column.data_type is SqlTypeName.VARCHAR and (
+            not isinstance(value, str) or len(value.encode("utf-8")) > column.length
+        ):
+            raise ValueError(f"el valor de {column.name!r} excede VARCHAR({column.length})")
+        if column.data_type is SqlTypeName.VECTOR and (
+            len(row.vector) != column.length or any(
                 not math.isfinite(v) or abs(v) > 3.4028234663852886e38 for v in row.vector
-            ):
-                raise ValueError(f"se esperaba un VECTOR({column.length}) finito de float32")
+            )
+        ):
+            raise ValueError(f"se esperaba un VECTOR({column.length}) finito de float32")
     return [values[column.name] for column in schema.columns]
