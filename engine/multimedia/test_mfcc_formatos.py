@@ -15,7 +15,7 @@ import pytest
 
 sf = pytest.importorskip("soundfile", reason="se necesita soundfile")
 
-from engine.multimedia.mfcc import N_MFCC, extract_mfcc, load_mono
+from engine.multimedia.mfcc import N_MFCC, extract_mfcc, load_mono  # noqa: E402
 
 EJEMPLO = Path(__file__).parent / "datos" / "ejemplo.wav"
 

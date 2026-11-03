@@ -15,7 +15,7 @@ import pytest
 
 cv2 = pytest.importorskip("cv2", reason="se necesita opencv-python-headless")
 
-from engine.multimedia.sift import extract_sift, read_grayscale
+from engine.multimedia.sift import extract_sift, read_grayscale  # noqa: E402
 
 EJEMPLO = Path(__file__).parent / "datos" / "ejemplo.png"
 

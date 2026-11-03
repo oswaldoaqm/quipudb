@@ -16,7 +16,7 @@ import pytest
 
 cv2 = pytest.importorskip("cv2", reason="se necesita opencv-python-headless")
 
-from engine.multimedia.sift import FeatureExtractionError, extract_sift
+from engine.multimedia.sift import FeatureExtractionError, extract_sift  # noqa: E402
 
 EJEMPLO = Path(__file__).parent / "datos" / "ejemplo.png"
 

@@ -18,7 +18,7 @@ quipudb = pytest.importorskip(
 )
 np = pytest.importorskip("numpy")
 
-from engine.multimedia.kmeans import build_codebook
+from engine.multimedia.kmeans import build_codebook  # noqa: E402
 
 DIM = 8
 NLIST = 16
