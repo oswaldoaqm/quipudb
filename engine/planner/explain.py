@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from engine.parser.ast import AggregateFunction, OrderDirection
+from engine.parser.ast import AggregateFunction, OrderDirection, ScoreKind, VectorMetric
 from engine.parser.bound_ast import (
     BoundAggregateCall,
     BoundColumnReference,
@@ -345,12 +345,12 @@ def _projection_names(statement: BoundSelectStatement) -> list[str]:
             continue
         names.append(_aggregate_name(projection))
     if statement.score is not None:
-        names.insert(statement.score.position, f"{statement.score.name} (SCORE)")
+        names.insert(statement.score.position, f"{statement.score.name} ({statement.score.kind.value})")
     return names
 
 
 def score_order_detail(statement: BoundSelectStatement) -> str:
-    """El detalle del paso que ordena por el puntaje de MATCH (#169).
+    """Detalle del orden por puntaje textual o multimedia (#169, #189).
 
     Lo comparten EXPLAIN y la ejecucion, para que los dos planes digan lo mismo.
     """
@@ -358,9 +358,33 @@ def score_order_detail(statement: BoundSelectStatement) -> str:
     order = statement.score_order
     if order is None:
         raise ValueError("no hay ORDER BY sobre el puntaje")
+    if order.kind is ScoreKind.SIMILARITY:
+        condition = statement.where
+        if not isinstance(condition, BoundSimilarCondition):
+            raise TypeError("SIMILARITY_SCORE requiere SIMILAR_TO")
+        convention = "menor es mejor" if condition.metric is VectorMetric.EUCLIDEAN else "mayor es mejor"
+        action = "conserva" if score_order_preserves_ranking(statement) else "invierte"
+        return (
+            f"SIMILARITY_SCORE {order.direction.value}; valor natural {condition.metric.value}; "
+            f"{convention}; {action} en memoria el orden de vecinos; sin external sort"
+        )
     if order.direction is OrderDirection.DESC:
         return "por relevancia DESC: el indice ya entrega este orden; sin external sort"
     return "por relevancia ASC: invierte en memoria el orden del indice; sin external sort"
+
+
+def score_order_preserves_ranking(statement: BoundSelectStatement) -> bool:
+    """Los vecinos vienen por distancia interna creciente, no por puntaje crudo."""
+
+    order = statement.score_order
+    if order is None:
+        raise ValueError("no hay ORDER BY sobre el puntaje")
+    ascending = (
+        order.kind is ScoreKind.SIMILARITY
+        and isinstance(statement.where, BoundSimilarCondition)
+        and statement.where.metric is VectorMetric.EUCLIDEAN
+    )
+    return (order.direction is OrderDirection.ASC) == ascending
 
 
 _score_order_detail = score_order_detail
