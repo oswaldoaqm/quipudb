@@ -114,6 +114,64 @@ no convierte una búsqueda aproximada en exacta. Un `LIMIT` sin orden corta
 el ranking de vecinos. Se rechazan JOIN, GROUP BY y DELETE con SIMILAR_TO;
 `SCORE()` sigue perteneciendo exclusivamente a MATCH de texto.
 
+## Puntaje y orden por alias (#189)
+
+`SIMILARITY_SCORE()` expone el **valor natural de la métrica**, usando
+`from_distance` del core (#179). No normaliza ni inventa una escala nueva:
+
+| WITH METRIC | Valor de SIMILARITY_SCORE() | Mejores primero |
+|---|---|---|
+| `euclidean` | Distancia euclidiana, desde 0 | `ASC` |
+| `cosine` | Similitud del coseno, de -1 a 1 | `DESC` |
+| `dot` | Producto punto, dependiente de las normas | `DESC` |
+
+Sobre las fotos cargadas del ejemplo anterior:
+
+```sql
+SELECT nombre, SIMILARITY_SCORE() AS score FROM fotos
+WHERE SIMILAR_TO('fotos_demo/foto_0.png', k=10) USING HNSW WITH METRIC=cosine
+ORDER BY score DESC;
+
+SELECT nombre, SIMILARITY_SCORE() AS distancia_euclidea FROM fotos
+WHERE SIMILAR_TO('fotos_demo/foto_0.png', k=10) USING IVF WITH METRIC=euclidean
+ORDER BY distancia_euclidea ASC;
+```
+
+La consulta de canciones del enunciado también se admite (requiere la tabla,
+su vocabulario y ese archivo de consulta):
+
+```sql
+SELECT nombre, artista, SIMILARITY_SCORE() AS score FROM canciones
+WHERE SIMILAR_TO('audio_query.mp3', k=5) USING IVF WITH METRIC=euclidean
+ORDER BY score DESC;
+```
+
+**En esa consulta `DESC` pone primero al vecino más lejano del top-k.** No
+cambia los vecinos seleccionados ni busca los más lejanos de toda la tabla.
+Para los más parecidos primero con euclidiana, cambie a `ORDER BY score ASC`.
+Sin ORDER BY se conserva el orden de cercanía que entrega SIMILAR_TO.
+
+El alias es el encabezado de una columna `DOUBLE` en el Panel de Resultados.
+Sin alias se llama `similarity_score`. Se admite cualquier posición de la
+función entre las columnas, `SELECT *, SIMILARITY_SCORE() AS score`, y
+`ORDER BY SIMILARITY_SCORE()` aun sin proyectarla (ASC por defecto).
+Un alias no calificado tiene prioridad sobre una columna homónima en ORDER BY.
+`score` se reconoce como alias, sin confundirlo con la función textual
+`SCORE()`. Otros nombres reservados como `DISTANCIA` no son alias válidos.
+
+Los puntajes viajan junto a sus filas desde el resultado nativo. El orden
+se conserva o invierte en memoria y LIMIT se aplica después, sin repetir la
+extracción, recalcular distancias ni usar external sorting. El paso
+`sort/memory` declara dirección, métrica y si mayor o menor es mejor.
+
+La función no recibe argumentos y solo aparece una vez por proyección.
+Fuera de SIMILAR_TO, incluidas consultas MATCH, produce un error semántico
+ubicado. No se mezcla con `SCORE()` de texto. Al proyectar el puntaje no se
+admite ORDER BY sobre otra columna: ordene por su alias/función o quite el
+puntaje. Se mantienen los límites de JOIN/GROUP BY de #188.
+EXPLAIN describe ese orden sin extraer ni buscar; ANALYZE sí lo ejecuta.
+El simulador del frontend no implementa esta búsqueda: use el motor real.
+
 ## Plan y errores
 
 La ruta indexada declara `knn_search` con `structure: "hnsw"` o `"ivf"`,
@@ -177,9 +235,13 @@ no crea trabajos en segundo plano como la ingesta de #187.
 ruff check engine benchmarks
 python -m pytest engine/parser/test_similar.py engine/planner/test_similar.py \
   engine/executor/test_vector_search.py engine/executor/test_similar_native.py \
-  engine/api/test_similar_native.py -q
+  engine/api/test_similar_native.py engine/parser/test_similarity_score.py \
+  engine/executor/test_similarity_score_native.py -q
 ```
 
 Las pruebas nativas incluyen las tres métricas y las dos estructuras,
 fallback, EXPLAIN/ANALYZE, persistencia, DML/rollback, límites, HTTP y
 extracción real de las imágenes y audios pequeños versionados en el repo.
+Las pruebas de #189 también generan un MP3 temporal desde el WAV de ejemplo
+cuando el libsndfile instalado dispone de codificador MP3, sin versionar
+nuevos archivos multimedia.

@@ -512,6 +512,13 @@ solicitado se usa k-NN exacto, sin sustituir IVF por HNSW ni al revés.
 El plan declara `knn_search -> fetch`, su estructura y el campo `metric`;
 EXPLAIN no extrae ni busca y EXPLAIN ANALYZE sí mide la ejecución.
 
+Desde #189, `SIMILARITY_SCORE() AS score` añade una columna DOUBLE y permite
+`ORDER BY score` o `ORDER BY SIMILARITY_SCORE()`. Devuelve el valor natural
+de #179: para euclidiana **menor es mejor** (`ASC`), y para coseno/producto
+punto **mayor es mejor** (`DESC`). Por eso `DESC` con euclidiana invierte el
+ranking de cercanía dentro de los k vecinos. Solo se admite con SIMILAR_TO;
+`SCORE()` sigue siendo el puntaje de MATCH.
+
 La API requiere `QUIPUDB_MEDIA_VOCABULARIES='{"fotos":"fotos_demo.npz"}'`
 y los archivos dentro de `QUIPUDB_MEDIA_ROOT`. El
 [manual SQL multimedia](docs/consultas-multimedia.md) explica la preparación,
