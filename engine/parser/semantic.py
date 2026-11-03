@@ -32,6 +32,7 @@ from engine.parser.ast import (
     PointLiteral,
     PolygonCondition,
     ScoreCall,
+    ScoreKind,
     ScoreOrderBy,
     SelectStatement,
     SimilarCondition,
@@ -373,7 +374,7 @@ def bind_select(
     # demas trabaja con las proyecciones de siempre.
     score_calls = [p for p in statement.projections if isinstance(p, ScoreCall)]
     if len(score_calls) > 1:
-        _fail("SCORE() solo puede aparecer una vez", score_calls[1].span, source)
+        _fail("SCORE()/SIMILARITY_SCORE() solo puede aparecer una vez", score_calls[1].span, source)
     score_call = score_calls[0] if score_calls else None
     table_projections = tuple(p for p in statement.projections if not isinstance(p, ScoreCall))
 
@@ -449,17 +450,22 @@ def bind_select(
     order_by = None
     score_order = None
     if isinstance(statement.order_by, ScoreOrderBy):
-        score_order = BoundScoreOrderBy(statement.order_by.direction, statement.order_by.span)
+        score_order = BoundScoreOrderBy(
+            statement.order_by.direction, statement.order_by.span, statement.order_by.kind,
+        )
     elif (
         isinstance(statement.order_by, OrderBy)
         and score_call is not None
-        and score_call.alias is not None
         and statement.order_by.column.qualifier is None
-        and statement.order_by.column.name.name == score_call.alias.name
+        and statement.order_by.column.name.name == (
+            score_call.alias.name if score_call.alias is not None else score_call.kind.value.lower()
+        )
     ):
         # El alias de SCORE() gana sobre una columna con el mismo nombre: es lo
         # que ORDER BY hace con los alias de la proyeccion en SQL.
-        score_order = BoundScoreOrderBy(statement.order_by.direction, statement.order_by.span)
+        score_order = BoundScoreOrderBy(
+            statement.order_by.direction, statement.order_by.span, score_call.kind,
+        )
     elif statement.order_by is not None:
         order_column = _resolve_column(statement.order_by.column, scope, source)
         if group_by is not None and order_column.index != group_by.column.index:
@@ -519,8 +525,8 @@ def bind_select(
             if projection is score_call:
                 break
             posicion += len(schema.columns) if isinstance(projection, Wildcard) else 1
-        nombre = score_call.alias.name if score_call.alias is not None else "score"
-        score = BoundScoreProjection(nombre, posicion, score_call.span)
+        nombre = score_call.alias.name if score_call.alias is not None else score_call.kind.value.lower()
+        score = BoundScoreProjection(nombre, posicion, score_call.span, score_call.kind)
 
     return BoundSelectStatement(
         source=bound_source,
@@ -545,18 +551,24 @@ def _validate_score(
     order_by: BoundOrderBy | BoundDistanceOrderBy | None,
     source: str | None,
 ) -> None:
-    """Donde tiene sentido el puntaje de MATCH (#169)."""
+    """Cada funcion de puntaje exige su propia busqueda (#169, #189)."""
 
     span = score_call.span if score_call is not None else score_order.span  # type: ignore[union-attr]
-    if not isinstance(where, BoundMatchCondition):
+    kind = score_call.kind if score_call is not None else score_order.kind
+    label = f"{kind.value}()"
+    if score_order is not None and score_order.kind is not kind:
+        _fail("no se puede mezclar SCORE() con SIMILARITY_SCORE()", score_order.span, source)
+    expected = BoundMatchCondition if kind is ScoreKind.TEXT else BoundSimilarCondition
+    predicate = "MATCH" if kind is ScoreKind.TEXT else "SIMILAR_TO"
+    if not isinstance(where, expected):
         _fail(
-            "SCORE() es el puntaje de MATCH: la consulta necesita MATCH en el WHERE",
+            f"{label} es el puntaje de {predicate}: la consulta necesita {predicate} en el WHERE",
             span,
             source,
         )
     if group_by is not None:
         raise SQLUnsupportedError(
-            "SCORE() con GROUP BY no esta soportado: el puntaje es de cada documento, "
+            f"{label} con GROUP BY no esta soportado: el puntaje es de cada objeto, "
             "no de un grupo",
             span,
             source,
@@ -564,9 +576,9 @@ def _validate_score(
     if order_by is not None:
         assert statement.order_by is not None
         raise SQLUnsupportedError(
-            "SCORE() con ORDER BY sobre otra columna no esta soportado: el External "
+            f"{label} con ORDER BY sobre otra columna no esta soportado: el External "
             "Sorting ordena registros de la tabla y el puntaje no viaja con ellos. "
-            "Ordena por el puntaje, o quita SCORE()",
+            f"Ordena por el puntaje, o quita {label}",
             statement.order_by.span,
             source,
         )

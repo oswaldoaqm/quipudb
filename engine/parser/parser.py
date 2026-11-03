@@ -43,6 +43,7 @@ from engine.parser.ast import (
     PolygonLiteral,
     Projection,
     ScoreCall,
+    ScoreKind,
     ScoreOrderBy,
     SelectStatement,
     SimilarCondition,
@@ -458,10 +459,11 @@ class _Parser:
             # `*, SCORE() AS relevancia` es la consulta del enunciado (#169): el
             # puntaje es lo unico que no esta en la tabla y se puede sumar a `*`.
             while self._match(TokenKind.COMMA):
-                if not self._match(TokenKind.SCORE):
+                if not self._match(TokenKind.SCORE, TokenKind.SIMILARITY_SCORE):
                     raise self._error(
                         self._peek(),
-                        "'*' no se puede combinar con otras proyecciones, salvo SCORE()",
+                        "'*' no se puede combinar con otras proyecciones, salvo SCORE() "
+                        "o SIMILARITY_SCORE()",
                     )
                 projections.append(self._score_call(self._previous()))
             return projections
@@ -472,24 +474,29 @@ class _Parser:
         return projections
 
     def _projection(self) -> Projection:
-        if self._match(TokenKind.SCORE):
+        if self._match(TokenKind.SCORE, TokenKind.SIMILARITY_SCORE):
             return self._score_call(self._previous())
         if self._peek().kind in _AGGREGATES:
             return self._aggregate()
         return self._column_reference("se esperaba una columna o funcion de agregado")
 
     def _score_call(self, start: Token) -> ScoreCall:
-        """``SCORE() [AS alias]`` (#169)."""
+        """``SCORE()|SIMILARITY_SCORE() [AS alias]`` (#169, #189)."""
 
-        self._expect(TokenKind.LPAREN, "se esperaba '(' despues de SCORE")
-        end = self._expect(TokenKind.RPAREN, "SCORE() no recibe argumentos")
+        kind = ScoreKind(start.lexeme.upper())
+        self._expect(TokenKind.LPAREN, f"se esperaba '(' despues de {kind.value}")
+        end = self._expect(TokenKind.RPAREN, f"{kind.value}() no recibe argumentos")
         alias = None
         if self._match(TokenKind.AS):
-            alias = self._identifier("se esperaba un nombre despues de AS")
+            if self._match(TokenKind.SCORE, TokenKind.SIMILARITY_SCORE):
+                token = self._previous()
+                alias = Identifier(token.lexeme, token.span)
+            else:
+                alias = self._identifier("se esperaba un nombre despues de AS")
             end_span = alias.span
         else:
             end_span = end.span
-        return ScoreCall(alias, combine_spans(start.span, end_span))
+        return ScoreCall(alias, combine_spans(start.span, end_span), kind)
 
     def _aggregate(self) -> AggregateCall:
         function_token = self._advance()
@@ -529,22 +536,31 @@ class _Parser:
 
     def _order_by(self, start: Token) -> OrderBy | DistanceOrderBy | ScoreOrderBy:
         self._expect(TokenKind.BY, "se esperaba BY despues de ORDER")
-        if self._match(TokenKind.SCORE):
-            self._expect(TokenKind.LPAREN, "se esperaba '(' despues de SCORE")
-            end_span = self._expect(TokenKind.RPAREN, "SCORE() no recibe argumentos").span
+        if (
+            self._peek().kind in {TokenKind.SCORE, TokenKind.SIMILARITY_SCORE}
+            and self._tokens[self._current + 1].kind is TokenKind.LPAREN
+        ):
+            self._advance()
+            kind = ScoreKind(self._previous().lexeme.upper())
+            self._expect(TokenKind.LPAREN, f"se esperaba '(' despues de {kind.value}")
+            end_span = self._expect(TokenKind.RPAREN, f"{kind.value}() no recibe argumentos").span
             score_direction = OrderDirection.ASC
             if self._match(TokenKind.ASC):
                 end_span = self._previous().span
             elif self._match(TokenKind.DESC):
                 score_direction = OrderDirection.DESC
                 end_span = self._previous().span
-            return ScoreOrderBy(score_direction, combine_spans(start.span, end_span))
+            return ScoreOrderBy(score_direction, combine_spans(start.span, end_span), kind)
         spatial = self._match(TokenKind.DISTANCIA)
         if spatial:
             column, center, metric = self._distance_arguments()
             end_span = self._previous().span
         else:
-            column = self._column_reference("se esperaba una columna despues de ORDER BY")
+            if self._match(TokenKind.SCORE, TokenKind.SIMILARITY_SCORE):
+                token = self._previous()
+                column = ColumnReference(Identifier(token.lexeme, token.span), token.span)
+            else:
+                column = self._column_reference("se esperaba una columna despues de ORDER BY")
             end_span = column.span
         direction = OrderDirection.ASC
         if self._match(TokenKind.ASC):

@@ -46,3 +46,17 @@ un simulador vectorial en el frontend ni búsqueda HTTP asíncrona.
 El contrato y el procedimiento reproducible están en
 [consultas-multimedia.md](../consultas-multimedia.md). El aviso previo se
 publicó en el issue antes de modificar las interfaces compartidas.
+
+## Extensión #189: valor natural del puntaje
+
+SIMILARITY_SCORE devuelve `from_distance` del core (#179), no una similitud
+normalizada: euclidiana sigue siendo distancia (menor-mejor), coseno y dot
+son similitudes (mayor-mejor). Mantener esta convención evita dos fórmulas
+distintas para el mismo valor entre SQL, bindings y benchmarks. Se respeta
+ORDER BY literalmente: DESC euclidiano invierte el top-k de cercanía.
+
+El AST y enlace comparten la representación de puntaje con SCORE de texto,
+con un discriminante explícito que impide usar una función con el predicado
+equivocado. Los puntajes salen de los VectorMatch ya obtenidos, viajan con
+sus filas y se ordenan en memoria antes del LIMIT. No cambia la estructura
+JSON del plan ni la respuesta HTTP; el alias se expone como columna DOUBLE.

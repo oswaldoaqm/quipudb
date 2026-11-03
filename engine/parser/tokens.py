@@ -69,6 +69,7 @@ class TokenKind(StrEnum):
     TF_IDF = "TF_IDF"
     BM25 = "BM25"
     SCORE = "SCORE"
+    SIMILARITY_SCORE = "SIMILARITY_SCORE"
     AS = "AS"
     HAVERSINE = "HAVERSINE"
     EUCLIDEAN = "EUCLIDEAN"

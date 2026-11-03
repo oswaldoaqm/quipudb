@@ -29,6 +29,7 @@ def execute_vector_candidates(
     native: Any,
     access: PhysicalTableAccess,
     condition: BoundSimilarCondition,
+    scores: list[float] | None = None,
 ) -> tuple[list[Any], Step]:
     if condition.vector is None:
         raise ValueError("SIMILAR_TO necesita ExtractFeatures antes de buscar")
@@ -36,24 +37,33 @@ def execute_vector_candidates(
     metric = native_vector_metric(condition.metric, native)
     k = min(condition.k, int(table.size()))
     if access.index is None:
-        nearest = measure_native(
-            table,
-            lambda: native.scan_k_nearest_vector(
+        owner = table
+
+        def search():
+            return native.scan_k_nearest_vector(
                 table,
                 condition.column.column.name,
                 condition.vector,
                 k,
                 metric,
-            ),
-        )
+            )
     else:
         index = database.index(access.table.name, access.index.name)
         parameter = (
             condition.nprobe if access.index.structure.value == "ivf" else condition.ef_search
         )
-        nearest = measure_native(
-            index, lambda: index.k_nearest(condition.vector, k, metric, parameter)
-        )
+        owner = index
+
+        def search():
+            return index.k_nearest(condition.vector, k, metric, parameter)
+
+    def run():
+        matches = search()
+        if scores is not None:
+            scores.extend(float(native.from_distance(match.distance, metric)) for match in matches)
+        return matches
+
+    nearest = measure_native(owner, run)
     step = vector_search_step(access, condition, stats=nearest.stats, time_ms=nearest.time_ms)
 
     def fetch() -> list[Any]:

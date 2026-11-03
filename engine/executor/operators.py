@@ -24,7 +24,7 @@ from engine.executor.predicates import (
     text_search_args,
 )
 from engine.executor.vector_search import execute_vector_candidates
-from engine.parser.ast import OrderDirection, SqlTypeName
+from engine.parser.ast import SqlTypeName
 from engine.parser.bound_ast import (
     BoundCondition,
     BoundJoinRef,
@@ -33,7 +33,11 @@ from engine.parser.bound_ast import (
     BoundSource,
     BoundValue,
 )
-from engine.planner.explain import score_order_detail, text_search_step
+from engine.planner.explain import (
+    score_order_detail,
+    score_order_preserves_ranking,
+    text_search_step,
+)
 from engine.planner.optimizer import (
     AccessRoute,
     JoinStrategy,
@@ -68,8 +72,8 @@ def execute_select(
     statement = plan.statement
     table_name = statement.schema.table_name
 
-    # El puntaje de MATCH (#169) no esta en la tabla: lo entrega el indice de
-    # texto, uno por RID, y viaja en una lista paralela a las filas.
+    # MATCH y SIMILAR_TO entregan un puntaje por RID (#169, #189). Viaja en
+    # paralelo a las filas y se reordena junto a ellas, sin volver a buscarlas.
     usa_puntaje = statement.score is not None or statement.score_order is not None
     scores: list[float] | None = [] if usa_puntaje else None
     native_rows, root = execute_source(
@@ -85,7 +89,7 @@ def execute_select(
     )
     rows = tuple(from_native_record(row, statement.schema) for row in native_rows)
     if scores is not None and len(scores) != len(rows):
-        raise RuntimeError("el indice de texto devolvio un puntaje por fila distinto de las filas")
+        raise RuntimeError("la busqueda devolvio una cantidad de puntajes distinta de las filas")
 
     if statement.score_order is not None:
         rows, scores, root = _order_by_score(statement, rows, scores or [], root)
@@ -143,15 +147,16 @@ def _order_by_score(
     scores: list[float],
     root: Step,
 ) -> tuple[tuple[tuple[BoundValue, ...], ...], list[float], Step]:
-    """``ORDER BY`` sobre el puntaje (#169), sin External Sorting.
+    """``ORDER BY`` sobre el puntaje (#169, #189), sin External Sorting.
 
-    El indice entrega los documentos de mayor a menor puntaje: DESC es ese
-    mismo orden y ASC es el inverso. El paso queda en el plan igual, para que
-    se vea que el orden lo puso el indice.
+    Texto/coseno/dot llegan de mayor a menor; euclidiana de menor a mayor.
+    Se conserva o invierte ese orden junto a sus puntajes, antes del LIMIT.
     """
 
-    if statement.score_order.direction is OrderDirection.DESC:
-        ordenado = measure_memory(lambda: (rows, scores), records_examined=0, records_returned=len)
+    if score_order_preserves_ranking(statement):
+        ordenado = measure_memory(
+            lambda: (rows, scores), records_examined=0, records_returned=lambda pair: len(pair[0]),
+        )
     else:
         ordenado = measure_memory(
             lambda: (rows[::-1], scores[::-1]),
@@ -399,7 +404,7 @@ def _read_candidates(
     if plan.route in {AccessRoute.VECTOR_KNN, AccessRoute.VECTOR_SCAN}:
         if not isinstance(condition, BoundSimilarCondition):
             raise TypeError("la ruta vectorial necesita SIMILAR_TO")
-        return execute_vector_candidates(database, native, plan, condition)
+        return execute_vector_candidates(database, native, plan, condition, scores=scores)
 
     if plan.route is AccessRoute.SCAN:
         measured = measure_native(table, table.scan)

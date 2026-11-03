@@ -163,12 +163,18 @@ class AggregateCall:
     span: Span
 
 
+class ScoreKind(StrEnum):
+    TEXT = "SCORE"
+    SIMILARITY = "SIMILARITY_SCORE"
+
+
 @dataclass(frozen=True, slots=True)
 class ScoreCall:
-    """``SCORE() [AS alias]``: el puntaje de MATCH de cada fila (#169)."""
+    """Puntaje derivado de MATCH o SIMILAR_TO, discriminado por ``kind``."""
 
     alias: Identifier | None
     span: Span
+    kind: ScoreKind = ScoreKind.TEXT
 
 
 Projection: TypeAlias = Wildcard | ColumnReference | AggregateCall | ScoreCall
@@ -285,7 +291,7 @@ class OrderBy:
 
 @dataclass(frozen=True, slots=True)
 class ScoreOrderBy:
-    """``ORDER BY SCORE() [ASC | DESC]`` (#169).
+    """``ORDER BY SCORE()|SIMILARITY_SCORE() [ASC | DESC]`` (#169, #189).
 
     ``ORDER BY alias`` llega como ``OrderBy`` sobre una columna con ese nombre:
     la semantica lo reconoce como el puntaje si coincide con el alias de
@@ -294,6 +300,7 @@ class ScoreOrderBy:
 
     direction: OrderDirection
     span: Span
+    kind: ScoreKind = ScoreKind.TEXT
 
 
 @dataclass(frozen=True, slots=True)

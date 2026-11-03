@@ -202,6 +202,17 @@ reconoce los nuevos índices y muestra la métrica. Los parámetros y límites
 están en [el manual](consultas-multimedia.md) y la decisión en
 [ADR 0008](adr/0008-consultas-vectoriales-similar-to.md).
 
+El puntaje SQL de #189 se incorpora al contrato del Query Processor descrito
+arriba: `SIMILARITY_SCORE() [AS alias]` es un `ScoreCall` discriminado de
+`SCORE()` textual, y requiere SIMILAR_TO. El ejecutor transforma la distancia
+de cada `VectorMatch` con `from_distance` del core, conserva una lista paralela
+a los registros y reordena ambos antes del LIMIT. No repite el acceso ni la
+extracción para calcular puntajes. La API devuelve una columna DOUBLE normal,
+por lo que el Panel de Resultados existente muestra su alias y valor sin
+cambiar el contrato HTTP. El plan registra `sort/memory`, la dirección y la
+convención: euclidiana es menor-mejor; coseno y producto punto, mayor-mejor.
+La decisión y los ejemplos están en el [manual](consultas-multimedia.md#puntaje-y-orden-por-alias-189).
+
 ## Ingesta multimedia por REST
 
 Desde #187, `POST /tables/{tabla}/load-media` acepta una carpeta del servidor y
