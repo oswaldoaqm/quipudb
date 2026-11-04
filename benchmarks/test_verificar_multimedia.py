@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -25,10 +25,10 @@ def test_cuenta_repeticiones_exactas_en_disco(tmp_path):
     manifiesto = tmp_path / "objetos.csv"
     manifiesto.write_text("id,nombre,ruta,sha256\n1,a,a,uno\n2,b,b,dos\n3,c,c,dos\n")
     vectores = np.asarray([[1, 0], [0, 1], [1, 0]], dtype=np.float32)
-    assert contar_distintos(vectores, manifiesto) == dict(
-        vectores_distintos=2, grupos_repetidos=1, max_repeticiones=2,
-        archivos_distintos_sha256=2,
-    )
+    assert contar_distintos(vectores, manifiesto) == {
+        "vectores_distintos": 2, "grupos_repetidos": 1, "max_repeticiones": 2,
+        "archivos_distintos_sha256": 2,
+    }
 
 
 @pytest.fixture(scope="module")
@@ -45,6 +45,7 @@ def paquete(tmp_path_factory):
 
 def test_verifica_sin_materializar_ni_extraer_si_consultas_cero(paquete, monkeypatch):
     import quipudb_native as nativo
+
     from engine.multimedia import features
 
     def prohibido(*args, **kwargs):
@@ -111,7 +112,7 @@ def test_reproduce_desde_copia_sin_datasets_ni_ejecutar_ignorado(tmp_path):
                "--salida", str(salida), "--reportes", str(reportes), "--k", "16",
                "--muestra", "256", "--lote", "7", "--consultas", "3",
                "--preservar", str(anterior)]
-    resultado = subprocess.run(comando, cwd=tmp_path, env=env, capture_output=True, text=True)
+    resultado = subprocess.run(comando, check=False, cwd=tmp_path, env=env, capture_output=True, text=True)
     assert resultado.returncode == 0, resultado.stdout + resultado.stderr
     for modalidad in ("imagenes", "audio"):
         for etapa in ("generar", "precalcular", "cargar", "verificar"):
@@ -125,14 +126,14 @@ def test_reproduce_desde_copia_sin_datasets_ni_ejecutar_ignorado(tmp_path):
         assert verificacion["extracciones_directas_verificadas"] == 3
     assert json.loads((reportes / "final.json").read_text())["archivos_anteriores_inalterados"] == 1
     huella = sha256(salida / "audio_20/caracteristicas/vectores.npy")
-    repetido = subprocess.run(comando, cwd=tmp_path, env=env, capture_output=True, text=True)
+    repetido = subprocess.run(comando, check=False, cwd=tmp_path, env=env, capture_output=True, text=True)
     assert repetido.returncode != 0 and "ya existe" in repetido.stderr
     assert sha256(salida / "audio_20/caracteristicas/vectores.npy") == huella
     # La CLI independiente tampoco necesita el ejecutor ni archivos locales ignorados.
     verificador = copia / "benchmarks/scripts/verificar_multimedia.py"
     ver = subprocess.run([sys.executable, "-B", str(verificador), str(salida / "audio_20"),
                           "--catalogo", str(salida / "catalogos/audio_20"), "--consultas", "0"],
-                         cwd=tmp_path, env=env, capture_output=True, text=True)
+                         check=False, cwd=tmp_path, env=env, capture_output=True, text=True)
     assert ver.returncode == 0, ver.stderr
     assert json.loads(ver.stdout)["registros_verificados"] == 20
 
@@ -145,7 +146,7 @@ def test_limite_de_memoria_detiene_la_secuencia(tmp_path):
     resultado = subprocess.run(
         [sys.executable, "-B", str(SCRIPT), "--modalidad", "audio", "--tamanos", "20",
          "--salida", str(salida), "--reportes", str(reportes), "--max-rss-mib", "1"],
-        cwd=tmp_path, env=env, capture_output=True, text=True,
+        check=False, cwd=tmp_path, env=env, capture_output=True, text=True,
     )
     assert resultado.returncode != 0 and "RSS" in resultado.stdout
     assert not (salida / "audio_20").exists()
@@ -159,7 +160,7 @@ def test_rechaza_parametros_antes_de_generar(tmp_path, opciones):
     resultado = subprocess.run(
         [sys.executable, "-B", str(SCRIPT), "--modalidad", "audio",
          "--salida", str(tmp_path / "datos"), "--reportes", str(tmp_path / "reportes"),
-         *opciones], env=entorno_nativo(), capture_output=True, text=True,
+         *opciones], check=False, env=entorno_nativo(), capture_output=True, text=True,
     )
     assert resultado.returncode != 0
     assert not (tmp_path / "datos").exists()
