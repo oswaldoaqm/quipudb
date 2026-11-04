@@ -3,23 +3,26 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import ExitStack
 import importlib
 import json
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import time
+from contextlib import ExitStack
+from pathlib import Path
 from unittest.mock import patch
 
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from benchmarks.scripts.multimedia_dataset import (  # noqa: E402
-    MODALIDADES, SALIDA, SEMILLA, sha256,
+from benchmarks.scripts.multimedia_dataset import (
+    MODALIDADES,
+    SALIDA,
+    SEMILLA,
+    sha256,
 )
-from benchmarks.scripts.verificar_multimedia import archivos_de, verificar  # noqa: E402
+from benchmarks.scripts.verificar_multimedia import archivos_de, verificar
 
 ETAPAS = ("generar", "precalcular", "cargar", "verificar")
 
@@ -54,7 +57,7 @@ def ejecutar_etapa(args) -> dict:
     catalogo = args.salida / "catalogos" / raiz.name
     extras = {}
     llamadas = 0
-    comprobar = lambda: comprobar_recursos(args)  # noqa: E731
+    comprobar = lambda: comprobar_recursos(args)
     with ExitStack() as cambios:
         if args.etapa in ("generar", "precalcular"):
             modulo = generar_multimedia if args.etapa == "generar" else features
@@ -76,6 +79,7 @@ def ejecutar_etapa(args) -> dict:
             cambios.enter_context(patch.object(modulo, nombre, contar))
         if args.etapa == "cargar":
             import quipudb_native as nativo
+
             from engine.executor import QueryProcessor
 
             def prohibido(*pos, **kwargs):
@@ -148,12 +152,12 @@ def ejecutar(args) -> None:
         raise RuntimeError("espacio libre insuficiente antes de comenzar")
     args.salida.mkdir(parents=True, exist_ok=True)
     args.reportes.mkdir(parents=True)
-    guardar(args.reportes / "configuracion.json", dict(
-        modalidad=args.modalidad, tamanos=args.tamanos, semilla=args.semilla, k=args.k,
-        muestra=args.muestra, lote=args.lote, consultas=args.consultas,
-        max_rss_mib=args.max_rss_mib, min_libre_mib=args.min_libre_mib,
-        disco_inicial=shutil.disk_usage(args.salida)._asdict(),
-    ))
+    guardar(args.reportes / "configuracion.json", {
+        "modalidad": args.modalidad, "tamanos": args.tamanos, "semilla": args.semilla, "k": args.k,
+        "muestra": args.muestra, "lote": args.lote, "consultas": args.consultas,
+        "max_rss_mib": args.max_rss_mib, "min_libre_mib": args.min_libre_mib,
+        "disco_inicial": shutil.disk_usage(args.salida)._asdict(),
+    })
     with (args.reportes / "anteriores.jsonl").open("x", encoding="utf-8") as salida:
         for anterior in args.preservar:
             for archivo in archivos_de(anterior):
@@ -170,15 +174,17 @@ def ejecutar(args) -> None:
                 for clave in ("semilla", "k", "muestra", "lote", "consultas",
                               "max_rss_mib", "min_libre_mib"):
                     comando += ["--" + clave.replace("_", "-"), str(getattr(args, clave))]
-                with (args.reportes / f"{nombre}.log").open("x", encoding="utf-8") as log:
-                    with subprocess.Popen(comando, stdout=subprocess.PIPE,
-                                          stderr=subprocess.STDOUT, text=True) as proceso:
-                        for linea in proceso.stdout:
-                            log.write(linea)
-                            log.flush()
-                            print(linea, end="", flush=True)
-                        if proceso.wait() != 0:
-                            raise RuntimeError(f"fallo en {nombre}; consulte su log")
+                with (
+                    (args.reportes / f"{nombre}.log").open("x", encoding="utf-8") as log,
+                    subprocess.Popen(comando, stdout=subprocess.PIPE,
+                                     stderr=subprocess.STDOUT, text=True) as proceso,
+                ):
+                    for linea in proceso.stdout:
+                        log.write(linea)
+                        log.flush()
+                        print(linea, end="", flush=True)
+                    if proceso.wait() != 0:
+                        raise RuntimeError(f"fallo en {nombre}; consulte su log")
     cantidad = 0
     with (args.reportes / "anteriores.jsonl").open(encoding="utf-8") as entrada:
         for linea in entrada:
@@ -186,8 +192,8 @@ def ejecutar(args) -> None:
             if sha256(Path(ruta)) != huella:
                 raise RuntimeError(f"archivo anterior modificado: {ruta}")
             cantidad += 1
-    guardar(args.reportes / "final.json", dict(archivos_anteriores_inalterados=cantidad,
-                                               disco_final=shutil.disk_usage(args.salida)._asdict()))
+    guardar(args.reportes / "final.json", {"archivos_anteriores_inalterados": cantidad,
+                                               "disco_final": shutil.disk_usage(args.salida)._asdict()})
 
 
 def main() -> None:
