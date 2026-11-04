@@ -16,7 +16,7 @@ import numpy as np
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from benchmarks.scripts.multimedia_dataset import (  # noqa: E402
+from benchmarks.scripts.multimedia_dataset import (
     CABECERA,
     FORMATO,
     MODALIDADES,
