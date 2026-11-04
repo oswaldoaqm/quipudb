@@ -1200,3 +1200,397 @@ Las pruebas no necesitan PostgreSQL ni los CSV oficiales. Comprueban:
 La que verifica los hashes oficiales se salta si los CSV no estan. La
 integracion contra un servidor real corre solo si `QUIPUDB_DSN_GIN` apunta a
 uno de prueba.
+
+## Dataset multimedia de imagenes y audio (issue #190)
+
+Hay tres pasos independientes: generar los archivos, precalcular los vectores
+y cargarlos en QuipuDB. Los scripts admiten 1 000, 10 000 y 100 000 objetos por
+modalidad; tambien cantidades menores para pruebas. No construyen IVF ni HNSW:
+la medicion de esos indices corresponde a #191.
+
+El origen es sintetico, definido en `scripts/generar_multimedia.py`, algoritmo
+v1. Las imagenes son PNG de 128 x 128 en escala de grises, con manchas,
+anillos, segmentos y ruido leve. Los audios combinan tonos armonicos, barridos
+y modulacion, con una envolvente suave: WAV PCM16 mono, 16 kHz y 0,5 segundos.
+Cada objeto varia sus parametros; no se repite un archivo para completar N.
+Estos datos permiten probar el pipeline y su costo, pero no representan una
+coleccion de fotografias, voz o musica ni tienen etiquetas de relevancia humana.
+
+### Preparar el entorno
+
+Use Python 3.11+ con `pip install -r requirements.txt`. La generacion de PNG y
+SIFT requieren `opencv-python-headless`; MFCC requiere `soundfile`. WAV se
+escribe con `wave` de Python. La carga necesita los bindings actuales compilados
+segun el README principal; las otras dos etapas no necesitan el core.
+Una dependencia ausente produce un error, sin resultados simulados.
+
+Desde una copia limpia, en macOS o Linux con CMake y un compilador C++20
+instalados, estos comandos preparan el entorno y los bindings para el mismo
+Python. La configuracion inicial de CMake descarga pybind11; necesita red.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+cmake -S . -B build-py -DCMAKE_BUILD_TYPE=Release \
+  -DQUIPUDB_BUILD_PYTHON=ON -DQUIPUDB_BUILD_TESTS=OFF \
+  -DPYTHON_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')"
+cmake --build build-py --parallel 2
+export PYTHONPATH="$PWD/build-py/bindings:$PWD"
+python -c "import quipudb_native, cv2, soundfile; assert hasattr(cv2, 'SIFT_create')"
+```
+
+Las versiones usadas para las mediciones de abajo estan registradas en los
+resultados; instalar las dependencias actuales no garantiza los mismos bytes
+o tiempos que ese entorno.
+
+### Reproducir la validacion completa
+
+`scripts/ejecutar_multimedia.py` ejecuta generacion, precalculo, carga y
+verificacion en procesos separados y secuenciales. Completa imagenes antes de
+audio y escribe un JSON y un log por modalidad, tamano y etapa. No requiere
+datasets previos ni el `ejecutar.py` local de las primeras mediciones.
+
+Primero puede comprobar todo el recorrido con 20 objetos por modalidad:
+
+```bash
+python -B benchmarks/scripts/ejecutar_multimedia.py \
+  --modalidad ambas --tamanos 20 --semilla 20260906 --k 64 \
+  --salida benchmarks/datasets/multimedia_humo \
+  --reportes benchmarks/datasets/multimedia_humo/reportes
+```
+
+Para reproducir los tres tamanos en una ubicacion nueva:
+
+```bash
+python -B benchmarks/scripts/ejecutar_multimedia.py \
+  --modalidad ambas --tamanos 1000 10000 100000 --semilla 20260906 --k 64 \
+  --salida benchmarks/datasets/multimedia_reproduccion \
+  --reportes benchmarks/datasets/multimedia_reproduccion/reportes
+```
+
+Los destinos solicitados y la carpeta de reportes deben ser nuevos. El
+ejecutor comprueba todos antes de empezar y se detiene ante una etapa fallida;
+no continua con audio ni publica `final.json` como si todo hubiera pasado.
+No borra datasets ni reanuda automaticamente una corrida parcial. Si ya tiene
+datos y solo quiere verificarlos, use el verificador independiente de abajo.
+
+`--max-rss-mib 1024` y `--min-libre-mib 2048` son los controles predeterminados.
+Se comprueban entre archivos, lotes, bloques y al terminar cada etapa; no son
+un limite duro del sistema operativo ni una reserva de disco. El RSS se mide
+con `resource`, convirtiendo a bytes las unidades de macOS y Linux. El ejecutor
+de mediciones requiere uno de esos sistemas y no agrega dependencias como
+psutil. Los scripts individuales siguen disponibles por separado.
+
+`--preservar CARPETA...` es opcional: registra hashes antes y despues de la
+corrida para comprobar que carpetas anteriores sigan intactas. Deben existir
+y estar separadas de los destinos nuevos y los reportes. Se omite desde una
+copia limpia. Los informes incluyen parametros, tiempos, RSS, espacio,
+vectores distintos y resultados de persistencia; `final.json` confirma que
+termino toda la secuencia. Mantenga salida y reportes bajo `benchmarks/datasets/`
+para que queden fuera de Git.
+
+### Verificar datasets existentes
+
+```bash
+python -B benchmarks/scripts/verificar_multimedia.py \
+  benchmarks/datasets/multimedia/imagenes_100000 \
+  --catalogo benchmarks/datasets/multimedia/catalogos/imagenes_100000 \
+  --salida benchmarks/datasets/multimedia/revision_imagenes_100000.json
+```
+
+Este comando valida hashes, dimensiones y normas, compara todas las filas del
+catalogo por flujo y cuenta vectores distintos con SQLite temporal en disco.
+Rechaza catalogos con indices. Por defecto contrasta 20 vectores con una
+extraccion directa; `--consultas 0` comprueba solo lo guardado sin extraer.
+La carga nunca extrae, incluso cuando esta comprobacion posterior esta activa.
+El JSON de salida debe ser nuevo; si se omite `--salida`, se imprime por stdout.
+
+### Generar, precalcular y cargar
+
+Desde la raiz del repositorio, para 1 000 objetos de cada modalidad:
+
+```bash
+python -B benchmarks/scripts/generar_multimedia.py generar \
+  --modalidad ambas --tamanos 1000 --semilla 20260906
+
+python -B benchmarks/scripts/generar_multimedia.py precalcular \
+  benchmarks/datasets/multimedia/imagenes_1000 \
+  benchmarks/datasets/multimedia/audio_1000
+
+PYTHONPATH=build-py/bindings python -B benchmarks/scripts/cargar_multimedia.py \
+  benchmarks/datasets/multimedia/imagenes_1000 \
+  --catalogo benchmarks/datasets/multimedia/catalogos/imagenes_1000
+
+PYTHONPATH=build-py/bindings python -B benchmarks/scripts/cargar_multimedia.py \
+  benchmarks/datasets/multimedia/audio_1000 \
+  --catalogo benchmarks/datasets/multimedia/catalogos/audio_1000
+```
+
+Para preparar los tres tamanos mediante las etapas individuales:
+
+```bash
+python -B benchmarks/scripts/generar_multimedia.py generar \
+  --modalidad ambas --tamanos 1000 10000 100000 --semilla 20260906
+
+for n in 1000 10000 100000; do
+  for modalidad in imagenes audio; do
+    dataset="benchmarks/datasets/multimedia/${modalidad}_${n}"
+    python -B benchmarks/scripts/generar_multimedia.py precalcular "$dataset"
+    PYTHONPATH=build-py/bindings python -B benchmarks/scripts/cargar_multimedia.py \
+      "$dataset" --catalogo "benchmarks/datasets/multimedia/catalogos/${modalidad}_${n}"
+  done
+done
+```
+
+Si ya genero 1 000, use `--tamanos 10000 100000` y los mismos valores en el
+bucle. No se sobrescriben datasets, precalculos ni catalogos existentes.
+`--salida CARPETA` permite otra ubicacion; para comparar semillas use carpetas
+distintas. `--modalidad imagenes` o `audio` limita la generacion a una modalidad.
+`--tamanos 20` sirve para una prueba pequena. El precalculo permite `--k 64`
+y `--muestra 8192`; la carga permite `--lote 32` (de 1 a 256).
+
+### Archivos y reproducibilidad
+
+Cada carpeta `imagenes_N` o `audio_N` contiene:
+
+| Archivo | Contenido |
+|---|---|
+| `archivos/000001.png` o `.wav`, etc. | Objetos sinteticos |
+| `objetos.csv` | ID, nombre, ruta relativa y SHA-256; orden de carga |
+| `generacion.json` | Origen, version del formato, parametros, semilla y versiones |
+| `caracteristicas/vectores.npy` | Matriz N x K, `float32`, leida mediante mmap |
+| `caracteristicas/vocabulario.npz` | Codebook, IDF y cantidad de objetos |
+| `caracteristicas/metadata.json` | Parametros de extraccion y entrenamiento, versiones y hashes |
+
+La semilla predeterminada es **20260906**. Se deriva un generador por modalidad
+e ID: cambiar el orden de ejecucion o el tamano no cambia el archivo de un ID
+compartido. El vocabulario si se entrena por modalidad y tamano, de modo que
+los vectores de 1k no tienen por que ser el prefijo de los de 100k. El K por
+defecto es 64 en ambos casos. La igualdad byte por byte se comprueba con el
+mismo entorno; no se promete entre versiones distintas de NumPy, OpenCV o
+sus bibliotecas numericas. Los metadatos registran las versiones utilizadas.
+
+La muestra de entrenamiento contiene como maximo 8192 descriptores de hasta
+128 objetos elegidos con semilla. Se reparte un cupo por objeto y se llama al
+K-Means existente. Luego se describe todo el corpus, se guardan conteos
+temporales en disco y se calcula el IDF sobre los N objetos. Se reutilizan los
+pesos TF-IDF del motor y su normalizacion L2; las pruebas comparan el resultado
+con `extract_features` sobre cada archivo. Los conteos temporales se eliminan
+al terminar, tambien ante errores.
+
+SIFT usa como maximo 500 puntos. MFCC usa 13 coeficientes, 26 filtros mel,
+ventanas de 25 ms, salto de 10 ms y limite de 30 s, compatible con las consultas
+actuales. Se conservan el vocabulario completo y estos parametros para consultas
+posteriores. La huella del codebook no incluye IDF; por eso tambien se verifica
+el SHA-256 del archivo completo del vocabulario.
+
+Se rechazan dimensiones incorrectas, valores no finitos, vectores nulos y
+normas distintas de 1. Un fallo no publica un paquete de caracteristicas
+completo. Si otro conjunto o parametro produce vectores nulos, hay que revisar
+su variedad o K; no se inventan vectores ni se omiten filas para completar N.
+
+La carga valida hashes y archivos antes de escribir. Crea una tabla Heap con
+`id INT PRIMARY KEY`, `nombre VARCHAR(128)`, `ruta VARCHAR(1024)` y
+`rasgos VECTOR(K)`, y reutiliza `QueryProcessor.load_media_batch` de #187.
+Inserta la ruta absoluta del objeto. Exige N inserciones sin fallos y compara
+todas las filas y vectores al reabrir el catalogo. No llama a los extractores.
+La comprobacion usa `source_of` para leer una fila por vez; `scan()` del
+binding materializa la tabla completa y no se usa en el cargador.
+Si la escritura falla, informa el error; pueden permanecer filas parciales en
+ese catalogo, que no se reutiliza en la siguiente corrida.
+
+Todos los artefactos predeterminados quedan bajo `benchmarks/datasets/`, ya
+ignorado por Git. Si usa `--salida` o `--catalogo` fuera de esa carpeta, elija
+otra ubicacion ignorada. Las rutas relativas del manifiesto permiten trasladar
+el dataset antes de cargar; las rutas guardadas en la tabla son absolutas.
+
+La duracion impresa por el cargador incluye validacion y comprobacion de
+persistencia; no es una medicion de #191. Las consultas `SIMILAR_TO('archivo')`
+todavia extraen el archivo de consulta: para medir solo el indice se deben
+precalcular tambien los vectores de consulta y usar su interfaz vectorial.
+
+### Pruebas y recursos
+
+```bash
+PYTHONPATH=build-py/bindings python -B -m pytest \
+  benchmarks/test_generar_multimedia.py benchmarks/test_cargar_multimedia.py \
+  benchmarks/test_verificar_multimedia.py \
+  -q -rs -p no:cacheprovider
+ruff check --no-cache engine benchmarks
+```
+
+Las pruebas usan 20 o 30 objetos por modalidad. Comprueban bytes reproducibles,
+archivos distintos, integridad SHA-256, igualdad con `extract_features`, errores,
+carga real por lotes y persistencia. Bloquean los extractores, decodificadores y
+constructores de indices durante la carga para detectar usos accidentales.
+Tambien bloquean `scan` y `scan_with_rids` para comprobar que la verificacion
+de persistencia recorre la tabla sin acumular sus registros.
+Las pruebas de carga requieren bindings; pytest informa los saltos si faltan.
+Las del ejecutor prueban ambos formatos desde una copia sin datasets ni
+scripts ignorados, reutilizando los bindings del entorno. Cubren la CLI,
+informes por etapa, preservacion de archivos, rechazo de sobrescrituras,
+persistencia alterada y detencion al superar el limite de memoria.
+
+Con K=64, la matriz ocupa `N * 64 * 4` bytes mas la cabecera NPY: 0,256 MB,
+2,56 MB y 25,6 MB para 1k, 10k y 100k. Durante el precalculo hay otra matriz
+temporal del mismo tamano con los conteos. No se conservan todos los
+descriptores: la muestra y los bloques de trabajo estan acotados. mmap evita
+crear listas Python con todos los vectores, aunque el sistema puede mantener
+sus paginas en memoria. El WAV ocupa exactamente 16 044 bytes por objeto:
+16,044 MB, 160,44 MB y 1,6044 GB para los tres tamanos, sin contar vectores,
+manifiestos o el catalogo. El espacio de PNG depende de su compresion.
+
+Verificacion local del 4 de noviembre de 2026 (macOS arm64, Python 3.14.6,
+NumPy 2.4.6, OpenCV 5.0.0 y soundfile 0.14.0):
+
+| Modalidad, N=1000, K=64 | Precalculo | RSS maximo del precalculo | Carga y verificacion | Dataset en disco | Catalogo |
+|---|---:|---:|---:|---:|---:|
+| Imagenes | 19,37 s | 247,0 MiB | 0,71 s | 9,85 MB | 2,05 MB |
+| Audio | 2,21 s | 107,5 MiB | 0,78 s | 16,41 MB | 2,05 MB |
+
+Ambas cargas insertaron y verificaron las 1000 filas, sin indices y sin vectores
+nulos. Hubo 1000 vectores distintos de imagenes y 998 de audio: distintos
+archivos pueden coincidir despues de la cuantizacion. Los tiempos son de una
+corrida local, con otras tareas activas; no son resultados experimentales de
+#191. El RSS se obtuvo con `resource.getrusage` en procesos separados por etapa.
+Los tamanos son bytes logicos, expresados en MB decimales.
+
+La segunda verificacion ejecuto 10 000 elementos por modalidad con los mismos
+parametros y versiones, usando la comprobacion de persistencia por flujo.
+Antes habia 20,73 GiB libres y al terminar quedaron 20,40 GiB. Cada etapa se
+ejecuto en un proceso separado. Los tiempos de la tabla son los que informa
+la CLI; el RSS corresponde al proceso completo, incluidas sus bibliotecas.
+
+| Modalidad, N=10000, K=64 | Generacion | Precalculo | Carga y verificacion | RSS generacion / precalculo / carga |
+|---|---:|---:|---:|---:|
+| Imagenes | 18,64 s | 113,98 s | 5,83 s | 66,7 / 336,5 / 48,8 MiB |
+| Audio | 9,97 s | 13,70 s | 5,38 s | 38,0 / 102,7 / 46,2 MiB |
+
+| Modalidad | Dataset | Catalogo | Espacio asignado a archivos, incluyendo catalogo | Vectores distintos |
+|---|---:|---:|---:|---:|
+| Imagenes | 98,20 MB | 20,48 MB | 147,94 MB | 10000 |
+| Audio | 164,02 MB | 20,48 MB | 187,98 MB | 9620 |
+
+Se validaron los hashes de los 20 000 objetos, las matrices `float32` de
+10000 x 64, sus dimensiones, componentes finitas y normas; no hubo vectores
+nulos. Otro proceso reabrio ambos catalogos y comparo las 10 000 filas de
+cada uno, sin indices. Tambien se compararon 20 vectores por modalidad con
+una extraccion directa. Los 2010 archivos de los paquetes de 1k conservaron
+sus hashes. Los registros de esta verificacion estan en
+`benchmarks/datasets/multimedia/verificacion_10000/`, fuera de Git.
+
+Las coincidencias de audio se producen al cuantizar. En 1k, los pares de IDs
+32/766 y 303/875 tienen WAV diferentes y los mismos conteos de palabras.
+En 10k hay 167 grupos repetidos, con un maximo de 14 objetos por grupo;
+se comprobo que los 167 tienen conteos identicos antes de TF-IDF. Los 10 000
+WAV tienen hashes diferentes. No son errores de guardado o carga y no se
+deduplican: el dataset conserva N objetos. La representacion pierde detalle
+y orden temporal; esa limitacion y los empates deben considerarse en #191.
+
+La validacion final completo 100 000 imagenes y despues 100 000 audios, con
+semilla 20260906 y K=64. Cada etapa uso un proceso independiente, con vigilancia
+de memoria residente (limite de 1 GiB) y espacio libre. No fue necesario
+detener ninguna etapa. Habia 20,03 GiB libres al comenzar y quedaron 16,40 GiB.
+
+| Modalidad, N=100000 | Generacion | Precalculo | Carga y reapertura | Verificacion independiente |
+|---|---:|---:|---:|---:|
+| Imagenes | 158,23 s | 1120,92 s | 46,78 s | 44,43 s |
+| Audio | 96,88 s | 108,69 s | 46,70 s | 40,81 s |
+
+| Modalidad | RSS generacion | RSS precalculo | RSS carga | RSS verificacion |
+|---|---:|---:|---:|---:|
+| Imagenes | 68,9 MiB | 352,2 MiB | 70,0 MiB | 106,9 MiB |
+| Audio | 40,5 MiB | 103,2 MiB | 69,9 MiB | 69,5 MiB |
+
+| Modalidad | Dataset | Catalogo | Espacio asignado a archivos, incluyendo catalogo | Vectores distintos |
+|---|---:|---:|---:|---:|
+| Imagenes | 981,87 MB | 204,80 MB | 1483,15 MB | 100000 |
+| Audio | 1640,20 MB | 204,80 MB | 1893,46 MB | 91617 |
+
+Las ocho etapas sumaron 1663,43 s (27 min 43 s); este valor no incluye la
+comprobacion de los archivos anteriores ni la ejecucion posterior de pytest.
+Los tiempos de carga incluyen validacion de entrada, insercion, flush y
+comparacion al reabrir. La verificacion independiente repite la comprobacion
+desde otro proceso y cuenta vectores distintos usando SQLite temporal en
+disco, sin reunir los 100 000 vectores en una lista o conjunto de Python.
+SQLite se usa para la auditoria de unicidad; no es parte del cargador.
+
+Cada carga inserto 100 000 filas en 3125 lotes de 32. Durante la carga se
+bloquearon explicitamente `extract_features`, `describe`, el entrenamiento de
+vocabularios, la creacion de indices y los escaneos que materializan la tabla;
+ambas ejecuciones terminaron correctamente. La verificacion independiente
+comparo todas las filas y vectores persistidos, y confirmo cero indices.
+Las matrices son `float32`, de 100000 x 64, normalizadas, sin componentes
+no finitas ni vectores nulos. Se contrastaron ademas 20 extracciones directas
+por modalidad con los vectores guardados.
+
+Los 100 000 archivos de cada modalidad tienen hashes distintos. Audio produjo
+91 617 vectores distintos, con 3739 grupos repetidos y hasta 85 elementos por
+grupo. Se mantienen todos los objetos; las coincidencias de la representacion
+son una limitacion del vocabulario de 64 palabras, no un motivo para reducir N.
+Los 22 028 archivos de los datasets y catalogos anteriores de 1k y 10k
+conservaron sus hashes. Los registros, medidas y comprobaciones quedaron en
+`benchmarks/datasets/multimedia/verificacion_100000/`, tambien ignorado por Git.
+El `ejecutar.py` de esa carpeta se conserva como registro de la corrida
+original. La logica reutilizable esta ahora en `scripts/ejecutar_multimedia.py`
+y `scripts/verificar_multimedia.py`; el script historico y los informes no
+se necesitan en una copia limpia ni deben incluirse en el commit.
+
+Resumen de las tres corridas (espacio logico del dataset mas su catalogo):
+
+| N por modalidad | Modalidad | Generacion | Precalculo | Carga y reapertura | RSS precalculo | Dataset + catalogo | Vectores distintos |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 1000 | Imagenes | No separado | 19,37 s | 0,71 s | 247,0 MiB | 11,90 MB | 1000 |
+| 1000 | Audio | No separado | 2,21 s | 0,78 s | 107,5 MiB | 18,46 MB | 998 |
+| 10000 | Imagenes | 18,64 s | 113,98 s | 5,83 s | 336,5 MiB | 118,68 MB | 10000 |
+| 10000 | Audio | 9,97 s | 13,70 s | 5,38 s | 102,7 MiB | 184,50 MB | 9620 |
+| 100000 | Imagenes | 158,23 s | 1120,92 s | 46,78 s | 352,2 MiB | 1186,68 MB | 100000 |
+| 100000 | Audio | 96,88 s | 108,69 s | 46,70 s | 103,2 MiB | 1845,00 MB | 91617 |
+
+La generacion original de 1k se midio en una sola llamada para ambas
+modalidades: 9,26 s en total. No hay un tiempo separado por modalidad para
+esa corrida. Son verificaciones locales de una ejecucion, no un benchmark
+con repeticiones de #191.
+
+El procesamiento mantiene un archivo en extraccion, hasta 8192 descriptores
+de entrenamiento, bloques TF-IDF de 1024 filas y lotes de carga de 32.
+En 100k, las dos matrices mapeadas de conteos y vectores suman 51,2 MB con
+K=64. El Heap conserva un mapa de claves primarias que crece con N; por eso
+la memoria total no es estrictamente constante. El mayor RSS medido en las
+etapas de 100k fue 352,2 MiB, durante el precalculo de imagenes.
+
+Pasaron las 31 pruebas nuevas y 115 pruebas C++ de vectores, IVF y HNSW.
+La revision ampliada de benchmarks, extraccion e integracion dio 666 pruebas
+correctas, cuatro omitidas por datasets/resultados externos o PostgreSQL no
+configurado, y dos fallos existentes en
+`engine/multimedia/test_features_extremo_a_extremo.py`:
+`test_el_vector_de_una_imagen_describe_algo` y
+`test_la_consulta_pasa_por_el_mismo_pipeline_que_el_dataset`.
+Ambos tambien fallan al ejecutar una copia limpia de `HEAD` en este entorno:
+el vocabulario de esas imagenes de prueba produce vectores nulos. No se
+modifico el motor ni esas pruebas. Ruff sobre `engine` y `benchmarks` paso.
+Despues de cambiar la verificacion de persistencia a `source_of`, pasaron
+103 pruebas relacionadas de benchmarks, vocabularios e ingesta #187. Al
+repetir el archivo de pruebas con los fallos conocidos, el resultado fue
+15 correctas y los mismos dos fallos; no se detectaron fallos nuevos.
+
+La revision final de 100k cumple los seis criterios de #190: seis datasets
+generados y cargados (tres tamanos por modalidad), origen sintetico documentado,
+vectores precalculados con su vocabulario, semilla fija, script de carga en
+`benchmarks/scripts/` y artefactos excluidos de Git. Permanecen las limitaciones
+ya descritas: corpus sintetico, coincidencias entre vectores, reproducibilidad
+ligada al entorno y dos pruebas preexistentes del motor que fallan en este
+entorno. No se modifico el motor para esta validacion.
+Al terminar 100k se repitieron las 103 pruebas relacionadas: todas pasaron.
+El archivo de pruebas con los fallos conocidos volvio a dar 15 correctas y
+los mismos dos fallos. Ruff sobre `engine` y `benchmarks` y la comprobacion
+de espacios del diff tambien pasaron.
+
+En la revision previa al commit, con el ejecutor y el verificador en
+`benchmarks/scripts/`, pasaron 112 pruebas relacionadas, incluidas las 40 de
+#190. Se repitio el recorrido completo con 20 imagenes y 20 audios, semilla
+20260906 y K=64: persistieron todos los registros, con vectores validos y sin
+indices. La carga termino con extraccion y creacion de indices bloqueadas.
+El archivo del motor con los fallos conocidos dio nuevamente 15 pruebas
+correctas y los mismos dos fallos. No se regeneraron los datasets grandes.
