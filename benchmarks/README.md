@@ -1594,3 +1594,86 @@ En la revision previa al commit, con el ejecutor y el verificador en
 indices. La carga termino con extraccion y creacion de indices bloqueadas.
 El archivo del motor con los fallos conocidos dio nuevamente 15 pruebas
 correctas y los mismos dos fallos. No se regeneraron los datasets grandes.
+
+## IVF contra HNSW (issue #191)
+
+Con los bindings compilados y el entorno de #190, desde la raiz:
+
+```bash
+export PYTHONPATH="$PWD/build-py/bindings:$PWD"
+python -B benchmarks/scripts/ejecutar_benchmarks_vectoriales.py \
+  benchmarks/datasets/multimedia/imagenes_1000 \
+  --salida benchmarks/datasets/ivf_hnsw_nueva/imagenes_1000
+```
+
+La salida debe ser nueva y estar separada de la entrada. Cambiar `imagenes`
+por `audio` y `1000` por `10000` o `100000` para los otros casos. Ejecutar
+los comandos secuencialmente, empezando por 1k. No se modifican los catalogos
+ni los vectores de #190: se carga un Heap de trabajo mediante el cargador
+existente. Todos los artefactos quedan bajo `benchmarks/datasets/`, ignorado.
+No ejecutar el verificador de #190 sobre estos catalogos: ahora tienen indices.
+
+El banco usa coseno, 100 consultas con semilla 20260906, un calentamiento y
+cinco repeticiones de busqueda. Las consultas son filas de `vectores.npy`.
+Se piden 11 candidatos nativos y, fuera del reloj, se elimina solamente el ID
+consultado y se retienen 10. Los duplicados siguen siendo vecinos distintos.
+En HNSW, `ef_search=10` se eleva internamente a 11 por esta sobreconsulta.
+En listas IVF pequenas puede haber menos de diez vecinos: el denominador del
+Recall sigue siendo diez. No se rellena con busqueda exacta.
+
+IVF usa `nlist=round(sqrt(N))`: 32, 100 y 316; nprobe toma los valores
+1, 2, 4, 8, 16, 32, 64, 128 y nlist que no superen nlist. El K-Means compartido
+entrena como maximo 10 000 vectores, semilla 20260906, hasta 100 iteraciones y
+tolerancia 1e-4. Esos centroides son distintos del vocabulario SIFT/MFCC.
+HNSW usa M=16, ef_construction=200, semilla 20260906 y ef_search
+10, 20, 40, 80, 160, 320. Los indices se reabren en otro proceso para buscar.
+
+Se registra una construccion por tecnica y dataset: no hay estimacion de su
+dispersion. IVF separa entrenamiento (incluye guardar centroides), construccion
+con flush y suma total. No incluye cargar el Heap. Cada consulta guarda su
+latencia nativa en CSV; incluye conversion del binding y retorno de candidatos,
+pero excluye archivos de consulta, extraccion, validacion, lectura de registros
+y calculo de Recall. Las lecturas internas del indice si entran en el tiempo.
+La referencia usa `scan_k_nearest_vector`, fuera del tiempo aproximado; IVF
+con todas las listas debe coincidir exactamente, incluido el desempate por RID.
+
+Recall estricto compara RIDs contra los diez del scan exacto. La medida
+complementaria acepta cualquier vecino a la distancia exacta del decimo,
+limitando su credito a los puestos disponibles y exigiendo los vecinos
+estrictamente mas cercanos. Se usa igualdad double, sin tolerancia ajustable.
+No se deben mezclar ambas medidas ni interpretar los empates como archivos
+repetidos. Estas consultas internas al corpus no miden relevancia humana.
+
+El proceso padre vigila RSS con `ps` cada 0,5 s (macOS/Linux), detiene etapas
+que excedan 2 GiB o `--timeout 900` segundos y registra `pendiente.json`.
+No es un limite duro del sistema operativo. Se requieren 3 GiB libres al
+iniciar. Si falla el monitoreo, se detiene el proceso hijo. No hay reanudacion
+ni sobrescritura automatica. `completo.json` solo aparece al completar todo.
+El maximo RSS de cada proceso se obtiene con `resource`; incluye validacion,
+NumPy y paginas mmap, no solo el indice. El pico de busqueda no incluye la
+construccion porque se mide en un proceso nuevo. La implementacion C++ de
+build acumula vectores y RIDs; HNSW mantiene ademas el grafo en RAM.
+
+CSV individuales, manifiestos, centroides, memoria y tiempos de construccion
+permiten preparar las graficas de #193. Para resumir sin repetir experimentos:
+
+```bash
+python -B benchmarks/scripts/resumir_vectoriales.py \
+  benchmarks/datasets/ivf_hnsw_nueva \
+  --salida benchmarks/datasets/ivf_hnsw_nueva/resumen.csv
+PYTHONPATH=build-py/bindings python -B -m pytest \
+  benchmarks/test_benchmarks_vectoriales.py -q -rs -p no:cacheprovider
+ruff check engine benchmarks
+```
+
+El resumen informa la mediana de las medias de latencia por repeticion,
+minimo y maximo entre esas medias, no la mediana de consultas individuales.
+La cache del sistema no se vacia, el orden de parametros es fijo y las
+mediciones dependen de la carga concurrente del equipo. Los informes incluyen
+commit, entorno, parametros, hash del script y hash de los vectores. Los tiempos
+no se presentan como estables entre maquinas o versiones.
+
+La corrida local de los seis datasets y el barrido completo estan documentados
+en [comparacion_ivf_hnsw.md](comparacion_ivf_hnsw.md). Sus fuentes locales son
+`benchmarks/datasets/ivf_hnsw_191/`, con 44 000 mediciones de consulta y doce
+construcciones. No son necesarias para ejecutar las pruebas pequenas.
