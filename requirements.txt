@@ -5,6 +5,7 @@ pydantic>=2.9
 python-multipart>=0.0.9  # lo pide FastAPI para recibir archivos (#114)
 
 # Extraccion de caracteristicas multimedia (seccion 2.4.1)
+numpy>=1.26          # pipeline multimedia y datasets de benchmarks (#190)
 # Va la variante headless y no opencv-python: el CI corre sin pantalla y el
 # paquete normal arrastra libGL. SIFT vive en el modulo principal desde la
 # 4.4, cuando vencio la patente de Lowe; antes estaba solo en
