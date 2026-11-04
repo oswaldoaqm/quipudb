@@ -12,10 +12,10 @@ import pytest
 
 from benchmarks.scripts.generar_multimedia import generar, precalcular
 from benchmarks.scripts.multimedia_dataset import (
+    escribir_json,
     filas,
     leer_generacion,
     leer_precalculado,
-    escribir_json,
     sha256,
     validar_vectores,
 )
