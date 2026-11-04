@@ -3,22 +3,22 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import closing
 import csv
 import json
 import os
-from pathlib import Path
 import sqlite3
 import sys
 import tempfile
 import time
+from contextlib import closing
+from pathlib import Path
 
 import numpy as np
 
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from benchmarks.scripts.multimedia_dataset import (  # noqa: E402
+from benchmarks.scripts.multimedia_dataset import (
     filas,
     leer_precalculado,
     sha256,
@@ -36,29 +36,31 @@ def archivos_de(carpeta: Path):
 
 
 def contar_distintos(vectores, manifiesto: Path, *, comprobar=lambda: None) -> dict:
-    with tempfile.TemporaryDirectory(prefix="quipudb-unicidad-") as temporal:
-        with closing(sqlite3.connect(Path(temporal) / "unicos.sqlite")) as sql:
-            sql.execute("PRAGMA cache_size=-4096")
-            sql.execute("CREATE TABLE vectores (valor BLOB PRIMARY KEY, cantidad INTEGER) "
-                        "WITHOUT ROWID")
-            sql.execute("CREATE TABLE archivos (sha TEXT PRIMARY KEY) WITHOUT ROWID")
-            for inicio in range(0, len(vectores), 1024):
-                sql.executemany(
-                    "INSERT INTO vectores VALUES (?, 1) ON CONFLICT(valor) "
-                    "DO UPDATE SET cantidad=cantidad+1",
-                    ((v.tobytes(),) for v in vectores[inicio : inicio + 1024]),
-                )
-                sql.commit()
-                comprobar()
-            with manifiesto.open(encoding="utf-8", newline="") as archivo:
-                sql.executemany("INSERT OR IGNORE INTO archivos VALUES (?)",
-                                ((r["sha256"],) for r in csv.DictReader(archivo)))
-            distintos, grupos, maximo = sql.execute(
-                "SELECT COUNT(*), SUM(cantidad>1), MAX(cantidad) FROM vectores"
-            ).fetchone()
-            originales = sql.execute("SELECT COUNT(*) FROM archivos").fetchone()[0]
-    return dict(vectores_distintos=distintos, grupos_repetidos=grupos,
-                max_repeticiones=maximo, archivos_distintos_sha256=originales)
+    with (
+        tempfile.TemporaryDirectory(prefix="quipudb-unicidad-") as temporal,
+        closing(sqlite3.connect(Path(temporal) / "unicos.sqlite")) as sql,
+    ):
+        sql.execute("PRAGMA cache_size=-4096")
+        sql.execute("CREATE TABLE vectores (valor BLOB PRIMARY KEY, cantidad INTEGER) "
+                    "WITHOUT ROWID")
+        sql.execute("CREATE TABLE archivos (sha TEXT PRIMARY KEY) WITHOUT ROWID")
+        for inicio in range(0, len(vectores), 1024):
+            sql.executemany(
+                "INSERT INTO vectores VALUES (?, 1) ON CONFLICT(valor) "
+                "DO UPDATE SET cantidad=cantidad+1",
+                ((v.tobytes(),) for v in vectores[inicio : inicio + 1024]),
+            )
+            sql.commit()
+            comprobar()
+        with manifiesto.open(encoding="utf-8", newline="") as archivo:
+            sql.executemany("INSERT OR IGNORE INTO archivos VALUES (?)",
+                            ((r["sha256"],) for r in csv.DictReader(archivo)))
+        distintos, grupos, maximo = sql.execute(
+            "SELECT COUNT(*), SUM(cantidad>1), MAX(cantidad) FROM vectores"
+        ).fetchone()
+        originales = sql.execute("SELECT COUNT(*) FROM archivos").fetchone()[0]
+    return {"vectores_distintos": distintos, "grupos_repetidos": grupos,
+                "max_repeticiones": maximo, "archivos_distintos_sha256": originales}
 
 
 def verificar(raiz: Path, catalogo: Path, *, consultas: int = 20,
