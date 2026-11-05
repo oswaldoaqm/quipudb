@@ -245,3 +245,30 @@ extracción real de las imágenes y audios pequeños versionados en el repo.
 Las pruebas de #189 también generan un MP3 temporal desde el WAV de ejemplo
 cuando el libsndfile instalado dispone de codificador MP3, sin versionar
 nuevos archivos multimedia.
+## Contrato comprobado para el informe 2.4.1 (#195)
+
+Las sentencias anteriores requieren la tabla cargada, los archivos y el
+vocabulario indicado en la preparación; analizar su sintaxis no crea esos
+recursos. La tabla `canciones` es un ejemplo de esquema del enunciado, no
+una afirmación de que #190 contenga grabaciones musicales.
+
+### Creación y administración: SQL frente a bindings
+
+| Operación | Interfaz disponible y parámetros |
+|---|---|
+| Crear IVF | `CREATE INDEX fotos_ivf ON fotos (rasgos) USING IVF;`. No recibe centroides ni `WITH METRIC`; el ejecutor los entrena con la configuración de QueryProcessor. |
+| Crear HNSW | `CREATE INDEX fotos_hnsw ON fotos (rasgos) USING HNSW WITH METRIC=cosine;`. También acepta euclidean y dot. Omitir la métrica selecciona cosine. |
+| Ajustar nlist/nprobe/ef_search para SQL | Argumentos `ivf_nlist`, `vector_nprobe` y `vector_ef_search` de QueryProcessor, como en el ejemplo Python anterior; no cláusulas SQL. |
+| Elegir m, ef_construction y semilla HNSW | Binding `Database.create_hnsw_index(table, index_name, column, metric, params)`, con `HnswParams(m=16, ef_construction=200, seed=0)` por defecto. |
+| Proporcionar centroides IVF | Binding `Database.create_ivf_index(table, index_name, column, centroids)`, matriz nlist × dimensión del vector; el core no entrena. |
+| Eliminar un índice | Binding `Database.drop_index(table, index_name)`. El parser actual admite `DROP TABLE`, pero no `DROP INDEX`. |
+| Consultar un vector ya calculado | `index.k_nearest(query, k, metric, nprobe)` para IVF; último argumento `ef_search` para HNSW. Devuelve `VectorMatch.rid` y `.distance`; se lee la fila con `table.read(match.rid)`. |
+| Referencia exacta con vector calculado | Binding `scan_k_nearest_vector(table, column, query, k, metric)`. No requiere archivo multimedia ni extracción. |
+
+Estas firmas pertenecen a [bindings/module.cpp](../bindings/module.cpp).
+La creación SQL está implementada en
+[Parser._create_index](../engine/parser/parser.py) y
+[QueryProcessor](../engine/executor/processor.py), y probada en
+[test_similar.py](../engine/parser/test_similar.py) y
+[test_similar_native.py](../engine/executor/test_similar_native.py).
+Los parámetros del índice no deben confundirse con K del vocabulario.
