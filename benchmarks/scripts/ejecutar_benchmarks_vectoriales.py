@@ -186,6 +186,7 @@ def etapa(args):
                                     "recall10": recall,
                                     "recall_empates": empate,
                                     "resultados": len(limpios),
+                                    "top10": json.dumps([r for r, _ in limpios]),
                                     "n": n,
                                     "modalidad": nombre,
                                 }
