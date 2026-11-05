@@ -1757,3 +1757,75 @@ La inserción agrega entradas en la cola y actualiza el directorio. El borrado
 cubre el hueco con la última entrada de la lista; si la última página queda
 vacía, se incorpora a la lista libre para reutilizarla. El directorio de
 centroides permanece fijo: insertar no vuelve a ejecutar K-Means.
+
+### HNSW: grafo en memoria y copia paginada
+
+El contrato está en [hnsw.hpp](../core/include/quipudb/index/hnsw.hpp);
+`load`, `save_meta`, `write_node_page` y `write_upper_page` en
+[hnsw.cpp](../core/src/index/hnsw.cpp) definen su representación.
+La versión vigente es **1**.
+
+| Zona | Contenido persistido |
+|---|---|
+| Página 0, área de metadatos | Versión, dimensión, métrica, m, ef_construction, semilla, número de nodos, entrada, nivel máximo, número de registros superiores y cabezas de las cadenas de nodos/capas |
+| Cadena de nodos, en orden de ID interno | RID, nivel, indicador de borrado, primer registro superior, vector y conexiones de capa 0 |
+| Cadena de capas superiores | Contador de vecinos, reservado y espacio para m IDs internos por registro de capa |
+
+El registro de nodo tiene `page:uint32`, `slot:uint16`, `nivel:uint8`,
+`borrado:uint8` y `primer_registro_superior:uint32` (12 bytes); siguen d
+floats y la lista base: contador uint16, reservado uint16 y 2m IDs uint32.
+Su tamaño es `16 + 4d + 8m` bytes; con d=64 y m=16 son 400 bytes.
+Cada registro de capa superior ocupa `4 + 4m` bytes (68 con m=16).
+Las conexiones contienen **IDs internos de nodo**, no RIDs de la tabla.
+El byte de borrado ya existía reservado en #185; #186 lo utiliza sin cambiar
+la versión del formato.
+
+Al abrir se lee el grafo completo: RIDs, vectores, niveles, conexiones,
+marcas de borrado y referencias a sus páginas. También se mantienen un mapa
+por RID y marcas de visitado para la búsqueda. Consultar recorre estas
+estructuras en RAM; recuperar las filas finales sigue requiriendo acceso al
+heap. Por eso cero lecturas de páginas del grafo durante una consulta no
+significa que abrir el índice o recuperar registros no tenga costo.
+
+El nivel de un nodo se obtiene de semilla e ID de llegada, con máximo 15.
+La construcción desciende desde la entrada y elige vecinos; las capacidades
+son 2m en la base y m en las capas superiores. `connect_components` repara
+alcanzabilidad después de construir y de insertar. La consulta desciende
+vorazmente y amplía la exploración de la base con ef_search. La métrica del
+grafo es persistente y una consulta de otra métrica se rechaza.
+
+La construcción por lote escribe las páginas al finalizar. Insertar actualiza
+las páginas afectadas y metadatos. Borrar marca un nodo: conserva vector,
+espacio y conexiones para navegar, pero lo excluye del resultado. En el
+objeto HNSW, `size()` cuenta nodos vivos y borrados; `live_size()` cuenta vivos.
+No se describe este borrado como compactación física.
+
+### Comparación arquitectónica y límites del formato
+
+| Aspecto | IVF | HNSW |
+|---|---|---|
+| Organización | Centroides y listas de vectores | Grafo jerárquico con vectores por nodo |
+| Persistencia | Directorio y cadenas de listas; páginas libres | Cadenas de nodos y capas superiores |
+| Apertura | Carga el directorio | Carga el grafo completo |
+| Búsqueda | Lee páginas de las listas seleccionadas | Recorre el grafo residente; después se recuperan filas |
+| RAM | Directorio, página de trabajo y candidatos; construcción materializada | Grafo, vectores, mapas, visitados y candidatos; construcción materializada |
+| Construcción | Centroides externos + distribución de registros | Inserción por niveles y reparación de conectividad |
+| Parámetros | nlist en construcción; nprobe en consulta | m, ef_construction y semilla en construcción; ef_search en consulta |
+| Aproximación | Omite listas no exploradas | Limita la exploración del grafo |
+
+Las estructuras `Meta` se copian con `memcpy`; componentes y campos se
+serializan mediante las operaciones de página del core. No hay aquí un
+contrato de intercambio independiente de endianess/ABI ni una migración
+automática entre versiones. `open` comprueba la versión esperada. Esta
+sección documenta el formato actual, no promete portabilidad de archivos
+binarios entre arquitecturas.
+
+En #191, con 100 000 imágenes, los índices ocuparon 28,02 MB (IVF) y 41,42 MB
+(HNSW). El RSS de búsqueda fue 70,91 y 108,72 MiB; el de construcción fue
+227,98 y 111,52 MiB, respectivamente. Son máximos del proceso completo y
+etapas distintas; no deben confundirse con el tamaño de las estructuras.
+Las [mediciones y limitaciones](informe/comparacion_multimedia.md) incluyen
+entrenamiento IVF y caché no controlada. Las pruebas de reapertura están en
+[test_ivf.py](../engine/test_ivf.py), [test_hnsw.py](../engine/test_hnsw.py),
+[test_ivf_busqueda.py](../engine/test_ivf_busqueda.py) y
+[test_hnsw_busqueda.py](../engine/test_hnsw_busqueda.py).
