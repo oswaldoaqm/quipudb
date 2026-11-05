@@ -1686,3 +1686,74 @@ La comparacion experimental de TF-IDF, BM25 y el GIN de PostgreSQL esta en
 [`docs/informe/comparacion_texto.md`](informe/comparacion_texto.md). Las
 decisiones de esta seccion, con las mediciones que las respaldan, estan en el
 [ADR 0006](adr/0006-indice-invertido-y-rankings.md).
+
+## Índices vectoriales (Parte 4)
+
+Esta sección describe la persistencia implementada por IVF (#183–#184) y
+HNSW (#185–#186). Las decisiones del pipeline están en el
+[ADR 0009](adr/0009-pipeline-e-indices-vectoriales.md); el contrato SQL y
+Python está en [consultas multimedia](consultas-multimedia.md).
+
+### Archivos, tabla e interfaces
+
+[Catalog::create_index](../core/src/catalog/catalog.cpp) registra los índices
+con tipo `ivf` o `hnsw`. Para una tabla `imagenes` y nombres de índice `ivf`
+y `hnsw`, los archivos son `imagenes.ivf.ivf` e `imagenes.hnsw.hnsw`.
+La regla es `<tabla>.<nombre_indice>.<tipo>`, relativa al directorio del
+catálogo; no son directorios de fragmentos. La tabla HEAP permanece en su
+propio archivo, por ejemplo `imagenes.heap`. El esquema registra `VECTOR(d)`.
+
+Los registros contienen sus vectores float32 y los índices almacenan una
+segunda copia junto al RID `(page:uint32, slot:uint16)`. Así pueden comparar
+candidatos sin recuperar cada fila del heap. Después del ranking, el ejecutor
+lee las filas seleccionadas por RID. Los archivos multimedia y el vocabulario
+`.npz` son artefactos externos, no páginas del índice.
+
+[Database](../core/src/catalog/database.cpp) crea los adaptadores
+[IvfIndex](../core/src/index/ivf_index.cpp) y
+[HnswIndex](../core/src/index/hnsw_index.cpp), llama a `build()` sobre la tabla
+y permite recuperarlos con `index(tabla, nombre)`. Al reabrir, el adaptador
+abre el archivo persistido; no entrena un modelo nuevo. La creación fallida
+retira su entrada del catálogo y el archivo incompleto. `Database::flush`
+vacía los componentes abiertos; las operaciones de los índices escriben las
+páginas y sus metadatos mediante DiskManager.
+
+Ambos `build()` recorren la tabla con cursor, pero reúnen todos los RIDs y
+vectores en arreglos antes de invocar la construcción. El muestreo acotado
+para entrenar IVF no convierte esta etapa nativa en una carga por bloques.
+
+### IVF: directorio y listas paginadas
+
+La fuente del formato es [ivf.hpp](../core/include/quipudb/index/ivf.hpp)
+y su lectura/escritura está en [ivf.cpp](../core/src/index/ivf.cpp).
+El formato vigente tiene versión **2**, que incluye la lista de páginas libres.
+
+| Zona | Contenido persistido |
+|---|---|
+| Página 0, área de metadatos de DiskManager | Versión, dimensión, nlist, cabeza del directorio, cabeza de páginas libres, campo reservado y cantidad total de vectores |
+| Directorio, cadena de páginas | Una entrada por lista: d componentes float32 del centroide, cabeza uint32, cola uint32 y cantidad uint32 |
+| Cada lista, cadena enlazada mediante `next` | Entradas con RID de 6 bytes seguido por d componentes float32 |
+
+Una entrada de directorio ocupa `4d + 12` bytes; una entrada de lista,
+`6 + 4d`, sin contar cabeceras de página. Para d=64 son 268 y 262 bytes.
+El tamaño de página se recibe al abrir/crear; Database utiliza el de la tabla
+(4 096 bytes de forma predeterminada). No se deben interpretar esas fórmulas
+como el tamaño completo del archivo: existen cabeceras y espacio libre.
+
+Al abrir, IVF carga centroides, cabezas, colas, tamaños y referencias a las
+páginas del directorio en memoria. Las entradas de las listas se leen desde
+DiskManager durante la búsqueda. No se carga por diseño una matriz con
+todos los vectores para cada consulta.
+
+`nearest_list` asigna por distancia euclidiana, con desempate por número de
+lista. `probe_order` usa el mismo criterio para ordenar centroides. La búsqueda
+lee las primeras `min(nprobe, nlist)` listas y evalúa sus vectores con la
+métrica pedida, manteniendo un heap de los mejores k candidatos. En #184,
+`nprobe=nlist` se contrasta con la búsqueda exacta, incluido el desempate por
+RID. Las lecturas de páginas contadas por el motor no equivalen necesariamente
+a accesos físicos al dispositivo: puede intervenir la caché del sistema.
+
+La inserción agrega entradas en la cola y actualiza el directorio. El borrado
+cubre el hueco con la última entrada de la lista; si la última página queda
+vacía, se incorpora a la lista libre para reutilizarla. El directorio de
+centroides permanece fijo: insertar no vuelve a ejecutar K-Means.
