@@ -245,6 +245,7 @@ extracción real de las imágenes y audios pequeños versionados en el repo.
 Las pruebas de #189 también generan un MP3 temporal desde el WAV de ejemplo
 cuando el libsndfile instalado dispone de codificador MP3, sin versionar
 nuevos archivos multimedia.
+
 ## Contrato comprobado para el informe 2.4.1 (#195)
 
 Las sentencias anteriores requieren la tabla cargada, los archivos y el
@@ -272,3 +273,53 @@ La creación SQL está implementada en
 [test_similar.py](../engine/parser/test_similar.py) y
 [test_similar_native.py](../engine/executor/test_similar_native.py).
 Los parámetros del índice no deben confundirse con K del vocabulario.
+
+### Ejemplo con columna explícita y límite
+
+Con la misma tabla `fotos` y vocabulario de la preparación:
+
+```sql
+SELECT nombre, SIMILARITY_SCORE() AS score FROM fotos
+WHERE SIMILAR_TO(rasgos, 'fotos_demo/foto_0.png', k=10) USING HNSW WITH METRIC=cosine
+ORDER BY score DESC LIMIT 5;
+```
+
+Primero obtiene hasta diez vecinos, ordena ese conjunto por similitud coseno
+y devuelve hasta cinco. `LIMIT 5` no cambia la exploración de HNSW ni
+reemplaza el k solicitado. El alias `score` es una columna DOUBLE.
+La columna `rasgos` es obligatoria si hay varias columnas VECTOR posibles.
+La combinación de columna explícita, alias y LIMIT se apoya en las pruebas
+[del parser](../engine/parser/test_similar.py),
+[del puntaje](../engine/parser/test_similarity_score.py) y
+[del ejecutor nativo](../engine/executor/test_similarity_score_native.py).
+
+Para los ejemplos anteriores, estas son las comprobaciones concretas:
+
+| Ejemplo | Parámetros y comportamiento | Evidencia |
+|---|---|---|
+| `SELECT * ... USING HNSW` y `SELECT nombre, ruta ... USING IVF` | k=10, cosine; estructura pedida o fallback exacto si falta | `test_cada_estructura_y_metrica_ejecutan_la_busqueda`, `test_un_indice_de_otro_tipo_no_reemplaza_el_pedido`, en test_similar_native.py |
+| `EXPLAIN SELECT ...` | Presenta el plan sin ejecutar ExtractFeatures | `test_using_elige_entre_ambos_indices_y_explain_no_extrae`, en test_similar_native.py |
+| `EXPLAIN ANALYZE SELECT ...` | Ejecuta la consulta y expone mediciones del plan | `test_explain_no_extrae_y_analyze_no_devuelve_filas`, en test_similarity_score_native.py |
+| Puntaje cosine, `ORDER BY score DESC` | Mayor similitud primero dentro del top-k | `test_valor_natural_orden_y_correspondencia`, en test_similarity_score_native.py |
+| Puntaje euclidean, `ORDER BY distancia_euclidea ASC` | Menor distancia primero | La misma prueba parametrizada para métrica y dirección |
+| Ejemplo `canciones`, euclidean y `ORDER BY score DESC` | Invierte los vecinos elegidos: el más lejano de ese top-k sale primero | `test_euclidea_desc_no_promete_el_mejor_primero` y `test_audio_e_imagen_reales_con_puntaje`, en test_similarity_score_native.py |
+
+### Restricciones que afectan la interpretación
+
+`SIMILAR_TO` es la condición de búsqueda, no una función booleana combinable
+libremente. El parser actual no admite añadirle un filtro mediante `AND` u
+`OR`; tampoco hay filtrado previo por otra columna en esta sintaxis.
+Se rechazan JOIN, GROUP BY y DELETE por similitud. No se documenta SQL de
+administración o parámetros que el parser no implemente.
+
+El motor **no excluye automáticamente el propio registro** cuando se consulta
+un archivo ya cargado. En #191–#194 se piden candidatos adicionales y se
+elimina por ID desde los scripts; eso no es el comportamiento de la sentencia
+SQL. Dos registros distintos con vectores iguales pueden aparecer juntos.
+
+Las distancias de los bindings tienen menor-mejor para todas las métricas;
+`SIMILARITY_SCORE()` convierte a su valor natural. Por ello las distancias
+coseno de la [galería](informe/galeria_similitud/README.md) y el score coseno
+SQL son complementarios (`score = 1 − distancia`), no la misma magnitud.
+La [decisión técnica](adr/0009-pipeline-e-indices-vectoriales.md) y la
+[persistencia](arquitectura.md#índices-vectoriales-parte-4) completan este contrato.
