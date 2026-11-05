@@ -1794,3 +1794,78 @@ temporal y, con la misma versión de Matplotlib, verifican igualdad de bytes.
 Sin las fuentes, esas pruebas se omiten explícitamente. El job Python actual
 de CI no instala Matplotlib: allí se omite el módulo de pruebas gráficas;
 para ejecutarlo completo se necesita la instalación indicada arriba.
+
+## Galería de similitud (#194)
+
+La [galería](../docs/informe/galeria_similitud/README.md) contiene cuatro
+consultas de imágenes con consulta y Top 5 de ambos índices en la misma
+composición, y cuatro consultas de audio con tablas y enlaces a los WAV.
+Los PNG, el informe, los clips seleccionados y `resultados.json` pueden
+versionarse: no dependen de los datasets ignorados para su visualización.
+
+Se reutilizan `imagenes_1000` y `audio_1000` de #190 y los catálogos y CSV
+`metricas_192/{modalidad}_1000/COSINE`. No se ejecutan benchmarks grandes.
+La recuperación usa copias temporales de esos catálogos: se consulta el
+exacto, IVF y HNSW, sin cargar filas, entrenar ni extraer características.
+El Top 10 nativo debe coincidir con el CSV de la repetición 0 antes de
+publicar sus primeros cinco resultados. Los RIDs se resuelven con `table.read`
+y se verifican contra nombres y vectores originales; no se deduce el ID
+mediante una fórmula de páginas.
+
+Como control, se consulta también IVF con nprobe=32: sus resultados deben
+coincidir con el CSV de esa configuración y con el Top 10 exacto. En los
+casos de error seleccionados, ampliar la búsqueda elimina las omisiones;
+esto se distingue de las observaciones sobre composición visual.
+
+Requiere el binding nativo compilado para el Python utilizado, NumPy y
+Matplotlib (3.11.0 en esta exportación), ya contemplados por el proyecto.
+No se agregan dependencias. Desde la raíz, con el entorno activado:
+
+```bash
+export PYTHONPATH="$PWD/build-py/bindings:$PWD"
+python -B benchmarks/scripts/generar_galeria_similitud.py \
+  --observaciones benchmarks/galeria_observaciones.json \
+  --salida /tmp/quipudb-galeria-reproducida
+```
+
+La salida debe ser nueva. Sin `--salida`, utiliza
+`docs/informe/galeria_similitud/` y rechaza reemplazar la galería existente.
+`--datasets` permite indicar la raíz multimedia y `--resultados` la raíz
+`metricas_192`; ninguna puede solaparse con la salida. Las rutas de los
+archivos del catálogo pueden pertenecer a otra máquina: las imágenes y WAV
+se resuelven desde el manifiesto del dataset, no desde esas rutas antiguas.
+Si falta el binding o alguna fuente, el proceso falla sin simular resultados.
+
+La selección ordena las 100 consultas originales por la suma de coincidencias
+Top 5 de IVF y HNSW frente al exacto. Elige las dos menores, la mediana y la
+mayor; un barajado con `--semilla 20260906` desempata de forma reproducible.
+Así se ilustran distintos niveles medidos, sin ajustar parámetros para
+crear errores. No es una muestra para estimar tasas de fallo.
+
+La métrica es COSINE: se muestra distancia `1 − similitud`, adimensional,
+menor es mejor. IVF utiliza nprobe=16 y nlist=32; HNSW, ef_search=80, M=16 y
+ef_construction=200. Se excluye el propio ID, pero no otros registros con
+vectores iguales. Éxito/error se refiere al Top 5 exacto, con empates exactos
+en distancia double como en #191. No hay etiquetas semánticas; la selección
+no demuestra reconocimiento de objetos o canciones.
+
+Las observaciones visuales revisadas están en `galeria_observaciones.json`,
+vinculadas al SHA-256 de cada consulta y sus resultados completos. Se incluyen mediante
+`--observaciones`; sin esa opción solo se genera la interpretación numérica.
+Si cambia la semilla, solo se incluyen notas de consultas seleccionadas
+que coincidan con la huella. Los audios son tonos sintéticos de medio segundo,
+no canciones; los WAV incluidos son copias verificadas, sin modificaciones.
+
+```bash
+python -B -m pytest benchmarks/test_casos_galeria.py \
+  benchmarks/test_galeria_similitud.py -q -p no:cacheprovider
+ruff check engine benchmarks
+git diff --check
+```
+
+La integración vuelve a recuperar los ocho ejemplos, verifica que fuentes y
+resultados coincidan y genera una galería temporal. Con la misma versión de
+Matplotlib compara también los bytes de las figuras. Sin fuentes o binding
+esa integración se omite explícitamente; sin Matplotlib se omiten las
+pruebas visuales. Los casos artificiales de las pruebas unitarias nunca se
+usan en el informe. No se modifica ningún archivo de #190–#193.
