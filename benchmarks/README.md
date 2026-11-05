@@ -1677,3 +1677,52 @@ La corrida local de los seis datasets y el barrido completo estan documentados
 en [comparacion_ivf_hnsw.md](comparacion_ivf_hnsw.md). Sus fuentes locales son
 `benchmarks/datasets/ivf_hnsw_191/`, con 44 000 mediciones de consulta y doce
 construcciones. No son necesarias para ejecutar las pruebas pequenas.
+
+## Euclidiana contra coseno (#192)
+
+El ejecutor de #191 admite `--metrica COSINE|EUCLIDEAN` (COSINE por defecto).
+El comparador ejecuta ambas metricas en catalogos nuevos, con los mismos
+100 IDs, parametros, un calentamiento y cinco repeticiones. HNSW se construye
+con la metrica correspondiente. No cambia ni renormaliza vectores de #190.
+
+```bash
+export PYTHONPATH="$PWD/build-py/bindings:$PWD"
+python -B benchmarks/scripts/comparar_metricas.py \
+  benchmarks/datasets/multimedia/imagenes_1000 \
+  --salida benchmarks/datasets/metricas_nueva/imagenes_1000
+```
+
+Repetir para audio y para 10000 y 100000, secuencialmente. La salida debe ser
+nueva. Se conservan limites, mediciones y exclusiones de #191: 11 candidatos
+nativos para eliminar self y retener diez. La conversion del binding entra
+en la latencia; la lectura de archivos, evaluacion y lectura de filas no.
+Los CSV incluyen Top 10 por RID, Recall estricto y con empates frente a la
+referencia exacta de cada metrica. `comparacion.csv` empareja cada consulta,
+parametro y repeticion; `resumen.csv` contiene medianas de medias de latencia,
+Recall medio, vecinos comunes (0 a 10) y porcentaje medio (comunes por diez).
+No se mezclan distancias numericas de escalas distintas al calcular Recall.
+
+Con normas exactamente unitarias, d²=2-2*coseno. Los float32 guardados tienen
+error de redondeo: empates o vecinos casi iguales pueden cambiar de orden.
+Una diferencia aproximada tambien puede provenir de la navegacion de HNSW,
+cuyo grafo se construye por metrica. La comparacion exacta es el control para
+separar estos efectos; no se alteran datos para forzar diferencias.
+
+Pruebas: `python -B -m pytest benchmarks/test_comparar_metricas.py
+benchmarks/test_benchmarks_vectoriales.py -q -p no:cacheprovider`.
+Los resultados locales quedan bajo `benchmarks/datasets/metricas_192/`, fuera
+de Git y disponibles para #193. No se generan graficas.
+
+El informe [comparacion_metricas.md](comparacion_metricas.md) contiene las seis
+comparaciones completas. Para auditar las listas ordenadas y los centroides
+sin repetir mediciones:
+
+```bash
+python -B benchmarks/scripts/auditar_metricas.py \
+  benchmarks/datasets/metricas_192 \
+  --salida benchmarks/datasets/metricas_192/auditoria_nueva.json
+```
+
+Una coincidencia inferior a 100 % no implica necesariamente listas distintas:
+si ambas devuelven nueve vecinos iguales, la interseccion es nueve y el
+porcentaje es 90 %. La auditoria de listas ordenadas distingue ese caso.
