@@ -101,7 +101,7 @@ def etapa(args):
         entrada = json.loads((raiz / "entrada.json").read_text())
         db = native.Database(raiz / "catalogo/catalogo.txt")
         tabla = db.table(nombre)
-        metrica = native.VectorMetric.COSINE
+        metrica = getattr(native.VectorMetric, args.metrica)
         tecnica = args.tecnica
         if args.etapa == "construir":
             inicio = time.perf_counter()
@@ -205,6 +205,7 @@ def main():
     p.add_argument("--repeticiones", type=int, default=5)
     p.add_argument("--etapa", choices=["preparar", "construir", "buscar"])
     p.add_argument("--tecnica", choices=["ivf", "hnsw", "exacto"], default="exacto")
+    p.add_argument("--metrica", choices=["COSINE", "EUCLIDEAN"], default="COSINE")
     p.add_argument("--timeout", type=int, default=900)
     args = p.parse_args()
     if args.consultas < 1 or args.repeticiones < 1:
@@ -227,7 +228,7 @@ def main():
         | {
             "k": 10,
             "candidatos": 11,
-            "metrica": "COSINE",
+            "metrica": args.metrica,
             "consultas": args.consultas,
             "repeticiones": args.repeticiones,
             "calentamientos": 1,
@@ -264,6 +265,8 @@ def main():
             fase,
             "--tecnica",
             tecnica,
+            "--metrica",
+            args.metrica,
             "--consultas",
             str(args.consultas),
             "--repeticiones",
