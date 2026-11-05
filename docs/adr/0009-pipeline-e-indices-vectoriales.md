@@ -125,3 +125,96 @@ carga, incluido IDF. El catálogo no persiste una identidad de vocabulario
 por columna: comprobar K no detecta un modelo diferente de igual dimensión.
 Los benchmarks consultan directamente con vectores precalculados para excluir
 extracción y lectura de archivos de sus mediciones.
+
+## Decisión: conservar IVF, HNSW y referencia exacta
+
+[IVF](../../core/src/index/ivf.cpp) almacena cada vector en la lista de su
+centroide euclidiano más cercano. La búsqueda (#184) ordena esos centroides
+por distancia euclidiana, visita hasta `nprobe` listas y mantiene los mejores
+k candidatos según la métrica solicitada. `nprobe=0` se rechaza y valores
+mayores que nlist se limitan a nlist. Visitar todas las listas produce el
+ranking exacto con el mismo desempate por RID. Pocas listas pueden devolver
+menos de k resultados.
+
+[HNSW](../../core/src/index/hnsw.cpp) mantiene un grafo por niveles. El nivel
+depende de la semilla y del orden de llegada; la construcción selecciona
+vecinos con `ef_construction`, hasta m conexiones en capas superiores y 2m
+en la base, y repara componentes no alcanzables. La consulta (#186) desciende
+vorazmente y explora la base con `max(ef_search, k)` candidatos. La métrica
+queda fijada al crear el grafo; consultar con otra produce un error.
+`ef_search=0` se rechaza. Los nodos borrados siguen sirviendo de tránsito,
+pero no se devuelven. No se presupone crecimiento monótono del Recall por
+consulta al aumentar ef_search.
+
+La [búsqueda exacta](../../core/src/index/vector_scan.cpp) recorre los vectores
+de la tabla. Las tres búsquedas entregan `VectorMatch` con RID y distancia
+interna, ordenadas por distancia creciente y RID en los empates. Las métricas
+son euclidiana, coseno y producto punto; internamente se usa d, `1−coseno`
+y `−producto`, respectivamente. `SIMILARITY_SCORE()` aplica `from_distance`:
+euclidiana sigue siendo distancia; coseno y producto vuelven a similitud.
+El coseno del vector cero se define como cero, por lo que su distancia es uno.
+
+### Parámetros según la interfaz
+
+| Parámetro | SQL / QueryProcessor | Experimentos #191–#192 |
+|---|---|---|
+| nlist | `ivf_nlist=16`; se reduce si hay menos filas de muestra | 32, 100, 316 para 1 000, 10 000, 100 000 |
+| Entrenamiento IVF | Reservoir ≤4 096, seed=188 | Muestra ≤10 000, seed=20260906 |
+| nprobe | `vector_nprobe=1` predeterminado | 1, 2, 4, 8, 16, 32, 64, 128 y nlist, sin exceder nlist |
+| m | Core/HNSW SQL: 16 | 16 |
+| ef_construction | Core/HNSW SQL: 200 | 200 |
+| Semilla HNSW | Core/HNSW SQL: 0 | 20260906 |
+| ef_search | `vector_ef_search=64` predeterminado | 10, 20, 40, 80, 160, 320 |
+
+nprobe y ef_search no son cláusulas SQL. Los bindings permiten pasarlos por
+consulta y crear HNSW con `HnswParams`; QueryProcessor configura sus valores
+para SQL. El contrato ejecutable está en [consultas-multimedia.md](../consultas-multimedia.md).
+
+## Evidencia y compromisos
+
+La comparación #191 usa coseno y selecciona, por dataset e índice, la menor
+latencia medida con Recall@10 ≥ 0,99. En 100 000 imágenes, IVF se construye en
+5,646 s (3,541 s de entrenamiento) y HNSW en 117,687 s. Sus consultas son
+11,918 ms con nprobe=64 y 0,686 ms con ef_search=160, con Recall 0,993 y 0,994.
+Los archivos de índice ocupan 28,02 y 41,42 MB, respectivamente.
+
+En #192 se fijan nprobe=16 y ef_search=80 para comparar métricas. Para esas
+100 000 imágenes, IVF obtiene Recall 0,909 con ambas métricas y HNSW 0,984.
+Euclidiana/coseno tardan 2,636/2,868 ms en IVF y 0,364/0,398 ms en HNSW.
+No se mezclan esas configuraciones con las seleccionadas en #191.
+
+Los tiempos de consulta son medianas de cinco medias de 100 consultas,
+con un calentamiento y exclusión del propio registro. Son datos locales,
+no latencias garantizadas. El [informe #193](../informe/comparacion_multimedia.md)
+contiene las seis comparaciones y las gráficas originales.
+
+## Consecuencias y limitaciones
+
+- IVF reduce construcción y espacio en estos experimentos; HNSW reduce
+  latencia con los umbrales seleccionados. La elección depende de cuánto
+  se reconstruye, cuánto se consulta y la memoria disponible.
+- En 100 000 imágenes, RSS de búsqueda fue 70,91 MiB para IVF y 108,72 MiB
+  para HNSW; RSS de construcción, 227,98 y 111,52 MiB. Son máximos del proceso,
+  no memoria exclusiva del índice: el entrenamiento IVF también consume RAM.
+- HNSW carga el grafo completo al abrir. Los adaptadores de construcción de
+  ambos índices materializan vectores y RIDs; no todo el proceso es por bloques.
+  La persistencia se detalla en [arquitectura](../arquitectura.md#índices-vectoriales-parte-4).
+- Los histogramas pierden la disposición global de las formas y el orden
+  temporal entre ventanas. Con K finito pueden colapsar objetos diferentes.
+  La [galería #194](../informe/galeria_similitud/README.md) distingue recuperación
+  del exacto de relevancia visual o auditiva.
+- Con vectores exactamente unitarios, d²=2−2·coseno. #192 registra los mismos
+  resultados ordenados, pero no demuestra equivalencia para datos sin normalizar.
+- Los corpus son sintéticos, las consultas proceden del corpus, hay una sola
+  construcción por caso y la caché del sistema no está controlada. No hay
+  etiquetas semánticas ni ensayo de carga concurrente.
+
+## Referencias verificables
+
+Además de los enlaces anteriores: [formato de datasets #190](../../benchmarks/scripts/multimedia_dataset.py),
+[ejecutor #191](../../benchmarks/scripts/ejecutar_benchmarks_vectoriales.py),
+[comparador #192](../../benchmarks/scripts/comparar_metricas.py),
+[bindings](../../bindings/module.cpp),
+[pruebas IVF #184](../../engine/test_ivf_busqueda.py),
+[pruebas HNSW #186](../../engine/test_hnsw_busqueda.py) y
+[pruebas nativas del puntaje #189](../../engine/executor/test_similarity_score_native.py).
