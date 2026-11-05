@@ -1,0 +1,42 @@
+{
+  "imagenes/192": {
+    "consulta_sha256": "6429c469824472c396d5a78e1cb645896bea4674a12e94a6e31c1821a3dfbb00",
+    "texto": "La consulta contiene un anillo arriba a la izquierda y trazos cruzados sobre círculos dispersos. Los resultados rojos 000022 y 000473 también tienen círculos y segmentos, pero cambian su posición y agrupación. IVF omite dos vectores más cercanos, 000382 y 000289; compartir estas formas no explica por sí solo esa omisión ni demuestra equivalencia visual.",
+    "resultados_sha256": "b6669e77cd97c4a0aba5d872d678dc23d694f35818fad16459311b5aaf22d532"
+  },
+  "imagenes/603": {
+    "consulta_sha256": "30405dd53383d15d0dea6ac0774c5a66909c656448632c160da6fcdd60c6cbc1",
+    "texto": "En la consulta destacan dos líneas largas que se cruzan. El resultado rojo 000438 concentra discos superpuestos y no conserva ese cruce; 000298, recuperado por HNSW y omitido por IVF, sí muestra trazos cruzados. Es una diferencia visible de composición, pero el error marcado se comprueba por distancia respecto al exacto, no mediante una etiqueta de objeto.",
+    "resultados_sha256": "a3355911a4f211c3fdd79403574f7f91ff08df647cff7a630b3a42e4e78a4d5e"
+  },
+  "imagenes/316": {
+    "consulta_sha256": "b7a3ab2708bac499329689b10a4b2fd6110663817f96659647fbb368bf3c9e4e",
+    "texto": "La consulta y sus vecinos contienen grupos de discos oscuros, anillos y segmentos. Los dos índices recuperan exactamente los mismos cinco vecinos, aunque cambian la disposición de las formas y la luminosidad del fondo. Se considera éxito de recuperación, no reconocimiento de un objeto etiquetado.",
+    "resultados_sha256": "5b4e158c08d30a50abe9d3a40aa6d906ddc5620e95bd750f735809822cc2e8a4"
+  },
+  "imagenes/392": {
+    "consulta_sha256": "ddce885abade775970d0cbaf1b8eebd39b3a718eab210f7d3cf79990a85231ff",
+    "texto": "Los anillos y las líneas inclinadas se repiten en la consulta y en los resultados, con posiciones distintas. IVF y HNSW coinciden también en el orden. La agrupación de anillos de 000574 difiere de la consulta: una distancia baja no exige conservar toda la composición.",
+    "resultados_sha256": "5c26c36306371bb10ee8db1c92b1f817c6331a5e901372d1f0ea74f5f2b9a589"
+  },
+  "audio/504": {
+    "consulta_sha256": "789907710c7e5fa1500ce62c343e037b3fb766d6052f869a3448786d29dae617",
+    "texto": "Los cinco vecinos tienen distancias entre 0,041386 y 0,051335. Ambos índices conservan ese orden; la cercanía se refiere al vector MFCC/TF-IDF y no acredita que los clips sean perceptualmente equivalentes.",
+    "resultados_sha256": "ae649e99ae46af8a5d208a7a75f58af391f3fcbd95a78d8f8b5478c61eb529c3"
+  },
+  "audio/887": {
+    "consulta_sha256": "59e694ecfc07fc097b33e287d33c1626e3375d928d2625515f371f382c52e7e2",
+    "texto": "El primer vecino, 000274, tiene distancia 0,009318; el segundo queda en 0,023124. Los dos índices recuperan los mismos archivos, pero no hay títulos ni etiquetas musicales que permitan llamar a esto un acierto de canción.",
+    "resultados_sha256": "10555a70bf6a6c10b5d6656edc059795975c5fffc75e1431156816f8edfe0a21"
+  },
+  "audio/569": {
+    "consulta_sha256": "94b201269de0db9a2a762a950f8f0fcf3eb29c8faccf8481ad35da376fdc4c44",
+    "texto": "000303 y 000875 empatan exactamente en la distancia nativa (0,001719 al redondear). Son identificadores distintos y se conservan ambos; no se eliminan como resultados duplicados. La coincidencia con el exacto no prueba que los dos WAV sean iguales.",
+    "resultados_sha256": "c125cb4500f3d4bb79b00e632a217ec6458b82ac5cb681cab4b6d786ec565099"
+  },
+  "audio/486": {
+    "consulta_sha256": "6a2472f81409f7d48d7f6b755890d06f57cc353672be378b8891d953af67fe07",
+    "texto": "000621 es el vecino más cercano, con distancia 0,033881, mientras que el quinto queda en 0,064890. IVF y HNSW coinciden en los cinco puestos; no se observa aquí un error de aproximación que justifique marcar un archivo en rojo.",
+    "resultados_sha256": "e44ca5e6da202452dd86023c5a3ff535cec8578e33da141cfb009a90f186025c"
+  }
+}
