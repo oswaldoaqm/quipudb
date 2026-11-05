@@ -1726,3 +1726,71 @@ python -B benchmarks/scripts/auditar_metricas.py \
 Una coincidencia inferior a 100 % no implica necesariamente listas distintas:
 si ambas devuelven nueve vecinos iguales, la interseccion es nueve y el
 porcentaje es 90 %. La auditoria de listas ordenadas distingue ese caso.
+
+## Gráficas e informe multimedia (#193)
+
+El [informe comparativo](../docs/informe/comparacion_multimedia.md) reúne las
+14 figuras, interpretaciones, memoria, almacenamiento y recomendaciones:
+
+- Dos figuras de construcción total (IVF incluye entrenamiento y persistencia).
+- Dos de consulta: configuración más rápida medida con Recall ≥ 0,99 por caso.
+- Seis curvas Recall@10 frente a latencia, una por modalidad y tamaño.
+- Cuatro comparaciones de métricas, con nprobe=16 o ef_search=80 fijos.
+
+Las primeras diez usan `benchmarks/datasets/ivf_hnsw_191/`; las otras cuatro,
+`benchmarks/datasets/metricas_192/`. Los tiempos son medianas de cinco medias
+de 100 consultas, convertidos de ns a ms. No se mezclan las configuraciones
+seleccionadas del #191 con las fijas del #192. Las barras de consulta son
+mínimo–máximo de esas medias, no intervalos de confianza.
+
+Desde la raíz del repositorio, con el entorno Python activado:
+
+```bash
+python -m pip install 'matplotlib==3.11.0' 'numpy>=2.0'
+python -B benchmarks/scripts/generar_graficas_parte4.py
+```
+
+Matplotlib y NumPy ya figuran en `requirements.txt`; no se agregaron
+bibliotecas. El comando fija la versión de Matplotlib usada en las figuras
+publicadas. Otra versión compatible puede cambiar el rasterizado de textos.
+La salida es `docs/informe/graficas/multimedia/`: 14 PNG a 300 dpi y
+`renderizado.json`. El comando reemplaza esas figuras derivadas, pero no
+escribe en las fuentes ni ejecuta extracción, carga, construcción o consultas.
+
+Para usar otra ubicación de las mismas fuentes y conservar las figuras:
+
+```bash
+python -B benchmarks/scripts/generar_graficas_parte4.py \
+  --ivf-hnsw /ruta/a/ivf_hnsw_191 \
+  --metricas /ruta/a/metricas_192 \
+  --salida /ruta/a/figuras_reproducidas \
+  --manifiesto docs/informe/fuentes_multimedia.json
+```
+
+En una copia limpia, hay que recibir los CSV/JSON originales de ambas
+carpetas, conservando sus rutas relativas. El manifiesto versionado enumera
+los 231 archivos y sus hashes SHA-256. Incluye resúmenes, consultas,
+comparaciones, parámetros, construcción, memoria y JSON de auditoría.
+No se necesitan PNG/WAV, vectores, catálogos ni bindings para dibujar.
+Los CSV grandes siguen ignorados; el manifiesto no sustituye su respaldo.
+
+Antes de dibujar se comprueban hashes, tamaños, técnicas, parámetros,
+consultas y repeticiones completas, valores finitos, resúmenes y coincidencia
+de Top 10. Si falta o cambia una fuente, el proceso falla antes de exportar.
+`--registrar-fuentes` sirve únicamente para registrar otro experimento en
+un manifiesto nuevo; no debe usarse para eludir la validación de estas figuras.
+
+```bash
+python -B -m pytest benchmarks/test_datos_parte4.py \
+  benchmarks/test_graficas_parte4.py -q -p no:cacheprovider
+ruff check engine benchmarks
+git diff --check
+```
+
+Las pruebas unitarias usan datos de prueba en carpetas temporales. Las de
+integración leen los resultados locales sin medir de nuevo los índices;
+si las fuentes están disponibles, reconstruyen las 14 figuras en una carpeta
+temporal y, con la misma versión de Matplotlib, verifican igualdad de bytes.
+Sin las fuentes, esas pruebas se omiten explícitamente. El job Python actual
+de CI no instala Matplotlib: allí se omite el módulo de pruebas gráficas;
+para ejecutarlo completo se necesita la instalación indicada arriba.
