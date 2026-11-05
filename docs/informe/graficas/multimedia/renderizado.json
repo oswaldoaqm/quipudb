@@ -1,0 +1,21 @@
+{
+  "matplotlib": "3.11.0",
+  "dpi": 300,
+  "fuente": "DejaVu Sans",
+  "figuras": [
+    "construccion_imagenes.png",
+    "construccion_audio.png",
+    "consulta_imagenes.png",
+    "consulta_audio.png",
+    "recall_imagenes_1000.png",
+    "recall_imagenes_10000.png",
+    "recall_imagenes_100000.png",
+    "recall_audio_1000.png",
+    "recall_audio_10000.png",
+    "recall_audio_100000.png",
+    "metricas_imagenes_ivf.png",
+    "metricas_imagenes_hnsw.png",
+    "metricas_audio_ivf.png",
+    "metricas_audio_hnsw.png"
+  ]
+}
