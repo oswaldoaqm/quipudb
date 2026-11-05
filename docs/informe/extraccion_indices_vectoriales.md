@@ -92,3 +92,61 @@ mismo. La desviación máxima de norma registrada en #192 fue 4,60×10⁻⁸ y s
 aproximado puede coincidir entre métricas y, aun así, omitir vecinos exactos.
 El [informe comparativo](comparacion_multimedia.md) explica también el caso
 de listas idénticas incompletas cuyo porcentaje sobre diez es menor a 100 %.
+
+## Comparación experimental y decisiones
+
+Se evaluaron 1 000, 10 000 y 100 000 elementos por modalidad con 100 consultas
+reproducibles del corpus, excluyendo el propio registro. Hubo un calentamiento
+y cinco repeticiones. Se informa la mediana de las cinco medias de consulta;
+la construcción se realizó una vez por caso.
+
+En #191 se seleccionó, entre las configuraciones medidas, la más rápida con
+Recall@10 ≥ 0,99. Para 100 000 imágenes, IVF tardó 5,65 s en construirse,
+incluidos 3,54 s de entrenamiento, frente a 117,69 s de HNSW. En búsqueda,
+IVF obtuvo 11,918 ms con nprobe=64 y Recall 0,993; HNSW, 0,686 ms con
+ef_search=160 y Recall 0,994. La menor construcción de IVF y la menor latencia
+de HNSW son ventajas distintas.
+
+![Consulta de imágenes con configuraciones seleccionadas del #191](graficas/multimedia/consulta_imagenes.png)
+
+Para 100 000 audios, IVF registró 0,375 ms con nprobe=2 y Recall 0,998;
+HNSW, 0,036 ms con ef_search=10 y Recall 0,995. Esos parámetros no se
+trasladan automáticamente a imágenes: la recuperación depende del corpus.
+Las tablas de los seis casos y las figuras de construcción están en la
+[comparación multimedia](comparacion_multimedia.md), sin duplicarlas aquí.
+
+En #192 se fijaron nprobe=16 y ef_search=80 para comparar euclidiana y coseno.
+En 100 000 imágenes, el Recall fue 0,909 en IVF y 0,984 en HNSW con ambas
+métricas. Son configuraciones diferentes de las seleccionadas en #191.
+Los tiempos no muestran una métrica siempre más rápida, aunque el Top 10
+sea idéntico entre ellas.
+
+![Métricas en imágenes con IVF fijo del #192](graficas/multimedia/metricas_imagenes_ivf.png)
+
+Mantener ambos índices permite elegir según el uso. IVF tuvo menor tiempo
+de construcción y menor almacenamiento; HNSW tuvo menor latencia en los
+casos seleccionados. Con 100 000 imágenes, los archivos ocuparon 28,02 y
+41,42 MB, y los máximos RSS de búsqueda fueron 70,91 y 108,72 MiB. El pico
+RSS de construcción fue mayor en IVF, pues también incluye el entrenamiento.
+No se puede resumir esta comparación diciendo que IVF siempre consume menos
+memoria o que HNSW es superior en todos los escenarios.
+
+## Limitaciones y alcance
+
+Los histogramas descartan la disposición global de las formas y el orden
+temporal de las ventanas. Dos objetos pueden producir vectores cercanos sin
+ser semánticamente equivalentes. La [galería del #194](galeria_similitud/README.md)
+muestra aciertos y omisiones frente al exacto, y separa esa verificación de
+las observaciones visuales.
+
+La selección de parámetros usa las mismas consultas con las que se mide el
+Recall. No hay evaluación externa con etiquetas, carga concurrente ni caché
+controlada. Los tiempos provienen de macOS arm64 y no predicen otros equipos.
+Además, aunque la extracción y el entrenamiento puedan acotarse por muestras
+y bloques, los adaptadores nativos materializan vectores al construir los
+índices; HNSW mantiene el grafo en RAM durante la búsqueda.
+
+Estas restricciones delimitan las recomendaciones: usar los valores medidos
+como puntos de partida, preservar el vocabulario al consultar y comprobar el
+Recall requerido antes de reducir nprobe o ef_search. No se generaron nuevas
+mediciones ni figuras para esta sección.
