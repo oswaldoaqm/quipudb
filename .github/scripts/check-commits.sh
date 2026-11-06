@@ -8,7 +8,7 @@ BASE="${1:-origin/main}"
 CABEZA="${2:-HEAD}"
 
 TIPOS='feat|fix|docs|refactor|test|chore'
-ALCANCES=" storage index external catalog parser txn planner api frontend bench docs build ci "
+ALCANCES=" storage index external catalog parser txn planner api frontend app bench docs build ci "
 PATRON="^(${TIPOS})(\([a-z0-9-]+\))?: [a-z].*[^.]$"
 
 fallos=0

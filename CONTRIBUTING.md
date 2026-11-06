@@ -54,6 +54,7 @@ lista; el CI lo verifica.
 | `planner` | `engine/planner` |
 | `api` | `engine/api` |
 | `frontend` | `frontend/` |
+| `app` | `quipucamayoc/`, la aplicacion RAG de la Parte 5 |
 | `bench` | `benchmarks/` |
 | `docs` | `docs/`, README, ADRs |
 | `build` | CMake, dependencias, empaquetado |
