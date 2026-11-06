@@ -717,9 +717,6 @@ def _plan_equality(
     column: int,
     use_primary_table: bool,
 ) -> _AccessChoice:
-    if use_primary_table:
-        return _AccessChoice(AccessRoute.TABLE_SEARCH)
-
     allow_hash = not (
         isinstance(condition.value, str)
         and (
@@ -731,6 +728,8 @@ def _plan_equality(
         )
     )
     index = _best_index(table, column, for_range=False, allow_hash=allow_hash)
+    if use_primary_table and not _index_beats_table(table, index):
+        return _AccessChoice(AccessRoute.TABLE_SEARCH)
     if index is not None:
         return _AccessChoice(
             AccessRoute.INDEX_SEARCH,
@@ -748,13 +747,12 @@ def _plan_range(
     use_primary_table: bool,
     strict: bool,
 ) -> _AccessChoice:
-    if use_primary_table:
+    index = _best_index(table, column, for_range=True)
+    if use_primary_table and not _index_beats_table(table, index):
         return _AccessChoice(
             AccessRoute.TABLE_RANGE,
             residual_filter=strict,
         )
-
-    index = _best_index(table, column, for_range=True)
     if index is not None:
         return _AccessChoice(
             AccessRoute.INDEX_RANGE,
@@ -765,6 +763,18 @@ def _plan_range(
         AccessRoute.SCAN,
         residual_filter=True,
     )
+
+
+def _index_beats_table(table: TableMetadata, index: IndexMetadata | None) -> bool:
+    """Si un indice sobre la clave le gana a la busqueda de la propia tabla (#255).
+
+    En SEQUENTIAL y B+ agrupado la tabla busca por clave en tiempo logaritmico.
+    En un heap, ``search`` y ``range_search`` recorren todas las paginas: es lo
+    que define a un heap. Ahi cualquier indice sobre la clave es mejor. Es el
+    mismo criterio de ``_choose_probe`` para el index nested loop join.
+    """
+
+    return index is not None and table.structure is Structure.HEAP
 
 
 def _validate_access(
