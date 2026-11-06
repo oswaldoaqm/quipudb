@@ -1855,3 +1855,61 @@ entrenamiento IVF y caché no controlada. Las pruebas de reapertura están en
 [test_ivf.py](../engine/test_ivf.py), [test_hnsw.py](../engine/test_hnsw.py),
 [test_ivf_busqueda.py](../engine/test_ivf_busqueda.py) y
 [test_hnsw_busqueda.py](../engine/test_hnsw_busqueda.py).
+
+## Aplicación RAG: Quipucamayoc (Parte 5)
+
+Quipucamayoc responde preguntas sobre 187 papers de arXiv guardados en QuipuDB
+(opción A del Anexo A). Vive en [`quipucamayoc/`](../quipucamayoc/README.md) y
+es un cliente más del motor: no importa `engine` ni `quipudb_native`, solo usa
+el API REST. Las decisiones están en el
+[ADR 0010](adr/0010-aplicacion-rag-quipucamayoc.md).
+
+```
+quipucamayoc/web (React, :5174)
+   │  POST /ask/stream · GET /papers · POST /papers
+   ▼
+quipucamayoc/server (FastAPI, :8001) ──► Gemini
+   │  POST /query · GET /tables · POST /tables/{tabla}/load
+   ▼
+engine/api (:8000) ──► core
+```
+
+### Las tablas
+
+`papers` (relacional) y `chunks` (texto), ambas en heap. `papers` tiene un hash
+sobre `id` y un B+ sobre `anio`; `chunks` tiene el índice de texto en inglés
+sobre `texto` y un hash sobre `paper_id`. Un chunk ocupa 4 016 bytes y entra en
+una página de 4 KiB. El DDL vive en un solo lugar,
+`quipucamayoc/server/app/corpus/esquema.py`.
+
+### Recorrido de una pregunta
+
+| Etapa | Dónde | Qué hace |
+|---|---|---|
+| Reescritura | Gemini (`gemini-3.5-flash-lite`) | La pregunta en español pasa a palabras clave en inglés, el idioma del corpus |
+| Recuperación | QuipuDB | `SELECT id, paper_id, orden, pagina, texto, SCORE() AS relevancia FROM chunks WHERE MATCH(texto, '...') USING BM25 LIMIT 24` va por el índice invertido; luego `SELECT ... FROM papers WHERE id = n` por cada paper, por el hash |
+| Selección | servidor | Los 8 chunks más relevantes, a lo sumo 3 por paper |
+| Generación | Gemini (`gemini-3.5-flash`) | Responde citando los chunks como `[n]`; las citas a números que no se enviaron se quitan del texto |
+
+`MATCH` no admite `JOIN` ni otra condición en el `WHERE` (#168): por eso los
+metadatos van en una segunda consulta. La pregunta del usuario termina dentro
+de un literal SQL y se escapa duplicando la comilla simple, lo único que el
+lexer interpreta ahí; las pruebas lo verifican contra el lexer real.
+
+### Contratos
+
+- `POST /ask` y `POST /ask/stream` (una línea JSON por etapa):
+  [`quipucamayoc/README.md`](../quipucamayoc/README.md#preguntar-post-ask) y
+  `quipucamayoc/server/app/contrato.py`. La interfaz los repite en
+  `quipucamayoc/web/src/api/types.ts`.
+- Cada respuesta trae los SQL ejecutados con el plan que devolvió el motor: la
+  interfaz los dibuja tal cual, así que un cambio en el plan (ADR 0002) se ve
+  también ahí.
+
+### Pruebas
+
+Las pruebas del servidor corren contra el motor real dentro del mismo proceso
+(`TestClient` sobre `engine.api.main.create_app`, ver
+`quipucamayoc/server/tests/conftest.py`) en el job de bindings del CI, y con un
+LLM falso: no necesitan red ni clave. La evaluación de la recuperación y de las
+respuestas está en [`informe/rag_evaluacion.md`](informe/rag_evaluacion.md).
