@@ -136,10 +136,11 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: "22"
-      - name: Compilar la interfaz
+      - name: Probar y compilar la interfaz
         working-directory: quipucamayoc/web
         run: |
           npm ci
+          npm test
           npm run build
 
   commits:
