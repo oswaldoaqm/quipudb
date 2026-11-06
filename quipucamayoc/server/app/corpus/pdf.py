@@ -7,6 +7,8 @@ termina citando, asi que se limpia lo que estorba a BM25 y al lector:
 - cabeceras y pies que se repiten en las paginas (titulo de la revista,
   numero de pagina, el sello lateral de arXiv),
 - ligaduras tipograficas (``ﬁ`` -> ``fi``) y caracteres de control,
+- nombres de glifo que pypdf escribe cuando no sabe que letras son
+  (``shi/f_ted`` -> ``shifted``),
 - la seccion de referencias, opcionalmente: sus nombres y titulos atraen
   coincidencias de BM25 que no responden ninguna pregunta (ADR 0010).
 """
@@ -35,6 +37,10 @@ _REFERENCIAS = re.compile(
     r"^(\d+\.?\s*|[IVX]+\.?\s*)?(references|bibliography|referencias)\s*$", re.IGNORECASE
 )
 _CORTE_CON_GUION = re.compile(r"(\w)-\n\s*([a-z])")
+# Glifos de ligadura sin equivalente Unicode en la fuente del PDF: pypdf
+# escribe su nombre (/f_t, /f_f_i). Visto en el paper de ALEX (#253): sin
+# esto, "shifted" queda como "shi/f_ted" y BM25 nunca lo encuentra.
+_GLIFO_LIGADURA = re.compile(r"/((?:[A-Za-z]_)+[A-Za-z])")
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
@@ -100,6 +106,7 @@ def limpiar(paginas: list[str], *, quitar_referencias: bool = True) -> Documento
 def _normalizar(texto: str) -> str:
     # NFKC separa las ligaduras (ﬁ, ﬂ) y unifica espacios raros.
     texto = unicodedata.normalize("NFKC", texto).replace("\r\n", "\n").replace("\r", "\n")
+    texto = _GLIFO_LIGADURA.sub(lambda m: m.group(1).replace("_", ""), texto)
     return _CONTROL.sub(" ", texto)
 
 

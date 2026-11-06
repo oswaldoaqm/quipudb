@@ -75,6 +75,16 @@ def test_normaliza_ligaduras_y_quita_caracteres_de_control() -> None:
     assert documento.paginas == ("efficient filtering of vectors",)
 
 
+def test_los_nombres_de_glifo_de_ligaduras_vuelven_a_ser_letras() -> None:
+    documento = limpiar(["elements are shi/f_ted to the right; a/f_ter the /f_f_irst Microso/f_t run"])
+
+    assert documento.paginas == ("elements are shifted to the right; after the ffirst Microsoft run",)
+
+
+def test_una_ruta_con_guion_bajo_no_es_una_ligadura() -> None:
+    assert limpiar(["see /usr_bin/tool and a_b"]).paginas == ("see /usr_bin/tool and a_b",)
+
+
 def test_quita_el_sello_lateral_de_arxiv() -> None:
     paginas = ["arXiv:1603.09320v4 [cs.DS] 14 Aug 2018\nWe present a new approach."]
 
