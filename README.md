@@ -19,6 +19,7 @@ e indexación anterior en siglos al disco duro.
 - [Manual de instalación](#manual-de-instalación)
 - [Uso](#uso)
 - [Comparación experimental](#comparación-experimental)
+- [Aplicación: Quipucamayoc](#aplicación-quipucamayoc)
 - [Documentación](#documentación)
 - [Equipo](#equipo)
 
@@ -28,9 +29,9 @@ e indexación anterior en siglos al disco duro.
 |---|---|---|
 | 1 | Base de datos relacional: Heap y Secuencial, B+ agrupado y no agrupado, hash extensible, algoritmos externos, SQL, transacciones, interfaz y experimentos | **Completa** |
 | 2 | Base de datos espacial: R-Tree, consultas por radio, k-NN y polígono, métricas euclidiana y Haversine, mapa, SQL espacial y comparación contra PostGIS | **Completa** |
-| 3 | Búsqueda de texto: SPIMI, TF-IDF + coseno, BM25 | Pendiente |
-| 4 | Búsqueda vectorial multimedia: SIFT/MFCC, IVF, HNSW | Pendiente |
-| 5 | Aplicación de IA sobre la API del motor | Pendiente |
+| 3 | Búsqueda de texto: SPIMI, TF-IDF + coseno, BM25, `MATCH` y `SCORE()` en SQL y comparación contra GIN | **Completa** |
+| 4 | Búsqueda vectorial multimedia: SIFT/MFCC, bolsa de palabras, IVF, HNSW, `SIMILAR_TO` en SQL y experimentos | **Completa** |
+| 5 | [Quipucamayoc](quipucamayoc/README.md): RAG sobre 187 papers de arXiv (opción A), con QuipuDB y Gemini | **Completa** (los embeddings opcionales, #251 y #252, pendientes) |
 
 ## Arquitectura del sistema
 
@@ -129,6 +130,10 @@ quipudb/
 │       ├── panels/             FilesPanel, QueryPanel, ResultsPanel, MapPanel, PlanPanel
 │       ├── api/                cliente HTTP y simulador en memoria (mock/)
 │       ├── components/ hooks/ lib/
+├── quipucamayoc/               Parte 5: aplicación RAG, solo usa el API REST del motor
+│   ├── server/                 FastAPI: corpus (arXiv, PDF, chunks, carga), RAG y Gemini
+│   ├── web/                    React 19 + Vite: preguntar y biblioteca
+│   └── corpus/papers.tsv       la lista fija de papers del corpus
 ├── benchmarks/                 comparación experimental
 │   ├── scripts/                generadores de datasets, suites, PostGIS y gráficas
 │   ├── datasets/ results/      CSV generados (no se versionan)
@@ -266,6 +271,12 @@ habla con la API en `VITE_API_URL` (por defecto `http://localhost:8000`).
   terminó sin `flush` y el archivo quedó inconsistente; el motor no tiene
   recuperación ante caídas todavía. Borra el directorio de datos y vuelve a cargar.
 
+### Quipucamayoc
+
+La aplicación de la Parte 5 tiene su propio entorno y su propio README:
+[`quipucamayoc/README.md`](quipucamayoc/README.md) explica cómo levantar el
+servidor y la interfaz, configurar la clave de Gemini y cargar el corpus.
+
 ## Uso
 
 ### Desde Python, con los bindings
@@ -377,7 +388,9 @@ utilizadas. `LIMIT n` acepta un entero no negativo y se aplica al final.
 `CREATE INDEX nombre ON tabla (columna) USING BPLUS` crea un B+ secundario no
 agrupado; `USING HASH` crea un hash extensible y `USING RTREE` un índice
 espacial sobre una columna `POINT`. `USING FULLTEXT` crea el índice de texto
-(SPIMI, con rankings TF-IDF y BM25) sobre una columna `VARCHAR`. También se
+(SPIMI, con rankings TF-IDF y BM25) sobre una columna `VARCHAR`, en español;
+`USING FULLTEXT WITH LANGUAGE=english` usa las stopwords y el stemmer en
+inglés. También se
 aceptan los nombres explícitos `BPLUS_UNCLUSTERED`, `EXTENDIBLE_HASH` e
 `INVERTED_INDEX`. El índice se construye sobre las filas
 existentes y queda disponible para el optimizador. `EXPLAIN` genera el plan sin
@@ -671,6 +684,7 @@ desde esos CSV.
 | #172 | TF-IDF + coseno vs. BM25: construcción, consultas, espacio y memoria de SPIMI | [`comparacion_tfidf_bm25.md`](benchmarks/comparacion_tfidf_bm25.md) |
 | #173 | Precision@10 y Recall@10 de TF-IDF y BM25 | [`relevancia_tfidf_bm25.md`](benchmarks/relevancia_tfidf_bm25.md) |
 | #174 | TF-IDF vs. BM25 vs. GIN de PostgreSQL | [`docs/informe/comparacion_texto.md`](docs/informe/comparacion_texto.md) |
+| #253 | RAG de Quipucamayoc: Hit@k y MRR de BM25 y TF-IDF, con y sin reescribir la pregunta, y latencia por etapa | [`docs/informe/rag_evaluacion.md`](docs/informe/rag_evaluacion.md) |
 
 ```bash
 python benchmarks/scripts/generar_datasets.py       # alumnos 1k/10k/100k
@@ -698,12 +712,26 @@ prueba. Los pasos están en el README de benchmarks
 [GIN](benchmarks/README.md#gin-de-postgresql-issue-174)), junto con los
 protocolos completos de cada suite.
 
+## Aplicación: Quipucamayoc
+
+Un chatbot que responde preguntas sobre papers académicos citando de dónde
+sale cada afirmación (Parte 5, opción A). La pregunta se busca en QuipuDB con el
+índice invertido de la Parte 3 (`MATCH ... USING BM25`), los metadatos de cada
+paper salen de una tabla relacional por su hash, y Gemini redacta la respuesta
+con esos fragmentos. La interfaz muestra, junto a la respuesta, cada SQL que se
+ejecutó en el motor con su plan.
+
+Detalles: [`quipucamayoc/README.md`](quipucamayoc/README.md), el
+[ADR 0010](docs/adr/0010-aplicacion-rag-quipucamayoc.md) y el
+[informe de la Parte 5](docs/informe/aplicacion_rag.md).
+
 ## Documentación
 
 | Documento | Contenido |
 |---|---|
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Diseño general del motor |
-| [`docs/adr/`](docs/adr/) | Decisiones: núcleo (0001), plan de ejecución (0002), SQL (0003), transacciones (0004), locks (0005), índice invertido y rankings (0006) |
+| [`docs/adr/`](docs/adr/) | Decisiones: núcleo (0001), plan de ejecución (0002), SQL (0003), transacciones (0004), locks (0005), índice invertido y rankings (0006), multimedia (0007–0009), aplicación RAG (0010) |
+| [`quipucamayoc/README.md`](quipucamayoc/README.md) | La aplicación de la Parte 5: instalación, configuración de Gemini y contrato de `/ask` |
 | [`docs/informe/`](docs/informe/) | Informe modular: dominio, archivos e índices, SQL, transacciones, interfaz, búsqueda de texto y experimentos |
 | [`benchmarks/README.md`](benchmarks/README.md) | Datasets, protocolos y reproducción de las corridas |
 | [`docs/ingesta-multimedia.md`](docs/ingesta-multimedia.md) | Ingesta de carpetas de imágenes/audio, trabajos REST y ejemplo reproducible |

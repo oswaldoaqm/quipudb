@@ -278,12 +278,15 @@ def text_search_step(
     table_name: str,
     stats: Stats | None = None,
     time_ms: float = 0.0,
+    language: str | None = None,
 ) -> Step:
     """El paso ``text_search`` de MATCH (#170), sin su ``fetch``.
 
     Lo arman igual EXPLAIN, la ejecucion en memoria y la externa: el ranking va
     como campo (``ranking``) y el detalle dice si fue elegido o por omision y
-    cuantos documentos se le pidieron al indice.
+    cuantos documentos se le pidieron al indice. ``language`` es el idioma con
+    que se construyo el indice (#237); solo lo sabe quien lo abrio, asi que un
+    EXPLAIN sin ANALYZE no lo muestra.
     """
 
     if not isinstance(condition, BoundMatchCondition):
@@ -304,6 +307,7 @@ def text_search_step(
         detail=(
             f"indice {index.name}; {_condition_text(condition, source)}; "
             f"ranking {ranking} ({elegido}); {pedidos}"
+            + (f"; idioma {language}" if language else "")
         ),
         stats=stats if stats is not None else Stats(),
         time_ms=time_ms,

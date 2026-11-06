@@ -15,6 +15,7 @@ from engine.parser.ast import (
     ScoreKind,
     SqlTypeName,
     StorageKind,
+    TextLanguage,
     TextRanking,
     VectorMetric,
 )
@@ -93,6 +94,7 @@ class BoundCreateIndexStatement:
     kind: IndexKind
     span: Span
     metric: VectorMetric | None = None
+    language: TextLanguage | None = None
 
 
 @dataclass(frozen=True, slots=True, order=True)

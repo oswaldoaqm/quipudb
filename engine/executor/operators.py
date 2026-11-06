@@ -21,6 +21,7 @@ from engine.executor.predicates import (
     polygon_search_args,
     range_values,
     spatial_search_args,
+    text_index_language,
     text_search_args,
 )
 from engine.executor.vector_search import execute_vector_candidates
@@ -541,6 +542,7 @@ def _read_candidates(
             table_name=table_name,
             stats=index_measurement.stats,
             time_ms=index_measurement.time_ms,
+            language=text_index_language(index),
         )
     else:
         index_step = Step(

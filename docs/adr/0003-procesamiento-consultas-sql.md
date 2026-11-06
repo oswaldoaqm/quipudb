@@ -276,7 +276,11 @@ indices todavia necesita el acuerdo descrito a continuacion. Desde #26, todo
 El optimizador de #26 elige busqueda por clave o indice cuando la estructura y
 el operador lo permiten; en caso contrario usa scan y filtro. La clave primaria
 tiene prioridad; para columnas secundarias se prefiere hash en igualdad y B+
-en rango. Como el core ofrece rangos inclusivos, `<` y `>` conservan un filtro
+en rango. Enmienda de #255: la prioridad de la clave vale para SEQUENTIAL, que
+busca por clave en tiempo logaritmico. En un heap, `search` y `range_search`
+recorren todas las paginas, asi que si hay un indice aplicable sobre la clave
+(hash o B+ para igualdad, B+ para rango) se usa el indice; sin el, la ruta de
+la tabla sigue siendo la elegida. Como el core ofrece rangos inclusivos, `<` y `>` conservan un filtro
 residual que excluye la frontera. Desde #28, el ejecutor conecta `ORDER BY` con
 external sorting estable en ambas direcciones y `GROUP BY` con external
 hashing en estrategia `AUTO`, con fallback medido a sort. La entrada se adapta

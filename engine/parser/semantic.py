@@ -220,6 +220,7 @@ def bind_create_index(
         kind=statement.kind,
         span=statement.span,
         metric=statement.metric,
+        language=statement.language,
     )
 
 

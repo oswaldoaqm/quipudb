@@ -5,7 +5,7 @@ set -uo pipefail
 
 msg="$(head -n1 "$1")"
 TIPOS='feat|fix|docs|refactor|test|chore'
-ALCANCES=" storage index external catalog parser txn planner api frontend bench docs build ci "
+ALCANCES=" storage index external catalog parser txn planner api frontend app bench docs build ci "
 
 case "$msg" in
   "Merge "*|"Revert "*) exit 0 ;;

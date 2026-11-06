@@ -61,6 +61,13 @@ class VectorMetric(StrEnum):
     DOT = "dot"
 
 
+class TextLanguage(StrEnum):
+    """Idioma de las stopwords y del stemmer de un indice de texto (#237)."""
+
+    SPANISH = "spanish"
+    ENGLISH = "english"
+
+
 @dataclass(frozen=True, slots=True)
 class IntegerLiteral:
     value: int
@@ -340,6 +347,8 @@ class CreateIndexStatement:
     kind: IndexKind
     span: Span
     metric: VectorMetric | None = None
+    language: TextLanguage | None = None
+    """Solo FULLTEXT: el idioma de ``WITH LANGUAGE``; ``None`` es el por omision."""
 
 
 @dataclass(frozen=True, slots=True)

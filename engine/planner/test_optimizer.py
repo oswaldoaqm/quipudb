@@ -252,24 +252,76 @@ def test_ir_select_rechaza_operadores_externos_que_no_coinciden_con_la_sentencia
         )
 
 
-@pytest.mark.parametrize(
-    ("condition", "route", "residual"),
-    [
-        (_comparison(0, ComparisonOperator.EQUAL), AccessRoute.TABLE_SEARCH, False),
-        (_between(0), AccessRoute.TABLE_RANGE, False),
-        (_comparison(0, ComparisonOperator.LESS_THAN), AccessRoute.TABLE_RANGE, True),
-        (
-            _comparison(0, ComparisonOperator.GREATER_THAN_OR_EQUAL),
-            AccessRoute.TABLE_RANGE,
-            False,
-        ),
-    ],
-)
-def test_clave_primaria_tiene_prioridad(
+_CONDICIONES_SOBRE_LA_CLAVE = [
+    (_comparison(0, ComparisonOperator.EQUAL), AccessRoute.TABLE_SEARCH, False),
+    (_between(0), AccessRoute.TABLE_RANGE, False),
+    (_comparison(0, ComparisonOperator.LESS_THAN), AccessRoute.TABLE_RANGE, True),
+    (
+        _comparison(0, ComparisonOperator.GREATER_THAN_OR_EQUAL),
+        AccessRoute.TABLE_RANGE,
+        False,
+    ),
+]
+
+
+@pytest.mark.parametrize(("condition", "route", "residual"), _CONDICIONES_SOBRE_LA_CLAVE)
+def test_clave_primaria_tiene_prioridad_en_un_archivo_secuencial(
     condition,
     route: AccessRoute,
     residual: bool,
 ) -> None:
+    # El archivo secuencial busca por clave en tiempo logaritmico: le gana a
+    # cualquier indice secundario sobre la clave.
+    table = TableMetadata(
+        "alumnos",
+        Structure.SEQUENTIAL,
+        (
+            _index("hash_pk", Structure.EXTENDIBLE_HASH, column=0),
+            _index("bplus_pk", Structure.BPLUS_UNCLUSTERED, column=0),
+        ),
+    )
+
+    plan = optimize_select(_select(condition), table)
+
+    assert plan.route is route
+    assert plan.index is None
+    assert plan.residual_filter is residual
+
+
+@pytest.mark.parametrize(("condition", "route", "residual"), _CONDICIONES_SOBRE_LA_CLAVE)
+def test_un_heap_sin_indice_sobre_la_clave_busca_en_la_tabla(
+    condition,
+    route: AccessRoute,
+    residual: bool,
+) -> None:
+    plan = optimize_select(_select(condition), _table())
+
+    assert plan.route is route
+    assert plan.index is None
+    assert plan.residual_filter is residual
+
+
+@pytest.mark.parametrize(
+    ("condition", "route", "index_name", "residual"),
+    [
+        (_comparison(0, ComparisonOperator.EQUAL), AccessRoute.INDEX_SEARCH, "hash_pk", False),
+        (_between(0), AccessRoute.INDEX_RANGE, "bplus_pk", False),
+        (_comparison(0, ComparisonOperator.LESS_THAN), AccessRoute.INDEX_RANGE, "bplus_pk", True),
+        (
+            _comparison(0, ComparisonOperator.GREATER_THAN_OR_EQUAL),
+            AccessRoute.INDEX_RANGE,
+            "bplus_pk",
+            False,
+        ),
+    ],
+)
+def test_en_un_heap_un_indice_sobre_la_clave_le_gana_a_la_tabla(
+    condition,
+    route: AccessRoute,
+    index_name: str,
+    residual: bool,
+) -> None:
+    # La busqueda por clave de un heap recorre todas sus paginas (#255).
     table = _table(
         _index("hash_pk", Structure.EXTENDIBLE_HASH, column=0),
         _index("bplus_pk", Structure.BPLUS_UNCLUSTERED, column=0),
@@ -278,8 +330,18 @@ def test_clave_primaria_tiene_prioridad(
     plan = optimize_select(_select(condition), table)
 
     assert plan.route is route
-    assert plan.index is None
+    assert plan.index is not None and plan.index.name == index_name
     assert plan.residual_filter is residual
+
+
+def test_un_rango_en_un_heap_con_solo_hash_sobre_la_clave_busca_en_la_tabla() -> None:
+    # El hash no sirve para rangos: sin un B+, la tabla sigue siendo la ruta.
+    table = _table(_index("hash_pk", Structure.EXTENDIBLE_HASH, column=0))
+
+    plan = optimize_select(_select(_between(0)), table)
+
+    assert plan.route is AccessRoute.TABLE_RANGE
+    assert plan.index is None
 
 
 @pytest.mark.parametrize(

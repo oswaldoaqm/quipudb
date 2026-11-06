@@ -7,6 +7,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -127,6 +128,44 @@ TEST_F(IndiceDeTexto, SeReconstruyeConOtrasOpcionesYConDatosNuevos) {
   auto& reabierto = dynamic_cast<TextIndex&>(db_->index("documentos", "por_contenido"));
   EXPECT_EQ(reabierto.size(), 4U);
   EXPECT_EQ(reabierto.tokenizer_options(), sin_stemmer);
+}
+
+TEST_F(IndiceDeTexto, SeCreaEnInglesYConservaElIdioma) {
+  const TokenizerOptions ingles{.stopword_languages = {TextLanguage::kEnglish},
+                                .stemmer = TextLanguage::kEnglish};
+  TableFile& t = db_->table("documentos");
+  t.insert(Record{std::int32_t{4}, std::string("Indexing vectors with graphs")});
+  t.insert(Record{std::int32_t{5}, std::string("The index of the book")});
+  auto& ix = dynamic_cast<TextIndex&>(
+      db_->create_text_index("documentos", "por_contenido", "contenido", ingles));
+  EXPECT_EQ(ix.tokenizer_options(), ingles);
+  // El stemmer ingles lleva "indexes" e "indexing" a la misma raiz, y "the"
+  // es stopword: con el espanol ninguna de las dos cosas pasa.
+  auto encontrados = ids(ix.search_text("indexes", TextRankingKind::kBm25, 10));
+  std::sort(encontrados.begin(), encontrados.end());
+  EXPECT_EQ(encontrados, (std::vector<std::int32_t>{4, 5}));
+  EXPECT_TRUE(ix.search_text("the", TextRankingKind::kBm25, 10).empty());
+
+  // Una fila nueva lo desactualiza (asi le avisa el DML); la reconstruccion
+  // sigue en ingles.
+  const Record nuevo{std::int32_t{6}, std::string("Indexed by date")};
+  ix.insert(nuevo.at(1), t.insert(nuevo));
+  ASSERT_TRUE(ix.stale());
+  EXPECT_EQ(ix.search_text("indexes", TextRankingKind::kBm25, 10).size(), 3U);
+  EXPECT_EQ(ix.tokenizer_options(), ingles);
+
+  db_.reset();
+  abrir();
+  auto& reabierto = dynamic_cast<TextIndex&>(db_->index("documentos", "por_contenido"));
+  EXPECT_EQ(reabierto.tokenizer_options(), ingles);
+  EXPECT_EQ(reabierto.search_text("indexes", TextRankingKind::kBm25, 10).size(), 3U);
+}
+
+TEST_F(IndiceDeTexto, CrearEnOtroIdiomaValidaComoCreateIndex) {
+  const TokenizerOptions ingles{.stopword_languages = {TextLanguage::kEnglish},
+                                .stemmer = TextLanguage::kEnglish};
+  EXPECT_THROW(db_->create_text_index("documentos", "mal", "id", ingles), SchemaError);
+  EXPECT_FALSE(db_->catalog().table("documentos").index("mal"));
 }
 
 TEST_F(IndiceDeTexto, SoloSobreColumnasDeTexto) {

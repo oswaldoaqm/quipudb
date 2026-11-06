@@ -18,6 +18,7 @@ from engine.executor.predicates import (
     polygon_search_args,
     range_values,
     spatial_search_args,
+    text_index_language,
     text_search_args,
 )
 from engine.parser.ast import AggregateFunction, OrderDirection, SqlTypeName
@@ -574,6 +575,7 @@ def _index_pipeline(
             table_name=table_name,
             stats=measured.stats,
             time_ms=measured.time_ms,
+            language=text_index_language(index),
         )
     else:
         index_step = Step(

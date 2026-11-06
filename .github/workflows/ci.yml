@@ -106,6 +106,42 @@ jobs:
           engine/api/test_media_native.py
           engine/api/test_similar_native.py
           engine/api/test_spatial_context.py -q -rs -p no:cacheprovider
+      # Quipucamayoc habla con el motor solo por HTTP, pero sus pruebas de
+      # punta a punta necesitan un motor de verdad: aqui corre dentro del
+      # proceso, con TestClient y el modulo recien compilado (ver
+      # quipucamayoc/server/tests/conftest.py).
+      - name: Probar Quipucamayoc contra el motor real
+        env:
+          PYTHONPATH: ${{ github.workspace }}/build-py/bindings
+        working-directory: quipucamayoc/server
+        run: |
+          pip install -r requirements.txt
+          python -m pytest tests/test_motor.py tests/test_carga.py tests/test_recuperacion.py tests/test_generacion.py tests/test_ask.py tests/test_biblioteca.py -q -rs -p no:cacheprovider
+
+  quipucamayoc:
+    name: Probar Quipucamayoc (servidor e interfaz)
+    runs-on: ubuntu-26.04
+    # La aplicacion RAG solo habla con el motor por HTTP (ADR 0010): sus
+    # pruebas no necesitan el core compilado, y sus dependencias van aparte.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: pip install -r quipucamayoc/server/requirements.txt
+      - run: ruff check quipucamayoc/server
+      - name: Probar el servidor
+        working-directory: quipucamayoc/server
+        run: python -m pytest -q -p no:cacheprovider
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Probar y compilar la interfaz
+        working-directory: quipucamayoc/web
+        run: |
+          npm ci
+          npm test
+          npm run build
 
   commits:
     name: Validar mensajes de commit

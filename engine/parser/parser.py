@@ -53,6 +53,7 @@ from engine.parser.ast import (
     StorageKind,
     StringLiteral,
     TableRef,
+    TextLanguage,
     TextRanking,
     VectorLiteral,
     VectorMetric,
@@ -264,6 +265,9 @@ class _Parser:
             metric = VectorMetric.COSINE
             if self._match(TokenKind.WITH):
                 metric, _ = self._vector_metric()
+        language = None
+        if kind is IndexKind.INVERTED_INDEX and self._match(TokenKind.WITH):
+            language = self._text_language()
         return CreateIndexStatement(
             index=index,
             table=table,
@@ -271,7 +275,27 @@ class _Parser:
             kind=kind,
             span=combine_spans(start.span, self._previous().span),
             metric=metric,
+            language=language,
         )
+
+    def _text_language(self) -> TextLanguage:
+        # LANGUAGE y el idioma se leen como identificadores, igual que la k de
+        # SIMILAR_TO: volverlos palabras reservadas romperia las tablas que ya
+        # tienen una columna llamada language o english.
+        name = self._peek()
+        if name.kind is not TokenKind.IDENTIFIER or name.lexeme.lower() != "language":
+            raise self._error(name, "se esperaba LANGUAGE despues de WITH")
+        self._advance()
+        self._expect(TokenKind.EQUAL, "se esperaba '=' despues de LANGUAGE")
+        token = self._peek()
+        try:
+            language = TextLanguage(token.lexeme.lower())
+        except ValueError:
+            raise self._error(token, "el idioma debe ser spanish o english") from None
+        if token.kind is not TokenKind.IDENTIFIER:
+            raise self._error(token, "el idioma debe ser spanish o english")
+        self._advance()
+        return language
 
     def _column_definition(self) -> ColumnDefinition:
         name = self._identifier("se esperaba el nombre de una columna")

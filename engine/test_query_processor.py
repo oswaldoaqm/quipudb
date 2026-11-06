@@ -220,6 +220,36 @@ def test_create_index_sql_es_usado_por_select_y_explain(db):
     assert selected.plan.root.walk()[0].structure.value == quipudb.kind.EXTENDIBLE_HASH
 
 
+def test_en_un_heap_el_indice_sobre_la_clave_evita_recorrer_la_tabla(db):
+    # La busqueda por clave de un heap recorre sus paginas; con un hash o un B+
+    # sobre la clave, el optimizador usa el indice (#255).
+    processor = QueryProcessor(db)
+    processor.execute(
+        "CREATE TABLE papers (id INT PRIMARY KEY, titulo VARCHAR(2000)) USING HEAP"
+    )
+    processor.execute(";".join(f"INSERT INTO papers VALUES ({i}, 't{i}')" for i in range(1, 121)))
+    sin_indice = processor.execute("SELECT titulo FROM papers WHERE id = 100")
+    processor.execute("CREATE INDEX por_id ON papers (id) USING HASH")
+    processor.execute("CREATE INDEX por_id_ordenado ON papers (id) USING BPLUS")
+
+    igualdad = processor.execute("SELECT titulo FROM papers WHERE id = 100")
+    rango = processor.execute("SELECT id FROM papers WHERE id BETWEEN 50 AND 52")
+
+    assert [paso.op.value for paso in sin_indice.plan.root.walk()] == ["search", "project"]
+    assert [paso.op.value for paso in igualdad.plan.root.walk()] == [
+        "index_search",
+        "fetch",
+        "project",
+    ]
+    assert igualdad.rows == sin_indice.rows == (("t100",),)
+    assert (
+        igualdad.plan.root.subtree_stats().pages_read
+        < sin_indice.plan.root.subtree_stats().pages_read
+    )
+    assert rango.plan.root.walk()[0].op.value == "index_range"
+    assert sorted(rango.rows) == [(50,), (51,), (52,)]
+
+
 def test_explain_analyze_ejecuta_select_y_mide_plan_real(db):
     processor = QueryProcessor(db)
     processor.execute("CREATE TABLE personas (id INT PRIMARY KEY, nombre VARCHAR(20))")
@@ -889,6 +919,61 @@ def test_create_index_fulltext_construye_y_queda_en_el_catalogo(db, estructura):
     ix = db.index("docs", "por_texto")
     assert isinstance(ix, quipudb.TextIndex)
     assert ix.documents == 3
+    assert _ids_por_texto(db, "oro plata camión") == [2, 3, 1]
+
+
+_PAPERS = (
+    "CREATE TABLE papers (id INT PRIMARY KEY, texto VARCHAR(120)) USING HEAP;"
+    "INSERT INTO papers VALUES (1, 'Indexing vectors with navigable graphs');"
+    "INSERT INTO papers VALUES (2, 'The index of the book');"
+    "INSERT INTO papers VALUES (3, 'Graph databases for the masses')"
+)
+
+
+def _paso_text_search(paso: dict) -> dict | None:
+    if paso["op"] == "text_search":
+        return paso
+    for hijo in paso["children"]:
+        if (encontrado := _paso_text_search(hijo)) is not None:
+            return encontrado
+    return None
+
+
+def test_create_index_fulltext_en_ingles_tokeniza_y_busca_en_ingles(tmp_path):
+    db = quipudb.Database(tmp_path / "catalogo.txt")
+    processor = QueryProcessor(db)
+    processor.execute(_PAPERS)
+
+    processor.execute("CREATE INDEX por_texto ON papers (texto) USING FULLTEXT WITH LANGUAGE=english")
+
+    opciones = db.index("papers", "por_texto").tokenizer_options
+    assert opciones.stemmer == quipudb.TextLanguage.ENGLISH
+    assert list(opciones.stopword_languages) == [quipudb.TextLanguage.ENGLISH]
+    # El stemmer ingles lleva indexes, indexing e index a la misma raiz; con el
+    # espanol, "indexes" no encontraria nada.
+    result = processor.execute("SELECT id FROM papers WHERE MATCH(texto, 'indexes')")
+    assert sorted(fila[0] for fila in result.rows) == [1, 2]
+    assert "idioma english" in _paso_text_search(result.plan.to_dict()["root"])["detail"]
+    # "the" es stopword en ingles: no queda en el indice.
+    assert processor.execute("SELECT id FROM papers WHERE MATCH(texto, 'the')").rows == ()
+
+    # Una fila nueva lo desactualiza; la reconstruccion y la reapertura siguen
+    # en ingles.
+    processor.execute("INSERT INTO papers VALUES (4, 'Indexed by date')")
+    del processor, db
+    db = quipudb.Database(tmp_path / "catalogo.txt")
+    processor = QueryProcessor(db)
+    result = processor.execute("SELECT id FROM papers WHERE MATCH(texto, 'indexes')")
+    assert sorted(fila[0] for fila in result.rows) == [1, 2, 4]
+    assert db.index("papers", "por_texto").tokenizer_options.stemmer == quipudb.TextLanguage.ENGLISH
+
+
+def test_create_index_fulltext_en_espanol_explicito_es_el_por_omision(db):
+    processor = _docs(db)
+
+    processor.execute("CREATE INDEX por_texto ON docs (texto) USING FULLTEXT WITH LANGUAGE=spanish")
+
+    assert db.index("docs", "por_texto").tokenizer_options == quipudb.TokenizerOptions()
     assert _ids_por_texto(db, "oro plata camión") == [2, 3, 1]
 
 
