@@ -266,6 +266,8 @@ def test_la_reescritura_puede_ir_con_otro_modelo(corpus) -> None:
 def test_un_tiempo_agotado_tambien_pasa_al_respaldo() -> None:
     import httpx
 
+    pytest.importorskip("google.genai")
+
     cliente = _ClienteGemini({"principal": httpx.ReadTimeout("lento"), "respaldo": "ok"})
     llm = GeminiLLM("clave", "principal", ("respaldo",), cliente=cliente)
 
