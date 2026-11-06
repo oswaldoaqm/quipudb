@@ -210,6 +210,31 @@ Index& Database::create_hnsw_index(std::string_view table, std::string_view inde
   return *it->second;
 }
 
+Index& Database::create_text_index(std::string_view table, std::string_view index_name,
+                                   std::string_view column, const TokenizerOptions& tokenizer) {
+  // El catalogo valida que la columna sea VARCHAR y la tabla un heap file.
+  const IndexInfo info = catalog_.create_index(table, index_name, column, kind::kInvertedIndex);
+  const TableInfo& tabla = catalog_.table(table);
+  const auto ruta = catalog_.resolve(info.file);
+  TableFile& datos = this->table(table);
+  std::unique_ptr<TextIndex> handle;
+  try {
+    handle = std::make_unique<TextIndex>(ruta, tabla.schema.columns.at(info.column), datos,
+                                         tabla.page_size);
+    // Una sola construccion, ya con estas opciones: crear con `create_index`
+    // y reconstruir despues tokenizaria el corpus dos veces.
+    handle->build(tokenizer);
+  } catch (...) {
+    handle.reset();
+    catalog_.drop_index(table, index_name);
+    std::error_code ignorado;
+    for (const auto& archivo : archivos_de(info)) std::filesystem::remove(archivo, ignorado);
+    throw;
+  }
+  auto [it, _] = indices_.emplace(clave_indice(table, index_name), std::move(handle));
+  return *it->second;
+}
+
 Index& Database::index(std::string_view table, std::string_view index_name) {
   const auto clave = clave_indice(table, index_name);
   if (const auto it = indices_.find(clave); it != indices_.end()) return *it->second;

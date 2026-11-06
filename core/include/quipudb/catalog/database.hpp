@@ -60,6 +60,7 @@
 
 #include "quipudb/catalog/catalog.hpp"
 #include "quipudb/index/hnsw.hpp"
+#include "quipudb/index/text_tokenizer.hpp"
 #include "quipudb/catalog/table.hpp"
 
 namespace quipudb {
@@ -134,6 +135,15 @@ class Database {
   Index& create_hnsw_index(std::string_view table, std::string_view index_name,
                            std::string_view column, VectorMetric metric,
                            HnswParams params = {});
+
+  /// Crea un indice de texto (#237) sobre la columna VARCHAR `column` y lo
+  /// construye una sola vez con estas opciones de tokenizacion (idioma,
+  /// stopwords, stemmer). `create_index` con `kInvertedIndex` es lo mismo con
+  /// las opciones por omision, en espanol. Las opciones viajan con el indice:
+  /// reabrirlo o reconstruirlo por desactualizado usa las mismas. Si algo
+  /// falla al construir, el indice sale del catalogo y sus archivos se borran.
+  Index& create_text_index(std::string_view table, std::string_view index_name,
+                           std::string_view column, const TokenizerOptions& tokenizer);
 
   /// Handle de un indice ya registrado, abriendolo la primera vez. Siempre el
   /// mismo objeto, montado sobre el mismo handle de tabla que devuelve
