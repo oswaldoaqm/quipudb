@@ -172,29 +172,42 @@ def precalcular(raiz: Path, *, k: int = 64, muestra: int = 8192) -> Path:
         resultado = trabajo / "caracteristicas"
         resultado.mkdir()
         # N x K conteos en disco: permite calcular IDF sin repetir la extraccion completa.
-        conteos = np.lib.format.open_memmap(
-            trabajo / "conteos.npy", mode="w+", dtype="uint32", shape=(cantidad, k)
-        )
-        df = np.zeros(k, dtype=np.int64)
-        for identificador, _, ruta in filas(raiz, datos, verificar_archivos=False):
-            palabras = codebook.assign(describe(ruta, **opciones))
-            conteos[identificador - 1] = np.bincount(palabras, minlength=k)
-            df += conteos[identificador - 1] > 0
-        vocabulario = Vocabulary(codebook, inverse_document_frequency(df, cantidad), cantidad)
-        vocabulario.save(resultado / "vocabulario.npz")
-        vectores = np.lib.format.open_memmap(
-            resultado / "vectores.npy", mode="w+", dtype="float32", shape=(cantidad, k)
-        )
-        for inicio in range(0, cantidad, 1024):
-            # Mismos pesos y normalizacion de Vocabulary.histogram, sobre conteos cacheados.
-            pesos = tf_weight(conteos[inicio : inicio + 1024], TF_LOG) * vocabulario.idf
-            normas = np.sqrt(np.sum(pesos * pesos, axis=1))
-            if np.any(normas == 0):
-                raise ValueError("el vocabulario produce vectores nulos; ajuste k o los patrones")
-            vectores[inicio : inicio + len(pesos)] = (pesos / normas[:, None]).astype(np.float32)
-        validar_vectores(vectores, cantidad, k)
-        vectores.flush()
-        del vectores, conteos
+        # Los mapeos se sueltan en un `finally`: mientras uno siga abierto,
+        # Windows no deja borrar su archivo, y la carpeta temporal quedaba
+        # sin limpiar cuando algo fallaba a mitad -- por ejemplo el
+        # ValueError de los vectores nulos, que salta dentro del bucle. En
+        # Linux se puede borrar un archivo abierto y el defecto no se veia.
+        conteos = vectores = None
+        try:
+            conteos = np.lib.format.open_memmap(
+                trabajo / "conteos.npy", mode="w+", dtype="uint32", shape=(cantidad, k)
+            )
+            df = np.zeros(k, dtype=np.int64)
+            for identificador, _, ruta in filas(raiz, datos, verificar_archivos=False):
+                palabras = codebook.assign(describe(ruta, **opciones))
+                conteos[identificador - 1] = np.bincount(palabras, minlength=k)
+                df += conteos[identificador - 1] > 0
+            vocabulario = Vocabulary(codebook, inverse_document_frequency(df, cantidad), cantidad)
+            vocabulario.save(resultado / "vocabulario.npz")
+            vectores = np.lib.format.open_memmap(
+                resultado / "vectores.npy", mode="w+", dtype="float32", shape=(cantidad, k)
+            )
+            for inicio in range(0, cantidad, 1024):
+                # Mismos pesos y normalizacion de Vocabulary.histogram, sobre
+                # conteos cacheados.
+                pesos = tf_weight(conteos[inicio : inicio + 1024], TF_LOG) * vocabulario.idf
+                normas = np.sqrt(np.sum(pesos * pesos, axis=1))
+                if np.any(normas == 0):
+                    raise ValueError(
+                        "el vocabulario produce vectores nulos; ajuste k o los patrones"
+                    )
+                vectores[inicio : inicio + len(pesos)] = (
+                    pesos / normas[:, None]
+                ).astype(np.float32)
+            validar_vectores(vectores, cantidad, k)
+            vectores.flush()
+        finally:
+            del vectores, conteos
         escribir_json(resultado / "metadata.json", {
             "formato": FORMATO, "generacion_sha256": sha256(raiz / "generacion.json"),
             "k": k, "semilla": semilla, "tf": TF_LOG, "normalizacion": "l2",
