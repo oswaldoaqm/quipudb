@@ -123,6 +123,21 @@ citado) y usar papers en español (hay pocos sobre los temas del curso).
 - Las pruebas usan un LLM falso: el CI no necesita red ni clave y no gasta
   cuota.
 
+#### Qué modelos, medido al implementar (2026-11-06)
+
+| Hallazgo | Decisión |
+|---|---|
+| `gemini-2.5-flash` responde 404: Google ya no lo da a cuentas nuevas | No se usa |
+| `gemini-3.8-flash` y `3.7-flash` responden 503 por alta demanda, hasta 87 s después | No van por omisión; se pueden elegir con `GEMINI_MODEL` |
+| `gemini-3.5-flash` responde en 5 a 11 s | `GEMINI_MODEL` por omisión |
+| `gemini-3.5-flash-lite` reescribe en menos de 2 s, contra 6 a 9 s de un modelo que razona | `GEMINI_REWRITE_MODEL` por omisión |
+| En Gemini 3 el razonamiento no se apaga y sus tokens cuentan contra `max_output_tokens`: con 60, una reescritura volvía cortada | Límite de 8 192 tokens |
+
+Si un modelo responde 429, 500 o 503, o se agota el tiempo (45 s), se prueba el
+siguiente de `GEMINI_FALLBACK_MODELS` y el que falló se salta durante 2
+minutos: sin eso, cada pregunta esperaba primero a que el saturado se rindiera.
+La respuesta dice qué modelo contestó.
+
 ### 6. Recuperación y citas
 
 - `SELECT id, paper_id, orden, pagina, texto, SCORE() AS relevancia FROM chunks
@@ -141,6 +156,21 @@ citado) y usar papers en español (hay pocos sobre los temas del curso).
 - La pregunta del usuario viaja dentro de un literal SQL. Se escapa duplicando
   la comilla simple, que es lo que acepta el lexer: el API no tiene parámetros
   preparados.
+
+### 7. La respuesta llega por etapas
+
+`POST /ask/stream` devuelve una línea JSON por etapa (`consulta`,
+`recuperacion`, `respuesta` o `error`). La recuperación en QuipuDB tarda
+decenas de ms y Gemini varios segundos: con una sola respuesta al final, la
+interfaz no podía mostrar las fuentes mientras Gemini escribe ni distinguir
+"buscando" de "generando". `POST /ask` sigue existiendo con la respuesta entera.
+
+### 8. Lo que cambió en el motor
+
+- `CREATE INDEX ... USING FULLTEXT WITH LANGUAGE=english` (#237).
+- El optimizador usa un índice sobre la clave primaria de un heap en vez de
+  recorrerlo (#255). El esquema de la sección 2 no cambia: `arxiv_id` sigue
+  siendo la clave natural.
 
 ## Alternativas descartadas
 
