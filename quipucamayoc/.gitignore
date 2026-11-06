@@ -1,0 +1,3 @@
+# PDFs, metadatos y catalogos de prueba de la aplicacion: se regeneran con
+# python -m app.corpus.arxiv descargar (ver README).
+datos/
