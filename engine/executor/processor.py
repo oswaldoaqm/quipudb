@@ -34,6 +34,7 @@ from engine.executor.native import (
     to_native_values,
 )
 from engine.executor.operators import execute_select
+from engine.executor.predicates import tokenizer_options
 from engine.executor.result import QueryResult
 from engine.executor.spatial import spatial_context_of
 from engine.executor.vector_search import VectorSearch, native_vector_metric
@@ -53,6 +54,7 @@ from engine.parser import (
     SQLSemanticError,
     Statement,
     TableRef,
+    TextLanguage,
     VectorMetric,
     parse_sql_script,
 )
@@ -539,6 +541,16 @@ class QueryProcessor:
                     self._database.create_hnsw_index(
                         bound.table_name, bound.index_name, bound.column_name,
                         native_vector_metric(bound.metric or VectorMetric.COSINE, self._native),
+                    )
+                elif bound.kind is IndexKind.INVERTED_INDEX and bound.language not in {
+                    None,
+                    TextLanguage.SPANISH,
+                }:
+                    # Sin WITH LANGUAGE, o en espanol, es create_index de
+                    # siempre: el core construye con las opciones por omision.
+                    self._database.create_text_index(
+                        bound.table_name, bound.index_name, bound.column_name,
+                        tokenizer_options(bound.language, self._native),
                     )
                 elif bound.kind is IndexKind.IVF:
                     position = next(

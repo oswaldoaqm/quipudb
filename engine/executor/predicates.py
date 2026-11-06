@@ -6,7 +6,7 @@ import math
 from typing import Any
 
 from engine.executor.native import native_range_bounds, to_native_value
-from engine.parser.ast import ComparisonOperator, DistanceMetric
+from engine.parser.ast import ComparisonOperator, DistanceMetric, TextLanguage
 from engine.parser.bound_ast import (
     BoundBetweenCondition,
     BoundComparisonCondition,
@@ -119,6 +119,36 @@ def text_search_args(
     ranking = getattr(native.TextRanking, condition.ranking.value)
     k = native.ALL_RESULTS if limit is None else limit
     return condition.query, ranking, k
+
+
+def tokenizer_options(language: TextLanguage, native: Any) -> Any:
+    """Las ``TokenizerOptions`` nativas de ``WITH LANGUAGE`` (#237).
+
+    Stopwords y stemmer del mismo idioma, que es lo que hace PostgreSQL con
+    ``to_tsvector('english', ...)``.
+    """
+
+    idioma = getattr(native.TextLanguage, language.name)
+    options = native.TokenizerOptions()
+    options.stopword_languages = [idioma]
+    options.stemmer = idioma
+    return options
+
+
+def text_index_language(index: Any) -> str | None:
+    """El idioma con que se construyo un indice de texto, para el plan.
+
+    Es el del stemmer, o el de las stopwords si no tiene. ``None`` si el modulo
+    nativo no lo informa (el falso de las pruebas).
+    """
+
+    options = getattr(index, "tokenizer_options", None)
+    if options is None:
+        return None
+    idioma = options.stemmer
+    if idioma is None and options.stopword_languages:
+        idioma = options.stopword_languages[0]
+    return None if idioma is None else str(idioma.name).lower()
 
 
 def polygon_search_args(condition: BoundCondition, native: Any) -> list[object]:
