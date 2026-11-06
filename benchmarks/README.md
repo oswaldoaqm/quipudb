@@ -1869,3 +1869,28 @@ Matplotlib compara también los bytes de las figuras. Sin fuentes o binding
 esa integración se omite explícitamente; sin Matplotlib se omiten las
 pruebas visuales. Los casos artificiales de las pruebas unitarias nunca se
 usan en el informe. No se modifica ningún archivo de #190–#193.
+
+## Evaluación del RAG de Quipucamayoc (issue #253)
+
+Mide la recuperación en QuipuDB aparte de la respuesta de Gemini, con las 30
+preguntas de [`rag/preguntas.json`](rag/preguntas.json). Cada una lista el paper
+del corpus (`quipucamayoc/corpus/papers.tsv`) que debería recuperar.
+
+| Paso | Necesita | Produce |
+|---|---|---|
+| `reescribir` | Gemini | [`rag/reescrituras.json`](rag/reescrituras.json), versionado: medir la recuperación no vuelve a llamar a Gemini |
+| `recuperacion` | el motor con el corpus | `results/<marca>_rag_recuperacion.csv`: posición del paper esperado y latencia, con BM25 y TF-IDF, con la pregunta original y la reescrita |
+| `respuestas` | el motor y Gemini | `results/<marca>_rag_respuestas.json`: el RAG completo, con tiempos y citas. `--pausa` espacia las preguntas por la cuota de Gemini y `--reintentar` repite solo las que fallaron |
+| `informe` | matplotlib | [`docs/informe/rag_evaluacion.md`](../docs/informe/rag_evaluacion.md) y las gráficas `253_*` |
+
+Se corre con el Python del servidor de Quipucamayoc, desde `quipucamayoc/server`:
+
+```bash
+.venv/Scripts/python ../../benchmarks/scripts/evaluar_rag.py recuperacion
+.venv/Scripts/python ../../benchmarks/scripts/evaluar_rag.py respuestas
+.venv/Scripts/python ../../benchmarks/scripts/evaluar_rag.py informe
+```
+
+Las métricas (Hit@k y MRR@10 a nivel de paper) son funciones puras, probadas
+en `benchmarks/test_evaluar_rag.py`. La revisión manual de respuestas está en
+[`docs/informe/rag_revision.md`](../docs/informe/rag_revision.md).
