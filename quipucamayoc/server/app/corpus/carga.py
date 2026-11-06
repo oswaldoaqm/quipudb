@@ -70,7 +70,8 @@ def fila_paper(paper: Paper, paper_id: int) -> tuple[object, ...]:
         paper.anio,
         recortar(paper.categoria, b["categoria"]),
         recortar(paper.abstract, b["abstract"]),
-        recortar(f"https://arxiv.org/abs/{paper.arxiv_id}", b["url"]),
+        # Un paper subido a mano (#250) no tiene pagina en arXiv.
+        "" if paper.categoria == "local" else recortar(f"https://arxiv.org/abs/{paper.arxiv_id}", b["url"]),
     )
 
 

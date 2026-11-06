@@ -6,6 +6,7 @@ uvicorn[standard]>=0.32
 pydantic>=2.9
 httpx>=0.27          # cliente del API del motor, y TestClient en las pruebas
 python-dotenv>=1.0   # lee quipucamayoc/.env
+python-multipart>=0.0.9  # lo pide FastAPI para recibir el PDF de POST /papers
 
 # Desarrollo
 pytest>=8.3
