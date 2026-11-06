@@ -10,3 +10,6 @@ python-dotenv>=1.0   # lee quipucamayoc/.env
 # Desarrollo
 pytest>=8.3
 ruff>=0.7
+
+# Ingesta de papers (#241)
+pypdf>=5.0           # texto de los PDFs; BSD, en Python puro
