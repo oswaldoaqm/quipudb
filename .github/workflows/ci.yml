@@ -106,6 +106,17 @@ jobs:
           engine/api/test_media_native.py
           engine/api/test_similar_native.py
           engine/api/test_spatial_context.py -q -rs -p no:cacheprovider
+      # Quipucamayoc habla con el motor solo por HTTP, pero sus pruebas de
+      # punta a punta necesitan un motor de verdad: aqui corre dentro del
+      # proceso, con TestClient y el modulo recien compilado (ver
+      # quipucamayoc/server/tests/conftest.py).
+      - name: Probar Quipucamayoc contra el motor real
+        env:
+          PYTHONPATH: ${{ github.workspace }}/build-py/bindings
+        working-directory: quipucamayoc/server
+        run: |
+          pip install -r requirements.txt
+          python -m pytest tests/test_motor.py tests/test_carga.py -q -rs -p no:cacheprovider
 
   quipucamayoc:
     name: Probar Quipucamayoc (servidor e interfaz)
