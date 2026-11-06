@@ -23,7 +23,11 @@ from pathlib import Path
 
 import pytest
 
+from app.corpus.arxiv import Paper
+from app.corpus.carga import cargar
+from app.corpus.esquema import Tablas
 from app.motor import ClienteMotor, MotorError
+from tests.pdfs import escribir
 
 _RAIZ = Path(__file__).resolve().parents[3]
 
@@ -59,3 +63,50 @@ def motor_real(tmp_path: Path):
     except MotorError:
         pass
     cliente.close()
+
+
+# Un corpus de tres papers de temas distintos, cargado con la carga de verdad.
+_TEMAS = {
+    "2401.00001v1": (
+        "Graph indexes",
+        [
+            "Hierarchical navigable small world graphs answer nearest neighbor queries.",
+            "Greedy routing descends the layers of the graph to reach the query.",
+            "Graph indexes trade memory for high recall at low latency.",
+        ],
+    ),
+    "2401.00002v1": (
+        "Inverted files",
+        [
+            "Inverted file indexes cluster vectors around centroids with k-means.",
+            "A query probes the nprobe closest lists to find candidates.",
+            "Product quantization compresses the vectors stored in each list.",
+        ],
+    ),
+    "2401.00003v1": (
+        "Query optimization",
+        [
+            "Cost based optimizers choose join orders with cardinality estimates.",
+            "Histograms summarize column distributions for selectivity.",
+            "Dynamic programming enumerates plans for small join graphs.",
+        ],
+    ),
+}
+
+
+@pytest.fixture()
+def corpus(motor_real, tmp_path: Path):
+    motor, prefijo = motor_real
+    tablas = Tablas(prefijo)
+    papers = []
+    for arxiv_id, (titulo, oraciones) in _TEMAS.items():
+        paper = Paper(arxiv_id, titulo, ("Ada Lovelace",), 2020, "cs.DB", "Resumen.")
+        papers.append(paper)
+        # Dos paginas por paper, cada una un poco distinta: varios chunks.
+        escribir(
+            tmp_path / paper.archivo,
+            [[f"{titulo} page one.", *oraciones], [f"{titulo} page two.", *reversed(oraciones)]],
+        )
+    reporte = cargar(motor, papers, tmp_path, tablas=tablas)
+    assert reporte.fallidos == []
+    return motor, tablas
