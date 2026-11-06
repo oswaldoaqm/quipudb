@@ -1452,6 +1452,8 @@ C++ (`core/include/quipudb/index/text_index.hpp`):
 ```cpp
 // Crear: registra en el catalogo y construye con SPIMI sobre lo que la tabla ya tiene.
 Index& Database::create_index(tabla, nombre, columna, kind::kInvertedIndex);
+// Crear en otro idioma, construyendo una sola vez (#237).
+Index& Database::create_text_index(tabla, nombre, columna, const TokenizerOptions&);
 // Reabrir: siempre el mismo objeto, como los demas indices.
 Index& Database::index(tabla, nombre);
 
@@ -1506,11 +1508,35 @@ CREATE INDEX por_contenido ON documentos (contenido) USING FULLTEXT;
 
 `FULLTEXT` es la palabra de MySQL para lo mismo; `INVERTED_INDEX` es el nombre
 de la estructura, como `EXTENDIBLE_HASH` lo es de `HASH`. El indice se
-construye con las opciones de tokenizacion por omision (espanol, #160); para
-otro idioma se reconstruye desde los bindings con `TextIndex.build(opciones)`.
+construye con las opciones de tokenizacion por omision (espanol, #160).
+
+#### El idioma del indice (#237)
+
+```sql
+CREATE INDEX por_texto ON chunks (texto) USING FULLTEXT WITH LANGUAGE=english;
+```
+
+`WITH LANGUAGE=spanish|english` elige las stopwords y el stemmer del mismo
+idioma, como `to_tsvector('english', ...)`. Sin la clausula, o con `spanish`,
+todo sigue igual que en #167. La aplicacion RAG lo necesita porque solo habla
+con el motor por el API, y los papers de arXiv estan en ingles: con el
+tokenizador espanol, `the` entra al indice y `indexes` no se reduce a `index`.
+
+| Decision | Por que |
+|---|---|
+| `LANGUAGE` y el idioma se leen como identificadores | Como la `k` de `SIMILAR_TO`: volverlos palabras reservadas romperia las tablas con una columna `language` |
+| `Database::create_text_index(tabla, nombre, columna, TokenizerOptions)` en el core | `create_index` construye en espanol; crear y reconstruir en ingles tokenizaria el corpus dos veces. Es el mismo patron de `create_hnsw_index`, que recibe su metrica |
+| El idioma no se guarda en el catalogo | Ya viaja con el indice: las `TokenizerOptions` estan en su area de opciones (#175), y reabrir o reconstruir un indice desactualizado usa las mismas, igual que `MATCH` al tokenizar la consulta |
+| El plan lo muestra en `text_search` al ejecutar | El detalle termina en `idioma english`. Un `EXPLAIN` sin `ANALYZE` no abre el indice y no lo muestra; `GET /tables` tampoco, para no abrir cada indice al listar las tablas |
+
+Para otras opciones (stopwords propias, sin stemmer) se reconstruye desde los
+bindings con `TextIndex.build(opciones)`.
 
 | Caso | Resultado |
 |---|---|
+| `WITH LANGUAGE` con un idioma desconocido o entre comillas | `SQLParseError` en el idioma |
+| `WITH` seguido de otra cosa que `LANGUAGE`, o sin `=` | `SQLParseError` ubicado |
+| `WITH LANGUAGE` en un indice que no es de texto | `SQLParseError`: entrada inesperada `WITH` |
 | Columna que no es `VARCHAR` | `SQLSemanticError` en la columna, con linea y columna |
 | La columna ya tiene un indice de texto | `SQLSemanticError` en la columna; no se crea otro ni se reconstruye el existente |
 | Nombre de indice repetido | el error de siempre del catalogo |
