@@ -128,13 +128,32 @@ def test_extractores_no_bloquean_sql_progreso_ni_otras_peticiones(environment, m
     assert wait(client, identifier)["inserted"] == 1
 
 
-def test_rutas_ajenas_y_enlaces_se_rechazan(environment, tmp_path):
-    client, _, folder = environment
+def _enlazar_o_saltar(enlace, destino, *, carpeta=False):
+    """Crea un enlace simbolico, o salta la prueba si el sistema no deja.
+
+    Windows exige privilegio de administrador o el modo desarrollador para
+    crearlos, asi que esta comprobacion fallaba por el entorno en las
+    maquinas del equipo. El CI corre en Linux y la sigue ejecutando.
+    """
+
+    try:
+        enlace.symlink_to(destino, target_is_directory=carpeta)
+    except (OSError, NotImplementedError) as error:
+        pytest.skip(f"el sistema no deja crear enlaces simbolicos: {error}")
+
+
+def test_las_rutas_fuera_de_la_raiz_se_rechazan(environment):
+    # No necesita enlaces: corre en cualquier sistema.
+    client, _, _ = environment
     assert start(client, folder="../").status_code == 400
     assert start(client, vocabulary="../fuera.npz").status_code == 400
-    (tmp_path / "enlace").symlink_to(folder, target_is_directory=True)
+
+
+def test_los_enlaces_simbolicos_se_rechazan(environment, tmp_path):
+    client, _, folder = environment
+    _enlazar_o_saltar(tmp_path / "enlace", folder, carpeta=True)
     assert start(client, folder="enlace").status_code == 400
-    (folder / "enlazada.png").symlink_to(tmp_path / "vocabulario.npz")
+    _enlazar_o_saltar(folder / "enlazada.png", tmp_path / "vocabulario.npz")
     report = wait(client, start(client).json()["job_id"])
     assert report["failed"] == 1
     assert "simbolicos" in report["errors"][0]["error"]
@@ -256,7 +275,11 @@ def test_no_materializa_el_dataset_y_los_lotes_son_acotados(tmp_path, monkeypatc
     try:
         options = MediaLoadRequest(folder="objetos", vocabulary="vocabulario.npz", batch_size=7)
         started = manager.start("objetos", options)
-        deadline = time.monotonic() + 10
+        # 30 s y no 10: el lote de 3 000 objetos tarda 8 o 9 segundos en las
+        # maquinas del equipo, asi que con 10 la prueba fallaba cada vez que
+        # algo mas cargaba el equipo. El plazo sigue detectando un cuelgue,
+        # que es lo que comprueba; no afloja lo que mide.
+        deadline = time.monotonic() + 30
         while (report := manager.get("objetos", started.job_id)).status in {"pending", "running"}:
             assert time.monotonic() < deadline
             time.sleep(0.005)

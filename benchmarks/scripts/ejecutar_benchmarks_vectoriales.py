@@ -6,7 +6,16 @@ import argparse
 import json
 import math
 import random
-import resource
+
+try:
+    import resource
+except ModuleNotFoundError:  # pragma: no cover - depende del sistema
+    # `resource` es un modulo de Unix. En Windows, donde trabaja el equipo,
+    # este import fallaba al cargar el modulo y rompia la COLECCION de
+    # pytest: ninguna prueba del repositorio corria, ni las que no tienen
+    # nada que ver con los benchmarks. El CI no lo veia porque corre en
+    # Linux. Medir RSS sigue necesitando Unix; importar, no.
+    resource = None
 import shutil
 import subprocess
 import sys
@@ -28,6 +37,18 @@ SEMILLA = 20260906
 
 
 def rss():
+    """Memoria pico del proceso en bytes.
+
+    Solo en Unix: `ru_maxrss` viene en bytes en macOS y en kibibytes en
+    Linux. Falla con un mensaje claro en vez de devolver un cero que se
+    colaria al informe como una medicion valida.
+    """
+
+    if resource is None:
+        raise RuntimeError(
+            "medir RSS necesita el modulo `resource`, que solo existe en Unix; "
+            "las cifras del informe se midieron en Linux"
+        )
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (
         1 if sys.platform == "darwin" else 1024
     )
