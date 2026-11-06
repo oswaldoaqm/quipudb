@@ -145,3 +145,60 @@ def test_un_error_de_gemini_al_responder_es_502_del_llm(corpus) -> None:
 
     assert respuesta.status_code == 502
     assert respuesta.json() == {"error": "se alcanzo el limite de uso de Gemini", "origen": "llm"}
+
+
+# ---------------------------------------------------------------------------
+# /ask/stream: una linea JSON por etapa
+# ---------------------------------------------------------------------------
+
+
+def _eventos(respuesta) -> list[dict]:
+    import json
+
+    assert respuesta.headers["content-type"].startswith("application/x-ndjson")
+    return [json.loads(linea) for linea in respuesta.text.splitlines() if linea]
+
+
+def test_el_stream_avisa_consulta_recuperacion_y_respuesta(corpus) -> None:
+    motor, tablas = corpus
+    llm = LLMFalso(reescritura="graph greedy routing", respuesta="Baja por capas [1].")
+
+    respuesta = _cliente(motor=motor, llm=llm, tablas=tablas).post(
+        "/ask/stream", json={"pregunta": "¿grafos?"}
+    )
+
+    eventos = _eventos(respuesta)
+    assert [e["etapa"] for e in eventos] == ["consulta", "recuperacion", "respuesta"]
+    assert eventos[0]["consulta"] == "graph greedy routing"
+    assert eventos[1]["fuentes"] and not any(f["citada"] for f in eventos[1]["fuentes"])
+    assert "MATCH" in eventos[1]["sql"][0]["sql"]
+    final = eventos[2]["respuesta"]
+    assert (final["respuesta"], final["citas"]) == ("Baja por capas [1].", [1])
+
+
+def test_el_stream_termina_con_un_error_si_gemini_falla(corpus) -> None:
+    motor, tablas = corpus
+    llm = LLMFalso(respuesta=LLMError("Gemini no esta disponible ahora (503); vuelve a intentar"))
+
+    eventos = _eventos(
+        _cliente(motor=motor, llm=llm, tablas=tablas).post("/ask/stream", json={"pregunta": "graph"})
+    )
+
+    assert [e["etapa"] for e in eventos] == ["consulta", "recuperacion", "error"]
+    assert eventos[-1]["origen"] == "llm"
+
+
+def test_el_stream_con_el_motor_caido_avisa_error_del_motor() -> None:
+    eventos = _eventos(_cliente(llm=LLMFalso()).post("/ask/stream", json={"pregunta": "HNSW"}))
+
+    assert [e["etapa"] for e in eventos] == ["consulta", "error"]
+    assert eventos[-1]["origen"] == "motor"
+
+
+def test_el_stream_sin_clave_responde_503_antes_de_empezar() -> None:
+    respuesta = TestClient(create_app(Settings(), motor=_motor_caido())).post(
+        "/ask/stream", json={"pregunta": "HNSW"}
+    )
+
+    assert respuesta.status_code == 503
+    assert respuesta.json()["origen"] == "llm"
