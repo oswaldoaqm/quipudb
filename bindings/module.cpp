@@ -845,6 +845,11 @@ PYBIND11_MODULE(quipudb_native, m) {
            py::arg("params") = HnswParams{}, py::return_value_policy::reference_internal,
            "Registra un HNSW con esta metrica y estos parametros y lo construye sobre los "
            "datos existentes")
+      .def("create_text_index", &Database::create_text_index, py::arg("table"),
+           py::arg("index_name"), py::arg("column"), py::arg("tokenizer"),
+           py::return_value_policy::reference_internal,
+           "Registra un indice de texto y lo construye una vez con estas TokenizerOptions "
+           "(idioma, stopwords, stemmer) sobre los datos existentes")
       .def("index", &Database::index, py::arg("table"), py::arg("index_name"),
            py::return_value_policy::reference_internal)
       .def("drop_table", &Database::drop_table, py::arg("name"))
