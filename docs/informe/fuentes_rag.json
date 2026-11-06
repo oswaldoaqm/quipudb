@@ -1,0 +1,13 @@
+{
+  "descripcion": "Corridas de la evaluacion del RAG (#253), relativas a benchmarks/results. El CSV esta ignorado por Git; las respuestas se copian a rag_respuestas.json.",
+  "archivos": {
+    "recuperacion": {
+      "nombre": "20261106T070410Z_rag_recuperacion.csv",
+      "sha256": "2a6ada1c2628b36a2bdfb1a5d108da050e0a2bbeedb97fa81f80e87f5c8644da"
+    },
+    "respuestas": {
+      "nombre": "20261106T070829Z_rag_respuestas.json",
+      "sha256": "44a732e4a11a5f8d3bf9a4a81ab387cf9204c4c7eee8901a581d7d95ed9032e4"
+    }
+  }
+}

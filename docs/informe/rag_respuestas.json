@@ -1,0 +1,2341 @@
+[
+  {
+    "id": "p01",
+    "pregunta": "¿Cómo se buscan vecinos aproximados con un grafo jerárquico de mundo pequeño navegable?",
+    "esperados": [
+      "1603.09320v4"
+    ],
+    "consulta": "Hierarchical Navigable Small World graph approximate nearest neighbor search HNSW",
+    "modelo": "gemini-3.5-flash",
+    "respuesta": "La búsqueda de vecinos aproximados mediante un grafo jerárquico de mundo pequeño navegable (HNSW) se realiza explorando una estructura multicapa de grafos organizados por escala de distancia [1][2]:\n\n1. **Inicio en la capa superior:** La búsqueda comienza en un punto de entrada situado en la capa más alta del grafo (la cual contiene la menor cantidad de puntos) [2][6].\n2. **Navegación voraz por capas:** En cada nivel, el algoritmo ejecuta una búsqueda voraz (*greedy search*) comparando la similitud o distancia entre el vector de consulta y los nodos vecinos [3][5][6]. Al encontrar el vecino más cercano en la capa actual, este se utiliza como punto de entrada para continuar la exploración en el nivel inmediatamente inferior [2][6].\n3. **Descenso hasta la capa base:** Este proceso iterativo de separación por escalas se repite descendiendo capa por capa hasta alcanzar la capa base (nivel cero), la cual contiene la totalidad de los datos [2][5]. En los niveles inferiores se localizan y evalúan los $M$ vecinos más cercanos definitivos [2].\n4. **Control de precisión y velocidad:** El rendimiento y la calidad de la búsqueda (la precisión o *recall* frente a la latencia) están guiados por parámetros como `ef` o `efSearch` (EF-S), el cual controla el tamaño de la cola de candidatos y los pasos de recorrido mantenidos durante la exploración del grafo [2][7][8].",
+    "citas": [
+      1,
+      2,
+      6,
+      3,
+      5,
+      7,
+      8
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "1603.09320v4",
+        "titulo": "Efficient and robust approximate nearest neighbor search using Hierarchical Navigable Small World graphs",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "1610.02455v1",
+        "titulo": "Approximate Nearest Neighbor Search on High Dimensional Data --- Experiments, Analyses, and Improvement (v1.0)",
+        "pagina": 7,
+        "citada": true
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2310.11703v4",
+        "titulo": "A Comprehensive Survey on Vector Database: Storage and Retrieval Technique, Challenge",
+        "pagina": 10,
+        "citada": true
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "1610.02455v1",
+        "titulo": "Approximate Nearest Neighbor Search on High Dimensional Data --- Experiments, Analyses, and Improvement (v1.0)",
+        "pagina": 6,
+        "citada": false
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2303.16780v1",
+        "titulo": "Thistle: A Vector Database in Rust",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2505.12524v1",
+        "titulo": "HAKES: Scalable Vector Database for Embedding Search Service",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "2401.08281v4",
+        "titulo": "The Faiss library",
+        "pagina": 11,
+        "citada": true
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "2606.08950v1",
+        "titulo": "When More Cores Hurts: The Vector Database Scaling Paradox in HPC",
+        "pagina": 2,
+        "citada": true
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 1646.5398001018912,
+      "recuperacion_ms": 29.163100058212876,
+      "generacion_ms": 7839.187400182709
+    }
+  },
+  {
+    "id": "p02",
+    "pregunta": "¿Cómo se hace búsqueda por similitud sobre mil millones de vectores usando GPUs?",
+    "esperados": [
+      "1702.08734v1",
+      "2401.08281v4"
+    ],
+    "consulta": "billion scale vector similarity search GPU FAISS approximate nearest neighbor",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "Para realizar la búsqueda por similitud en bases de datos de mil millones de vectores utilizando GPUs, se requiere el uso de arquitecturas heterogéneas especializadas y técnicas de búsqueda aproximada debido a la maldición de la dimensionalidad, ya que la búsqueda exhaustiva o la indexación exacta resultan poco prácticas a esa escala [1]. \n\nUn enfoque eficiente implementado en GPU incluye:\n- Un algoritmo de selección $k$ (*k-selection*) que opera en la memoria rápida de registros y es lo suficientemente flexible para combinarse con otros núcleos (*kernels*) [4].\n- Una distribución algorítmica casi óptima para la búsqueda exacta y aproximada de los $k$ vecinos más cercanos ($k$-NN) [4].\n- El uso de esquemas de codificación como la cuantización producto (PQ, por sus siglas en inglés) para gestionar datasets masivos (por ejemplo, representaciones de imágenes o características SIFT) que superan la memoria global de una sola GPU, requiriendo configuraciones de múltiples GPUs [2].\n\nEste tipo de implementaciones supera significativamente en velocidad y precisión a los métodos tradicionales en tareas de búsqueda de vecinos más cercanos a escala media y grande [4].",
+    "citas": [
+      1,
+      4,
+      2
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "1702.08734v1",
+        "titulo": "Billion-scale similarity search with GPUs",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "1702.08734v1",
+        "titulo": "Billion-scale similarity search with GPUs",
+        "pagina": 9,
+        "citada": true
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2401.08281v4",
+        "titulo": "The Faiss library",
+        "pagina": 2,
+        "citada": false
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "1702.08734v1",
+        "titulo": "Billion-scale similarity search with GPUs",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2401.08281v4",
+        "titulo": "The Faiss library",
+        "pagina": 3,
+        "citada": false
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2404.06004v2",
+        "titulo": "AiSAQ: All-in-Storage ANNS with Product Quantization for DRAM-free Information Retrieval",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "2404.06004v2",
+        "titulo": "AiSAQ: All-in-Storage ANNS with Product Quantization for DRAM-free Information Retrieval",
+        "pagina": 2,
+        "citada": false
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "1404.1831v1",
+        "titulo": "Improving Bilayer Product Quantization for Billion-Scale Approximate Nearest Neighbors in High Dimensions",
+        "pagina": 1,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 1724.0244999993593,
+      "recuperacion_ms": 37.74740011431277,
+      "generacion_ms": 4702.0755999255925
+    }
+  },
+  {
+    "id": "p03",
+    "pregunta": "¿Qué herramienta compara algoritmos de vecinos más cercanos aproximados con benchmarks reproducibles?",
+    "esperados": [
+      "1807.05614v2"
+    ],
+    "consulta": "approximate nearest neighbor benchmarks reproducible tool evaluation algorithm comparison",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "La herramienta descrita que evalúa y compara el rendimiento de los algoritmos de vecinos más cercanos aproximados (*approximate nearest neighbor algorithms*) utilizando conjuntos de datos estándar y proporcionando benchmarks reproducibles es **ANN-Benchmarks** [1][2][3].",
+    "citas": [
+      1,
+      2,
+      3
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "1807.05614v2",
+        "titulo": "ANN-Benchmarks: A Benchmarking Tool for Approximate Nearest Neighbor Algorithms",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "1807.05614v2",
+        "titulo": "ANN-Benchmarks: A Benchmarking Tool for Approximate Nearest Neighbor Algorithms",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "1807.05614v2",
+        "titulo": "ANN-Benchmarks: A Benchmarking Tool for Approximate Nearest Neighbor Algorithms",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "1610.02455v1",
+        "titulo": "Approximate Nearest Neighbor Search on High Dimensional Data --- Experiments, Analyses, and Improvement (v1.0)",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2402.00943v2",
+        "titulo": "Approximate Nearest Neighbor Search with Window Filters",
+        "pagina": 10,
+        "citada": false
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2609.26934v1",
+        "titulo": "Fast Geometric Spanners via Approximate Nearest Neighbor Search",
+        "pagina": 5,
+        "citada": false
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "2601.06727v1",
+        "titulo": "Vextra: A Unified Middleware Abstraction for Heterogeneous Vector Database Systems",
+        "pagina": 6,
+        "citada": false
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "2310.19126v1",
+        "titulo": "Worst-case Performance of Popular Approximate Nearest Neighbor Search Implementations: Guarantees and Limitations",
+        "pagina": 1,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 922.7668999228626,
+      "recuperacion_ms": 49.47369988076389,
+      "generacion_ms": 1328.618099913001
+    }
+  },
+  {
+    "id": "p04",
+    "pregunta": "¿Cómo recupera pasajes un sistema con dos codificadores densos para responder preguntas de dominio abierto?",
+    "esperados": [
+      "2004.04906v3"
+    ],
+    "consulta": "dense passage retrieval open domain question answering dual encoder",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "Un sistema con dos codificadores densos (dual-encoder) recupera pasajes utilizando un codificador de pasajes $E_p(\\cdot)$ para obtener vectores de valor real (embeddings) dimensionales de los pasajes que forman parte de una gran colección de documentos, con los cuales se construye un índice de pasajes [1]. \n\nAl momento de realizar una consulta, se aplica otro codificador $E_q(\\cdot)$ para transformar la pregunta de lenguaje natural en un vector denso de dimensión $d$ [1]. Finalmente, el sistema recupera los $k$ pasajes cuyos embeddings son los más cercanos al vector de la pregunta mediante una coincidencia semántica [1][2].",
+    "citas": [
+      1,
+      2
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "2010.08191v2",
+        "titulo": "RocketQA: An Optimized Training Approach to Dense Passage Retrieval for Open-Domain Question Answering",
+        "pagina": 3,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "2010.08191v2",
+        "titulo": "RocketQA: An Optimized Training Approach to Dense Passage Retrieval for Open-Domain Question Answering",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2010.08191v2",
+        "titulo": "RocketQA: An Optimized Training Approach to Dense Passage Retrieval for Open-Domain Question Answering",
+        "pagina": 2,
+        "citada": false
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "2004.04906v3",
+        "titulo": "Dense Passage Retrieval for Open-Domain Question Answering",
+        "pagina": 9,
+        "citada": false
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2004.04906v3",
+        "titulo": "Dense Passage Retrieval for Open-Domain Question Answering",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2508.09534v1",
+        "titulo": "Improving Dense Passage Retrieval with Multiple Positive Passages",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "2004.04906v3",
+        "titulo": "Dense Passage Retrieval for Open-Domain Question Answering",
+        "pagina": 8,
+        "citada": false
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "2305.13197v1",
+        "titulo": "Challenging Decoder helps in Masked Auto-Encoder Pre-training for Dense Passage Retrieval",
+        "pagina": 1,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": false,
+    "tiempos": {
+      "reescritura_ms": 725.9825998917222,
+      "recuperacion_ms": 45.46609986573458,
+      "generacion_ms": 1109.0279999189079
+    }
+  },
+  {
+    "id": "p05",
+    "pregunta": "¿Por qué un modelo aprendido puede reemplazar a un B-tree como índice?",
+    "esperados": [
+      "1712.01208v3"
+    ],
+    "consulta": "learned index B tree replace machine learning database index structure",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "Un modelo aprendido puede reemplazar a un B-tree porque un B-tree ya puede considerarse conceptualmente como un modelo: recibe una clave como entrada y predice la posición de un registro de datos en un conjunto ordenado [7]. \n\nAdemás, los índices aprendidos aprovechan el aprendizaje automático para aprender los patrones y la distribución subyacente de los datos [2][7], lo que permite localizar la posición física de los registros de manera eficiente [1] sin la necesidad de cambiar los algoritmos de procesamiento de consultas tradicionales cuando se integran adecuadamente [4][5].",
+    "citas": [
+      7,
+      2,
+      1,
+      4,
+      5
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "2006.16411v2",
+        "titulo": "Hands-off Model Integration in Spatial Index Structures",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "2104.05520v2",
+        "titulo": "Updatable Learned Index with Precise Positions",
+        "pagina": 12,
+        "citada": true
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2502.09937v1",
+        "titulo": "Tradeoffs in Processing Queries and Supporting Updates over an ML-Enhanced R-tree",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "2103.04541v2",
+        "titulo": "A Reinforcement Learning Based R-Tree for Spatial Data Indexing in Dynamic Environments",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2103.04541v2",
+        "titulo": "A Reinforcement Learning Based R-Tree for Spatial Data Indexing in Dynamic Environments",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2308.15012v2",
+        "titulo": "SALI: A Scalable Adaptive Learned Index Framework based on Probability Models",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "1712.01208v3",
+        "titulo": "The Case for Learned Index Structures",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "1712.01208v3",
+        "titulo": "The Case for Learned Index Structures",
+        "pagina": 2,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 804.186400026083,
+      "recuperacion_ms": 61.343600042164326,
+      "generacion_ms": 1232.4993000365794
+    }
+  },
+  {
+    "id": "p06",
+    "pregunta": "¿Qué combina la generación aumentada por recuperación para tareas que requieren mucho conocimiento?",
+    "esperados": [
+      "2005.11401v4"
+    ],
+    "consulta": "retrieval augmented generation knowledge intensive tasks combination",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "La generación aumentada por recuperación (RAG) combina un modelo de lenguaje preentrenado con un sistema de recuperación de información [2][6]. Específicamente, integra memoria paramétrica y no paramétrica para la generación de lenguaje [1][4][5], utilizando un modelo secuencial (*seq2seq*) como memoria paramétrica y un índice de vectores denso (como el de Wikipedia) como memoria no paramétrica [1][5], el cual es accedido mediante un recuperador neuronal para fundamentar el proceso de generación con datos externos [1][3][5][6].",
+    "citas": [
+      2,
+      6,
+      1,
+      4,
+      5,
+      3
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "2005.11401v4",
+        "titulo": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "2505.04680v1",
+        "titulo": "Retrieval Augmented Generation Evaluation for Health Documents",
+        "pagina": 13,
+        "citada": true
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2510.22344v1",
+        "titulo": "FAIR-RAG: Faithful Adaptive Iterative Refinement for Retrieval-Augmented Generation",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "2005.11401v4",
+        "titulo": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2412.05838v1",
+        "titulo": "A Collaborative Multi-Agent Approach to Retrieval-Augmented Generation Across Diverse Data",
+        "pagina": 6,
+        "citada": true
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2310.11703v4",
+        "titulo": "A Comprehensive Survey on Vector Database: Storage and Retrieval Technique, Challenge",
+        "pagina": 19,
+        "citada": true
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "2310.11703v4",
+        "titulo": "A Comprehensive Survey on Vector Database: Storage and Retrieval Technique, Challenge",
+        "pagina": 19,
+        "citada": false
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "2603.09891v1",
+        "titulo": "Overview of the TREC 2025 Retrieval Augmented Generation (RAG) Track",
+        "pagina": 1,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 859.9956999532878,
+      "recuperacion_ms": 61.0022998880595,
+      "generacion_ms": 1009.6123998519033
+    }
+  },
+  {
+    "id": "p07",
+    "pregunta": "¿Cómo soporta ALEX las inserciones en un índice aprendido?",
+    "esperados": [
+      "1905.08898v2"
+    ],
+    "consulta": "ALEX learned index insert support",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "ALEX soporta inserciones en un índice aprendido mediante una estrategia basada en modelos y el uso de arreglos con espacios (gapped arrays) en los nodos hoja [1][5][6]. Estos arreglos dejan espacios vacíos o ranuras vacías deliberadamente entre los registros para absorber y acomodar de manera eficiente las futuras inserciones [7][8].\n\nDurante una inserción, ALEX utiliza la jerarquía de modelos (RMI) para predecir la posición donde debería ubicarse la clave [6]. Si la predicción no es correcta, se emplea una búsqueda exponencial para determinar la posición exacta de inserción [6]. Originalmente, esto implicaba desplazar los elementos a la derecha y actualizar los modelos para reflejar el cambio en la distribución de los datos [1], aunque el diseño busca mitigar el impacto de las discrepancias en las predicciones gracias a sus modelos lineales precisos y a la estructura de arreglos con espacios [5][7].",
+    "citas": [
+      1,
+      5,
+      6,
+      7,
+      8
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "1905.08898v2",
+        "titulo": "ALEX: An Updatable Adaptive Learned Index",
+        "pagina": 3,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "2105.00683v3",
+        "titulo": "APEX: A High-Performance Learned Index on Persistent Memory",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2308.15012v2",
+        "titulo": "SALI: A Scalable Adaptive Learned Index Framework based on Probability Models",
+        "pagina": 13,
+        "citada": false
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "2104.05520v2",
+        "titulo": "Updatable Learned Index with Precise Positions",
+        "pagina": 9,
+        "citada": false
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "1905.08898v2",
+        "titulo": "ALEX: An Updatable Adaptive Learned Index",
+        "pagina": 14,
+        "citada": true
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2109.08495v1",
+        "titulo": "Micro-architectural Analysis of a Learned Index",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "2403.11472v1",
+        "titulo": "Accelerating String-Key Learned Index Structures via Memoization-based Incremental Training",
+        "pagina": 3,
+        "citada": true
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "2105.00683v3",
+        "titulo": "APEX: A High-Performance Learned Index on Persistent Memory",
+        "pagina": 3,
+        "citada": true
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 772.5501998793334,
+      "recuperacion_ms": 52.117800107225776,
+      "generacion_ms": 1584.8751000594348
+    }
+  },
+  {
+    "id": "p08",
+    "pregunta": "¿Cómo se construye un índice aprendido en una sola pasada con un spline?",
+    "esperados": [
+      "2004.14541v2"
+    ],
+    "consulta": "single pass learned index spline construction",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "Para construir un índice aprendido en una sola pasada usando un spline (como RadixSpline), se realiza un enfoque de abajo hacia arriba (*bottom-up*) sobre los datos ordenados en dos pasos principales [1][2][4]:\n\n1. **Construcción del Spline:** Se ajusta una función lineal spline a la función de distribución acumulada (CDF) de los datos de manera secuencial y sobre la marcha, garantizando un límite de error preestablecido [2][3][5]. Cada vez que el corredor de error actual supera el límite establecido por el usuario, se crea un nuevo punto de spline [5].\n2. **Construcción de la Tabla Radix:** En la misma pasada en la que se generan los puntos del spline, se completa una tabla radix preasignada [3][5]. Cada vez que se encuentra un nuevo prefijo de $r$ bits en un punto de spline seleccionado, se añade una nueva entrada a la tabla para servir como un índice aproximado [3][5].\n\nEste proceso permite procesar los datos de manera eficiente con un coste constante por elemento y sin requerir múltiples pasadas [2][4][6].",
+    "citas": [
+      1,
+      2,
+      4,
+      3,
+      5,
+      6
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "2004.14541v2",
+        "titulo": "RadixSpline: A Single-Pass Learned Index",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "2004.14541v2",
+        "titulo": "RadixSpline: A Single-Pass Learned Index",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2004.14541v2",
+        "titulo": "RadixSpline: A Single-Pass Learned Index",
+        "pagina": 3,
+        "citada": true
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "2006.12804v2",
+        "titulo": "Benchmarking Learned Indexes",
+        "pagina": 3,
+        "citada": true
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2006.12804v2",
+        "titulo": "Benchmarking Learned Indexes",
+        "pagina": 4,
+        "citada": true
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2006.12804v2",
+        "titulo": "Benchmarking Learned Indexes",
+        "pagina": 12,
+        "citada": true
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "2207.11575v1",
+        "titulo": "Testing the Robustness of Learned Index Structures",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "2207.11575v1",
+        "titulo": "Testing the Robustness of Learned Index Structures",
+        "pagina": 1,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 711.6225999779999,
+      "recuperacion_ms": 37.61369991116226,
+      "generacion_ms": 1845.9971998818219
+    }
+  },
+  {
+    "id": "p09",
+    "pregunta": "¿Cómo se acelera el cálculo de distancias de la cuantización de productos con instrucciones SIMD?",
+    "esperados": [
+      "1812.09162v2"
+    ],
+    "consulta": "product quantization distance computation acceleration SIMD instructions",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "El cálculo de distancias en la cuantización de productos (Product Quantization) se acelera mediante el almacenamiento de bases de datos vectoriales en memoria y la realización de cómputos de distancia eficientes directamente en el dominio comprimido utilizando tablas de búsqueda (look-up tables) [1][2]. \n\nPara lograrlo, las implementaciones aprovechan instrucciones SIMD (Single-Instruction-Multiple-Data) específicas —como `pshufb` y conjuntos de instrucciones avanzados como AVX2 y AVX-512— que permiten procesar múltiples datos en paralelo por ciclo [1][2][3][5]. Estas instrucciones realizan operaciones de *shuffle* (mezcla) sobre los datos para consultar tablas de búsqueda de forma muy rápida, rivalizando en velocidad de cálculo con las distancias de Hamming basadas en *popcount* [3].",
+    "citas": [
+      1,
+      2,
+      3,
+      5
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "1812.09162v2",
+        "titulo": "Quicker ADC : Unlocking the hidden potential of Product Quantization with SIMD",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "1812.09162v2",
+        "titulo": "Quicker ADC : Unlocking the hidden potential of Product Quantization with SIMD",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "1812.09162v2",
+        "titulo": "Quicker ADC : Unlocking the hidden potential of Product Quantization with SIMD",
+        "pagina": 4,
+        "citada": true
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "1603.04614v1",
+        "titulo": "Scalable Image Retrieval by Sparse Product Quantization",
+        "pagina": 2,
+        "citada": false
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "1908.10598v2",
+        "titulo": "Techniques for Inverted Index Compression",
+        "pagina": 3,
+        "citada": true
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2401.08281v4",
+        "titulo": "The Faiss library",
+        "pagina": 9,
+        "citada": false
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "1711.08589v2",
+        "titulo": "End-to-End Supervised Product Quantization for Image Search and Retrieval",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "2104.07858v3",
+        "titulo": "Matching-oriented Product Quantization For Ad-hoc Retrieval",
+        "pagina": 2,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 710.1380000822246,
+      "recuperacion_ms": 47.4974000826478,
+      "generacion_ms": 1298.273100052029
+    }
+  },
+  {
+    "id": "p10",
+    "pregunta": "¿Qué técnicas existen para comprimir un índice invertido?",
+    "esperados": [
+      "1908.10598v2"
+    ],
+    "consulta": "inverted index compression techniques delta encoding variable byte compression bit packing frame of reference Elias gamma delta codes",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "Basándose en los fragmentos proporcionados, existe una amplia variedad de técnicas y esquemas desarrollados a lo largo del tiempo para comprimir índices invertidos y sus listas de *postings*:\n\n* **Técnicas clásicas y primitivas:** Incluyen métodos históricos como Shannon-Fano (1949), Huffman (1952), codificación aritmética (1963), Golomb (1966), Elias-Fano y Rice (1971), códigos Variable-Byte y Nibble (1972), Gamma y Delta (1975), Exponential Golomb (1978), basados en Fibonacci (1985), vectores de bits jerárquicos (1986), codificación *Front Coding* (1988) e Interpolative (1996) [1].\n* **Técnicas basadas en bloques y marcos:** Como *Frame-of-Reference* (FOR) y arroz modificado (1998), SC-dense (2003), Zeta (2004), Simple-9, Relative-10 y Carryover-12 (2005), PForDelta (PFor) y BASC (2006), Simple-16 y Tournament (2008), ANS, Varint-GB y Opt-PFor (2009), Simple8b, VSE y SIMD-Gamma (2010), Varint-G8IU y Parallel-PFor (2011), DAC y Quasi-Succinct (2013), QMX y Roaring (2014), BP32, SIMD-BP128, SIMD-FastPFor y Masked-VByte (2015), Stream-VByte, Opt-VByte y SIMD-Delta (2018), además de DINT y Slicing (2019) [1].\n* **Esquemas representativos modernos:** \n  * *Stream VByte*, una variante de codificación *variable-byte* alineada a bytes y amigable con instrucciones SIMD [4].\n  * *Binary Interpolative Coding* (BIC), que destaca en listas altamente agrupadas a costa de una decodificación más lenta [4].\n  * *Elias-Fano* y su variante *Partitioned Elias-Fano* (PEF), los cuales permiten acceso aleatorio en tiempo constante y operaciones eficientes sobre la secuencia comprimida [4]. En bibliotecas modernas también se implementan variantes como `pefcomp` (que almacena complementos para secuencias casi llenas) [5].",
+    "citas": [
+      1,
+      4,
+      5
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "1908.10598v2",
+        "titulo": "Techniques for Inverted Index Compression",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "1908.10598v2",
+        "titulo": "Techniques for Inverted Index Compression",
+        "pagina": 16,
+        "citada": false
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "1908.10598v2",
+        "titulo": "Techniques for Inverted Index Compression",
+        "pagina": 7,
+        "citada": false
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "2606.07187v1",
+        "titulo": "RISE: A Rust Library for Inverted Index Search Engines",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2606.07187v1",
+        "titulo": "RISE: A Rust Library for Inverted Index Search Engines",
+        "pagina": 3,
+        "citada": true
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2107.13987v1",
+        "titulo": "Closing the B-tree vs. LSM-tree Write Amplification Gap on Modern Storage Hardware with Built-in Transparent Compression",
+        "pagina": 5,
+        "citada": false
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "2606.07187v1",
+        "titulo": "RISE: A Rust Library for Inverted Index Search Engines",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "1808.03969v1",
+        "titulo": "Reconfigurable Inverted Index",
+        "pagina": 2,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 1005.9869999531657,
+      "recuperacion_ms": 27.2172000259161,
+      "generacion_ms": 2212.2196001000702
+    }
+  },
+  {
+    "id": "p11",
+    "pregunta": "¿Cómo logra BM25S una búsqueda léxica mucho más rápida?",
+    "esperados": [
+      "2407.03618v1"
+    ],
+    "consulta": "BM25S fast lexical search sparse retrieval implementation",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "BM25S logra una búsqueda léxica significativamente más rápida computando de forma ansiosa (*eagerly*) las puntuaciones de BM25 durante la indexación y almacenándolas en matrices dispersas (*sparse matrices*) [2]. Esta estrategia permite realizar un troceado (*slicing*) y sumas más eficientes a lo largo de la dimensión de los tokens sin necesidad de recurrir a multiplicaciones de matrices [3].",
+    "citas": [
+      2,
+      3
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "2407.03618v1",
+        "titulo": "BM25S: Orders of magnitude faster lexical search via eager sparse scoring",
+        "pagina": 4,
+        "citada": false
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "2407.03618v1",
+        "titulo": "BM25S: Orders of magnitude faster lexical search via eager sparse scoring",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2407.03618v1",
+        "titulo": "BM25S: Orders of magnitude faster lexical search via eager sparse scoring",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "2302.06587v2",
+        "titulo": "SLIM: Sparsified Late Interaction for Multi-Vector Retrieval with Inverted Indexes",
+        "pagina": 4,
+        "citada": false
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2312.01556v1",
+        "titulo": "Searching Dense Representations with Inverted Indexes",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2404.18812v1",
+        "titulo": "Efficient Inverted Indexes for Approximate Retrieval over Learned Sparse Representations",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "2302.06587v2",
+        "titulo": "SLIM: Sparsified Late Interaction for Multi-Vector Retrieval with Inverted Indexes",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "2302.06587v2",
+        "titulo": "SLIM: Sparsified Late Interaction for Multi-Vector Retrieval with Inverted Indexes",
+        "pagina": 1,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 2424.371800152585,
+      "recuperacion_ms": 19.352199975401163,
+      "generacion_ms": 4516.174099873751
+    }
+  },
+  {
+    "id": "p12",
+    "pregunta": "¿Sigue siendo BM25 un buen punto de comparación para recuperar casos legales?",
+    "esperados": [
+      "2105.05686v2",
+      "2104.08653v4"
+    ],
+    "consulta": "BM25 legal case retrieval benchmark baseline effectiveness",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "Sí, los estudios indican que BM25 sigue siendo un modelo de referencia (baseline) muy sólido y competitivo para la recuperación de casos legales y tareas de tipo *Query-by-Example* (QBE) [1][2][4]. \n\nEn la competencia COLIEE 2021, un enfoque basado en vanilla BM25 logró el segundo lugar, obteniendo un puntaje F1 muy por encima de la mediana de las presentaciones y demostrando su alta efectividad mediante la segmentación de documentos y búsqueda en rejilla [1][2]. Asimismo, investigaciones previas y en el dominio de QBE han demostrado de manera consistente que los modelos tradicionales basados en términos como BM25 son altamente competitivos y funcionan como líneas de base eficaces [4][6].",
+    "citas": [
+      1,
+      2,
+      4,
+      6
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "2105.05686v2",
+        "titulo": "Yes, BM25 is a Strong Baseline for Legal Case Retrieval",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "2105.05686v2",
+        "titulo": "Yes, BM25 is a Strong Baseline for Legal Case Retrieval",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2105.05686v2",
+        "titulo": "Yes, BM25 is a Strong Baseline for Legal Case Retrieval",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "2210.05512v1",
+        "titulo": "On the Interpolation of Contextualized Term-based Ranking with BM25 for Query-by-Example Retrieval",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2104.08653v4",
+        "titulo": "IITP@COLIEE 2019: Legal Information Retrieval using BM25 and BERT",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2210.05512v1",
+        "titulo": "On the Interpolation of Contextualized Term-based Ranking with BM25 for Query-by-Example Retrieval",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "2411.08891v4",
+        "titulo": "Reliable Decision Making via Calibration Oriented Retrieval Augmented Generation",
+        "pagina": 8,
+        "citada": false
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "2104.08653v4",
+        "titulo": "IITP@COLIEE 2019: Legal Information Retrieval using BM25 and BERT",
+        "pagina": 1,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 1836.157799931243,
+      "recuperacion_ms": 45.954300090670586,
+      "generacion_ms": 2394.2297999747097
+    }
+  },
+  {
+    "id": "p13",
+    "pregunta": "¿Cómo se integran los modelos probabilísticos BM25 y BM25F en Lucene?",
+    "esperados": [
+      "0911.5046v2"
+    ],
+    "consulta": "BM25 BM25F Lucene integration implementation",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "La integración de los modelos BM25 y BM25F en el framework Java de Lucene se realiza desarrollando nuevos componentes a nivel de *Query*, *Weight* y *Scorers* [3]. \n\nLas principales funcionalidades se implementan en el nivel de *Scorer*, ya que las clases *Query* y *Weight* se encargan de preparar los parámetros necesarios para los *Scorers* y de crear sus instancias cuando se invoca el método de búsqueda [3]. Específicamente:\n\n* El filtrado booleano se lleva a cabo mediante las clases `ShouldBooleanScorer`, `MustBooleanScorer` y `NotBooleanScorer`, según los operadores lógicos aplicados [3].\n* Las funciones de puntuación de los modelos se implementan en los métodos de puntuación (`score`) de `BM25TermScorer` y `BM25FTermScorer` [3].\n* La clase `BM25BooleanScorer` crea instancias de `BM25TermScorer` (para texto plano usando BM25) o de `BM25FTermScorer` (para documentos estruturados usando BM25F) según el constructor que se invoque, ignorando cualquier información de campos tratada por el `QueryParser` tradicional de Lucene para realizar la búsqueda únicamente con los campos pasados como parámetros [3].",
+    "citas": [
+      3
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "0911.5046v2",
+        "titulo": "Integrating the Probabilistic Models BM25/BM25F into Lucene",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "0911.5046v2",
+        "titulo": "Integrating the Probabilistic Models BM25/BM25F into Lucene",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "0911.5046v2",
+        "titulo": "Integrating the Probabilistic Models BM25/BM25F into Lucene",
+        "pagina": 3,
+        "citada": true
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "2407.03618v1",
+        "titulo": "BM25S: Orders of magnitude faster lexical search via eager sparse scoring",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2407.03618v1",
+        "titulo": "BM25S: Orders of magnitude faster lexical search via eager sparse scoring",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2605.18561v1",
+        "titulo": "Improving BM25 Code Retrieval Under Fixed Generic Tokenization: Adaptive q-Log Odds as a Drop-In BM25 Fix",
+        "pagina": 3,
+        "citada": false
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "2407.03618v1",
+        "titulo": "BM25S: Orders of magnitude faster lexical search via eager sparse scoring",
+        "pagina": 3,
+        "citada": false
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "2312.01556v1",
+        "titulo": "Searching Dense Representations with Inverted Indexes",
+        "pagina": 2,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 1738.6139000300318,
+      "recuperacion_ms": 66.40259991399944,
+      "generacion_ms": 4598.76750013791
+    }
+  },
+  {
+    "id": "p14",
+    "pregunta": "¿Cómo está diseñado Manu, la base de datos vectorial nativa de la nube?",
+    "esperados": [
+      "2206.13843v1"
+    ],
+    "consulta": "Manu cloud native vector database architecture design",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "Manu es una base de datos vectorial nativa de la nube diseñada siguiendo los principios generales de las bases de datos nativas de la nube para lograr una alta elasticidad, evolución rápida y aislamiento de fallas mediante una desaceleración de grano fino de las funcionalidades del sistema [1]. \n\nSu diseño incluye los siguientes aspectos clave:\n\n* **Desacoplamiento de componentes:** Manu desacopla sus funcionalidades en almacenamiento, coordinadores y trabajadores (workers) [3]. Las tareas de búsqueda de vectores, archivado de registros (logs) y construcción de índices están separadas para permitir un escalado independiente y bajo demanda [1][3].\n* **Capa de almacenamiento basada en servicios de la nube:** Utiliza servicios generales proporcionados por grandes proveedores de nubes, empleando un almacén clave-valor (KV) transaccional para los metadatos, colas de mensajes para los registros y un almacén de objetos KV para los datos [3].\n* **Coordinadores de alta disponibilidad:** Para gestionar las funcionalidades del sistema, emplea una configuración estándar de un nodo principal (*main*) con dos respaldos en caliente (*hot backups*) [3].\n* **El \"log backbone\" (columna vertebral de registros):** Conecta los componentes del sistema permitiéndoles interactuar mediante la lectura y escritura de registros a su manera, lo que facilita la evolución independiente de los componentes y la incorporación de otros nuevos [3]. Asimismo, proporciona semánticas de tiempo consistentes para la ejecución determinista y la recuperación ante fallos [3], además de respaldar un equilibrio ajustable entre consistencia y rendimiento [1].\n* **Compromisos de diseño:** Para priorizar el rendimiento, los costos y la flexibilidad, Manu prescinde de los modelos de datos complejos y de los requisitos de transacciones complejas, intercambiándolos por un modelo de datos simple (vectores) y consistencia tunable [1].",
+    "citas": [
+      1,
+      3
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "2206.13843v1",
+        "titulo": "Manu: A Cloud Native Vector Database Management System",
+        "pagina": 12,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "2206.13843v1",
+        "titulo": "Manu: A Cloud Native Vector Database Management System",
+        "pagina": 11,
+        "citada": false
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2206.13843v1",
+        "titulo": "Manu: A Cloud Native Vector Database Management System",
+        "pagina": 7,
+        "citada": true
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "2603.13897v1",
+        "titulo": "Concurrency Control as a Service",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2603.13897v1",
+        "titulo": "Concurrency Control as a Service",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2603.13897v1",
+        "titulo": "Concurrency Control as a Service",
+        "pagina": 8,
+        "citada": false
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "2608.15994v1",
+        "titulo": "Building An Integrated Vector Database System in PostgreSQL",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "2601.06727v1",
+        "titulo": "Vextra: A Unified Middleware Abstraction for Heterogeneous Vector Database Systems",
+        "pagina": 3,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 1975.3601998090744,
+      "recuperacion_ms": 39.99600000679493,
+      "generacion_ms": 2907.7643998898566
+    }
+  },
+  {
+    "id": "p15",
+    "pregunta": "¿Qué tipos de errores aparecen en los sistemas de gestión de bases de datos vectoriales?",
+    "esperados": [
+      "2506.02617v1"
+    ],
+    "consulta": "error types failure modes vector database management systems VDBMS bugs",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "En los sistemas de gestión de bases de datos vectoriales (VDBMSs), el análisis empírico de defectos de software identifica cinco categorías principales de síntomas de errores, siendo los fallos funcionales los más comunes (más de la mitad de los casos) [1][2]. Asimismo, se han revelado 31 patrones de fallos recurrentes y modos de fallo únicos asociados con los sistemas de búsqueda vectorial [1][2].",
+    "citas": [
+      1,
+      2
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "2506.02617v1",
+        "titulo": "Toward Understanding Bugs in Vector Database Management Systems",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "2506.02617v1",
+        "titulo": "Toward Understanding Bugs in Vector Database Management Systems",
+        "pagina": 10,
+        "citada": true
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2506.02617v1",
+        "titulo": "Toward Understanding Bugs in Vector Database Management Systems",
+        "pagina": 2,
+        "citada": false
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "2309.11322v2",
+        "titulo": "Vector database management systems: Fundamental concepts, use-cases, and current challenges",
+        "pagina": 2,
+        "citada": false
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2309.11322v2",
+        "titulo": "Vector database management systems: Fundamental concepts, use-cases, and current challenges",
+        "pagina": 10,
+        "citada": false
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2309.11322v2",
+        "titulo": "Vector database management systems: Fundamental concepts, use-cases, and current challenges",
+        "pagina": 3,
+        "citada": false
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "2510.22344v1",
+        "titulo": "FAIR-RAG: Faithful Adaptive Iterative Refinement for Retrieval-Augmented Generation",
+        "pagina": 19,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 8368.162899976596,
+      "recuperacion_ms": 44.655799865722656,
+      "generacion_ms": 4100.831899791956
+    }
+  },
+  {
+    "id": "p16",
+    "pregunta": "¿Cómo se integra una base de datos vectorial dentro de PostgreSQL sin perder rendimiento?",
+    "esperados": [
+      "2608.15994v1"
+    ],
+    "consulta": "PostgreSQL vector database integration performance optimization",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "Para integrar una base de datos vectorial dentro de PostgreSQL sin perder rendimiento, se propone desacoplar la estructura del índice vectorial del motor de almacenamiento basado en páginas de PostgreSQL, permitiendo que esté respaldado por bibliotecas nativas mientras se mantiene la compatibilidad con el motor de consultas SQL [1][2][3]. \n\nEsta aproximación se implementa mediante un marco de trabajo de estilo LSM (Log-Structured Merge) para actualizaciones eficientes y un mecanismo de consistencia ligero que mantiene el índice seguro ante fallos sin volver al formato orientado a páginas [2][3]. Además, versiones avanzadas como PostgreSQL-V 2.0 añaden soporte para concurrencia mediante un modelo de múltiples hilos dentro de un solo proceso, un modo basado en `mmap` para reducir el tiempo de inicio en frío, y un diseño de dos canales para soportar la replicación física de manera eficiente [3].",
+    "citas": [
+      1,
+      2,
+      3
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "2608.15994v1",
+        "titulo": "Building An Integrated Vector Database System in PostgreSQL",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "2608.15994v1",
+        "titulo": "Building An Integrated Vector Database System in PostgreSQL",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2608.15994v1",
+        "titulo": "Building An Integrated Vector Database System in PostgreSQL",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "2102.02440v1",
+        "titulo": "Online Sketch-based Query Optimization",
+        "pagina": 28,
+        "citada": false
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2102.02440v1",
+        "titulo": "Online Sketch-based Query Optimization",
+        "pagina": 15,
+        "citada": false
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2102.02440v1",
+        "titulo": "Online Sketch-based Query Optimization",
+        "pagina": 20,
+        "citada": false
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "2411.02862v1",
+        "titulo": "The Unreasonable Effectiveness of LLMs for Query Optimization",
+        "pagina": 3,
+        "citada": false
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "2411.02862v1",
+        "titulo": "The Unreasonable Effectiveness of LLMs for Query Optimization",
+        "pagina": 3,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 670.1420999597758,
+      "recuperacion_ms": 62.460499815642834,
+      "generacion_ms": 4191.523800138384
+    }
+  },
+  {
+    "id": "p17",
+    "pregunta": "¿Cómo afecta la granularidad de las marcas de tiempo al control de concurrencia optimista?",
+    "esperados": [
+      "1811.04967v1"
+    ],
+    "consulta": "timestamp granularity optimistic concurrency control performance",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "La granularidad de las marcas de tiempo tiene un impacto significativo en el rendimiento del control de concurrencia optimista (OCC) y de otros mecanismos de control de concurrencia [1][3]. \n\nEl uso de marcas de tiempo de grano fino (empleando diferentes marcas para componentes disjuntos de cada registro) ayuda a evitar falsos conflictos causados por marcas de tiempo de grano grueso, superando los beneficios de otros mecanismos alternativos más complejos [1][3]. En benchmarks del mundo real, el OCC con marcas de tiempo de grano fino puede lograr un rendimiento superior (por ejemplo, alcanzando un 1.14× el rendimiento de TicToc a 128 núcleos) sin que se observen ralentizaciones importantes por el mantenimiento de más marcas de tiempo por registro [1][3]. Esto demuestra que la granularidad de las marcas de tiempo es un factor crucial que se había pasado por alto en la búsqueda de esquemas de control de concurrencia más rápidos [3].",
+    "citas": [
+      1,
+      3
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "1811.04967v1",
+        "titulo": "The Impact of Timestamp Granularity in Optimistic Concurrency Control",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "2207.02746v1",
+        "titulo": "C5: Cloned Concurrency Control that Always Keeps Up",
+        "pagina": 4,
+        "citada": false
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "1811.04967v1",
+        "titulo": "The Impact of Timestamp Granularity in Optimistic Concurrency Control",
+        "pagina": 5,
+        "citada": true
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "1811.04967v1",
+        "titulo": "The Impact of Timestamp Granularity in Optimistic Concurrency Control",
+        "pagina": 2,
+        "citada": false
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2406.10158v2",
+        "titulo": "GPU-Accelerated OLTP: An In-Depth Analysis of Concurrency Control Schemes",
+        "pagina": 2,
+        "citada": false
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "1112.2155v1",
+        "titulo": "A Concurrency Control Method Based on Commitment Ordering in Mobile Databases",
+        "pagina": 4,
+        "citada": false
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "1112.2155v1",
+        "titulo": "A Concurrency Control Method Based on Commitment Ordering in Mobile Databases",
+        "pagina": 9,
+        "citada": false
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "1112.2155v1",
+        "titulo": "A Concurrency Control Method Based on Commitment Ordering in Mobile Databases",
+        "pagina": 3,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 1097.705899970606,
+      "recuperacion_ms": 63.69430013000965,
+      "generacion_ms": 3735.823499970138
+    }
+  },
+  {
+    "id": "p18",
+    "pregunta": "¿Cómo aprende Polyjuice una política de control de concurrencia?",
+    "esperados": [
+      "2105.10329v3"
+    ],
+    "consulta": "Polyjuice concurrency control policy learning",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "Polyjuice aprende una política de control de concurrencia óptima para una carga de trabajo dada utilizando un entrenamiento fuera de línea (*offline training*) [1]. \n\nInspirado en el aprendizaje por refuerzo, Polyjuice diseña un \"espacio de políticas\" de acciones de grano fino (pasos algorítmicos) donde cada política funciona como una función que mapea el contexto de ejecución de un acceso a datos (el estado) con acciones de control de concurrencia [1]. Para optimizar y encontrar la política de mayor rendimiento dentro de este espacio, el sistema utiliza un algoritmo evolutivo [3].",
+    "citas": [
+      1,
+      3
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "2105.10329v3",
+        "titulo": "Polyjuice: High-Performance Transactions via Learned Concurrency Control",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "2105.10329v3",
+        "titulo": "Polyjuice: High-Performance Transactions via Learned Concurrency Control",
+        "pagina": 5,
+        "citada": false
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2105.10329v3",
+        "titulo": "Polyjuice: High-Performance Transactions via Learned Concurrency Control",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "2503.10036v4",
+        "titulo": "Modeling Concurrency Control as a Learnable Function",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2503.10036v4",
+        "titulo": "Modeling Concurrency Control as a Learnable Function",
+        "pagina": 2,
+        "citada": false
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2503.10036v4",
+        "titulo": "Modeling Concurrency Control as a Learnable Function",
+        "pagina": 1,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 808.4793000016361,
+      "recuperacion_ms": 16.534199938178062,
+      "generacion_ms": 3702.7827999554574
+    }
+  },
+  {
+    "id": "p19",
+    "pregunta": "¿Cómo se optimiza el orden de los joins con aprendizaje por refuerzo profundo?",
+    "esperados": [
+      "1911.11689v1",
+      "1803.08604v1"
+    ],
+    "consulta": "deep reinforcement learning join order optimization",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "Para optimizar el orden de los joins utilizando aprendizaje por refuerzo profundo (DRL), un agente aprende una política de decisión que mapea estados (subplanes o subconsultas actuales) a acciones (la combinación de dos subplanes para formar uno nuevo) con el fin de maximizar la recompensa acumulada [1][6]. \n\nDurante este proceso, se pueden emplear diferentes enfoques y algoritmos:\n* **Exploración del espacio de búsqueda:** El uso de DRL permite explorar eficientemente el espacio de búsqueda para encontrar planes de uniones óptimos sin necesidad de realizar enumeraciones exhaustivas (las cuales son muy costosas o NP-hard) [2][3][4]. Se han evaluado diversos algoritmos, demostrando que Proximal Policy Optimization (PPO) supera a los enfoques basados en Deep Q-Networks (DQN) o Q-learning [1][2][6].\n* **Representación de estados:** Algunos enfoques representan cada estado como un vector latente o de dimensión finita utilizando redes neuronales para capturar propiedades de las subconsultas, aprendiendo la función de transición de estados de forma incremental [5][7][8].\n* **Mitigación de errores:** Para superar los problemas de estimaciones erróneas de cardinalidad en los modelos de costos tradicionales, algunos métodos aplican aprendizaje en conjunto (*ensemble learning*) para mejorar la estabilidad del entrenamiento estocástico, o incorporan fases de ajuste fino (*fine-tuning*) utilizando tiempos de ejecución de consultas pasadas [1][4].\n* **Métodos offline y online:** Los métodos de aprendizaje *offline* desarrollan políticas basadas en experiencias previas (acciones, estados y recompensas de consultas anteriores), mientras que los métodos *online* actualizan sus modelos de forma adaptativa durante la ejecución en tiempo de ejecución (*runtime*) [6].",
+    "citas": [
+      1,
+      6,
+      2,
+      3,
+      4,
+      5,
+      7,
+      8
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "1911.11689v1",
+        "titulo": "Join Query Optimization with Deep Reinforcement Learning Algorithms",
+        "pagina": 12,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "1911.11689v1",
+        "titulo": "Join Query Optimization with Deep Reinforcement Learning Algorithms",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2102.02440v1",
+        "titulo": "Online Sketch-based Query Optimization",
+        "pagina": 29,
+        "citada": true
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "1911.11689v1",
+        "titulo": "Join Query Optimization with Deep Reinforcement Learning Algorithms",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "1803.08604v1",
+        "titulo": "Learning State Representations for Query Optimization with Deep Reinforcement Learning",
+        "pagina": 4,
+        "citada": true
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2411.14277v1",
+        "titulo": "Neuro-Symbolic Query Optimization in Knowledge Graphs",
+        "pagina": 7,
+        "citada": true
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "1803.08604v1",
+        "titulo": "Learning State Representations for Query Optimization with Deep Reinforcement Learning",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "1803.08604v1",
+        "titulo": "Learning State Representations for Query Optimization with Deep Reinforcement Learning",
+        "pagina": 2,
+        "citada": true
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 829.2266000062227,
+      "recuperacion_ms": 25.009499862790108,
+      "generacion_ms": 4826.3768998440355
+    }
+  },
+  {
+    "id": "p20",
+    "pregunta": "¿Qué son las olas de miseria en los R-trees?",
+    "esperados": [
+      "2112.13174v1"
+    ],
+    "consulta": "waves of misery R-trees",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "Las \"olas de miseria\" (waves of misery) en los R-trees son un fenómeno en el cual los recuentos de divisiones de nodos (node splits)—tanto en nodos hoja como no hoja— se agrupan y se asemejan a la forma de una ola [1][2]. Al estar formadas por divisiones agrupadas, estas olas ponen una presión adicional en la gestión del búfer (buffer management) y provocan un rendimiento no determinista [3]. \n\nAdemás del rendimiento en las consultas, este fenómeno afecta negativamente la utilización de los nodos, observándose que el rendimiento del árbol solo es estable y predecible durante los períodos en que las olas de miseria no ocurren [2][3].",
+    "citas": [
+      1,
+      2,
+      3
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "2112.13174v1",
+        "titulo": "An Experimental Evaluation and Investigation of Waves of Misery in R-trees",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "2112.13174v1",
+        "titulo": "An Experimental Evaluation and Investigation of Waves of Misery in R-trees",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2112.13174v1",
+        "titulo": "An Experimental Evaluation and Investigation of Waves of Misery in R-trees",
+        "pagina": 12,
+        "citada": true
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 944.9140001088381,
+      "recuperacion_ms": 32.02160005457699,
+      "generacion_ms": 3879.8956000246108
+    }
+  },
+  {
+    "id": "p21",
+    "pregunta": "¿Cómo se vectoriza con SIMD el procesamiento de consultas de un R-tree?",
+    "esperados": [
+      "2309.16913v1"
+    ],
+    "consulta": "SIMD vectorization R-tree query processing",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "El procesamiento de consultas de un R-tree se vectoriza mediante la implementación de versiones vectorizadas de las operaciones espaciales de selección de rangos (*range select*) y unión (*spatial join*) sobre un índice R-tree vectorizado (o SIMD-ified) [1][3]. \n\nPara lograrlo, se investigan diferentes disposiciones de almacenamiento (*storage layouts*) para los nodos del R-tree que faciliten el uso de instrucciones SIMD, tanto en memoria principal como en disco [1][2]. Sobre estos diseños de datos, se desarrollan algoritmos vectorizados para cada operación espacial [1]. \n\nAdicionalmente, dado que los nodos de un R-tree se solapan, se utiliza una cola para realizar una búsqueda en anchura (*breadth-first search* o BFS) y se emplean instrucciones SIMD para insertar múltiples elementos en dicha cola en una sola instrucción, reduciendo así la sobrecarga [3]. Para las operaciones de unión espacial con índices anidados (*nested-index join*), se recorren ambos árboles simultáneamente desde la raíz hasta las hojas de forma descendente [3].",
+    "citas": [
+      1,
+      3,
+      2
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "2309.16913v1",
+        "titulo": "SIMD-ified R-tree Query Processing and Optimization",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "2309.16913v1",
+        "titulo": "SIMD-ified R-tree Query Processing and Optimization",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2309.16913v1",
+        "titulo": "SIMD-ified R-tree Query Processing and Optimization",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "1812.09162v2",
+        "titulo": "Quicker ADC : Unlocking the hidden potential of Product Quantization with SIMD",
+        "pagina": 7,
+        "citada": false
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "1901.01488v1",
+        "titulo": "Exact Selectivity Computation for Modern In-Memory Database Query Optimization",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "1908.10598v2",
+        "titulo": "Techniques for Inverted Index Compression",
+        "pagina": 3,
+        "citada": false
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "2608.01255v1",
+        "titulo": "RaG-Tree: Combining R-Tree and HNSW for Multi-Attribute Range Filtered Approximate Nearest Neighbor Search",
+        "pagina": 2,
+        "citada": false
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "2505.01180v2",
+        "titulo": "BS-tree: A gapped data-parallel B-tree",
+        "pagina": 3,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 764.1414001118392,
+      "recuperacion_ms": 41.17479990236461,
+      "generacion_ms": 4788.14209997654
+    }
+  },
+  {
+    "id": "p22",
+    "pregunta": "¿Cómo se implementa un ordenamiento externo basado en comparaciones?",
+    "esperados": [
+      "2207.12713v1",
+      "2305.05671v1"
+    ],
+    "consulta": "external sorting comparison based sorting algorithms large datasets disk-based sorting",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "Los algoritmos de ordenamiento externo basados en comparaciones generan ejecuciones ordenadas (*runs*) y luego las combinan en una ejecución larga [1]. Este proceso consta de dos etapas principales que pueden ser independientes y consecutivas, o bien alternadas: la generación de ejecuciones y la fusión de ejecuciones [1]. \n\nPara la **generación de ejecuciones**, existen principalmente dos enfoques:\n1. Leer tuplas del disco mientras haya suficiente memoria disponible y ordenarlas utilizando algún algoritmo de ordenamiento interno [1].\n2. Mantener una estructura de datos en memoria con interfaz de cola de prioridad, donde en cada iteración se recupera el valor más bajo para enviarlo a un búfer o escribirlo en el disco [1].\n\nPara la segunda etapa, la **fusión de ejecuciones**, los algoritmos se diferencian en cómo seleccionan el valor más pequeño entre los primeros elementos de las ejecuciones combinadas [3]. El enfoque más simple e ingenuo consiste en verificar todos los candidatos, mientras que las alternativas más eficientes emplean estructuras de datos para acelerar esta búsqueda, siendo las opciones más comunes un árbol de ganadores o perdedores (*tournament tree*) o un montículo (*heap*) [3][4].",
+    "citas": [
+      1,
+      3,
+      4
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "2207.12713v1",
+        "titulo": "Implementing the Comparison-Based External Sort",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "2305.05671v1",
+        "titulo": "Parallel External Sorting of ASCII Records Using Learned Models",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2207.12713v1",
+        "titulo": "Implementing the Comparison-Based External Sort",
+        "pagina": 3,
+        "citada": true
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "2207.12713v1",
+        "titulo": "Implementing the Comparison-Based External Sort",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2305.05671v1",
+        "titulo": "Parallel External Sorting of ASCII Records Using Learned Models",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2305.05671v1",
+        "titulo": "Parallel External Sorting of ASCII Records Using Learned Models",
+        "pagina": 3,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 793.0459000635892,
+      "recuperacion_ms": 42.667899979278445,
+      "generacion_ms": 4234.802099876106
+    }
+  },
+  {
+    "id": "p23",
+    "pregunta": "¿Cómo cerrar la diferencia de amplificación de escritura entre B-tree y LSM-tree en hardware moderno?",
+    "esperados": [
+      "2107.13987v1"
+    ],
+    "consulta": "B-tree LSM-tree write amplification modern hardware",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "Para cerrar la diferencia de amplificación de escritura entre el B-tree y el LSM-tree en el hardware de almacenamiento moderno, se puede aprovechar el hardware que cuenta con compresión transparente integrada (como matrices all-flash y unidades de almacenamiento computacional) [1]. \n\nEste tipo de hardware realiza compresión de datos sin pérdida basada en hardware de forma transparente para el sistema operativo y las aplicaciones, lo que permite que el software de gestión de datos utilice estructuras de datos dispersas (sparse data structures) sin sacrificar el costo de almacenamiento físico real [1][2][3]. Con esto, los bloques lógicos pueden dejarse parcialmente llenos o vacíos sin desperdiciar espacio físico [3].\n\nEspecíficamente, en el caso del B-tree, se pueden implementar tres técnicas de diseño simples que explotan esta capacidad del hardware para reducir drásticamente su amplificación de escritura en más de 10 veces:\n1. Sombra de páginas deterministas (deterministic page shadowing) [1].\n2. Registro de modificaciones de páginas localizado (localized page modification logging) [1].\n3. Registro de reintentos disperso (sparse redo logging) [1].\n\nEstas técnicas permiten que el B-tree alcance una amplificación de escritura y un uso de espacio físico similares o incluso menores que los de sistemas basados en LSM-tree como RocksDB [1][2].",
+    "citas": [
+      1,
+      2,
+      3
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "2107.13987v1",
+        "titulo": "Closing the B-tree vs. LSM-tree Write Amplification Gap on Modern Storage Hardware with Built-in Transparent Compression",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "2107.13987v1",
+        "titulo": "Closing the B-tree vs. LSM-tree Write Amplification Gap on Modern Storage Hardware with Built-in Transparent Compression",
+        "pagina": 11,
+        "citada": true
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2107.13987v1",
+        "titulo": "Closing the B-tree vs. LSM-tree Write Amplification Gap on Modern Storage Hardware with Built-in Transparent Compression",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "2603.05632v1",
+        "titulo": "Space-efficient B-tree Implementation for Memory-Constrained Flash Embedded Devices",
+        "pagina": 4,
+        "citada": false
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2603.04785v2",
+        "titulo": "Towards a B+-tree with Fluctuation-Free Performance",
+        "pagina": 2,
+        "citada": false
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2406.18892v2",
+        "titulo": "LearnedKV: Integrating LSM and Learned Index for Superior Performance on Storage",
+        "pagina": 1,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 1539.4411999732256,
+      "recuperacion_ms": 31.007299898192286,
+      "generacion_ms": 2675.7853999733925
+    }
+  },
+  {
+    "id": "p24",
+    "pregunta": "¿Qué ventajas tiene una skip list representada de forma única frente a los B-trees?",
+    "esperados": [
+      "1005.0662v1"
+    ],
+    "consulta": "¿Qué ventajas tiene una skip list representada de forma única frente a los B-trees?",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "El B-skip-list es una estructura de datos alternativa al B-tree que se representa de forma única, lo que permite construir sistemas de archivos y estructuras de índices fuertemente independientes del historial (history-independent) [2][3]. Esto significa que cada estado lógico se representa con un único estado en la máquina, sin revelar información sobre la secuencia histórica de operaciones que llevaron al estado actual, lo cual es útil para escenarios que requieren estricta privacidad o seguridad [3].\n\nEn términos de rendimiento, el B-skip-list ofrece garantías similares a las de un B-tree: tiene una profundidad de $O(\\log_B(n))$, utiliza espacio lineal con alta probabilidad y admite consultas de rango eficientes [1][3]. Además, soporta operaciones de búsqueda, inserción y eliminación tocando a lo sumo $O(\\log_B(n))$ bloques de memoria externa en expectativa [1]. Su principal virtud frente a otras estructuras con estas propiedades (como el B-treap) es su simplicidad conceptual y su facilidad de implementación [1][2].",
+    "citas": [
+      2,
+      3,
+      1
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "1005.0662v1",
+        "titulo": "The B-Skip-List: A Simpler Uniquely Represented Alternative to B-Trees",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "1005.0662v1",
+        "titulo": "The B-Skip-List: A Simpler Uniquely Represented Alternative to B-Trees",
+        "pagina": 11,
+        "citada": true
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "1005.0662v1",
+        "titulo": "The B-Skip-List: A Simpler Uniquely Represented Alternative to B-Trees",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "2606.09133v1",
+        "titulo": "Multiversion Concurrency Control for Multiversion B-Trees",
+        "pagina": 10,
+        "citada": false
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "1110.3767v2",
+        "titulo": "Anti-sparse coding for approximate nearest neighbor search",
+        "pagina": 4,
+        "citada": false
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2606.09133v1",
+        "titulo": "Multiversion Concurrency Control for Multiversion B-Trees",
+        "pagina": 10,
+        "citada": false
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "2112.13174v1",
+        "titulo": "An Experimental Evaluation and Investigation of Waves of Misery in R-trees",
+        "pagina": 11,
+        "citada": false
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "2603.04785v2",
+        "titulo": "Towards a B+-tree with Fluctuation-Free Performance",
+        "pagina": 9,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 4923.051600111648,
+      "recuperacion_ms": 124.4633998721838,
+      "generacion_ms": 5697.536299936473
+    }
+  },
+  {
+    "id": "p25",
+    "pregunta": "¿Cómo se combinan un R-tree y HNSW para buscar vectores filtrando por rangos en varios atributos?",
+    "esperados": [
+      "2608.01255v1"
+    ],
+    "consulta": "R-tree HNSW vector search attribute range filtering hybrid index",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "Para realizar la búsqueda de vecinos más cercanos aproximados filtrada por rangos en múltiples atributos (MR-ANNS), **RaG-Tree** combina un R-tree y grafos HNSW de la siguiente manera:\n\n* **Estructura unificada y jerárquica:** El R-tree se construye utilizando todos los atributos para preservar las correlaciones entre ellos mediante particiones jerárquicas multi-atributo [1][3]. Esto permite realizar una localización de rangos precisa a través de la poda de Rectángulos Mínimos Envolventes (MBR), descartando particiones irrelevantes de manera temprana y reduciendo el número de grafos HNSW que deben consultarse [3].\n* **Grafos HNSW conscientes de particiones:** RaG-Tree construye un grafo HNSW adaptado (partition-aware) para cada nodo del R-tree [1][3]. La dispersión (*sparsity*) de cada grafo HNSW se determina de forma adaptativa según las correlaciones locales entre los atributos y los vectores dentro de su partición, lo que explota las correlaciones locales y evita exploraciones innecesarias en objetos fuera de rango [1][2][3].\n* **Procesamiento de consultas:** Ante una consulta MR-ANNS, el sistema identifica primero los nodos del R-tree que intersecan con los predicados de búsqueda y, a continuación, ejecuta la búsqueda de vecinos cercanos aproximados (ANNS) utilizando los grafos HNSW correspondientes [3]. Además, emplea un algoritmo de búsqueda adaptable basado en costos para optimizar la selección del grafo local y la asignación del presupuesto de búsqueda [1][2].",
+    "citas": [
+      1,
+      3,
+      2
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "2608.01255v1",
+        "titulo": "RaG-Tree: Combining R-Tree and HNSW for Multi-Attribute Range Filtered Approximate Nearest Neighbor Search",
+        "pagina": 12,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "2608.01255v1",
+        "titulo": "RaG-Tree: Combining R-Tree and HNSW for Multi-Attribute Range Filtered Approximate Nearest Neighbor Search",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2608.01255v1",
+        "titulo": "RaG-Tree: Combining R-Tree and HNSW for Multi-Attribute Range Filtered Approximate Nearest Neighbor Search",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "2506.02617v1",
+        "titulo": "Toward Understanding Bugs in Vector Database Management Systems",
+        "pagina": 2,
+        "citada": false
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2506.02617v1",
+        "titulo": "Toward Understanding Bugs in Vector Database Management Systems",
+        "pagina": 2,
+        "citada": false
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2607.24173v1",
+        "titulo": "Simple and Fast Algorithm for Graph-based Filtered Approximate Nearest Neighbor Search (Full Version)",
+        "pagina": 4,
+        "citada": false
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "2206.13843v1",
+        "titulo": "Manu: A Cloud Native Vector Database Management System",
+        "pagina": 11,
+        "citada": false
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "2505.06501v1",
+        "titulo": "Survey of Filtered Approximate Nearest Neighbor Search over the Vector-Scalar Hybrid Data",
+        "pagina": 8,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 3839.7190999239683,
+      "recuperacion_ms": 46.79260007105768,
+      "generacion_ms": 4927.96009988524
+    }
+  },
+  {
+    "id": "p26",
+    "pregunta": "¿Qué estrategias de división en fragmentos funcionan mejor para RAG sobre textos académicos?",
+    "esperados": [
+      "2607.01852v1"
+    ],
+    "consulta": "chunking strategies semantic chunking recursive chunking academic texts RAG retrieval augmented generation",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "En la evaluación de estrategias de división en fragmentos (*chunking*) para RAG en tesis académicas estructuradas y largas, las estrategias más simples mostraron ser en general más confiables que las opciones complejas [1][2]. \n\nEspecíficamente, bajo las configuraciones evaluadas, el *chunking* semántico basado en clústeres no superó a las estrategias más simples, requiriendo mayor complejidad computacional sin ofrecer mejoras consistentes [1][2]. Por otro lado, estrategias convencionales como el *chunking* de tamaño fijo (*fixed-sized*) o recursivo basado en formatos siguen utilizándose, aunque su rendimiento varía sustancialmente dependiendo del preprocesamiento y el formato de los documentos [1][2]. En la práctica general para documentos de investigación y narrativas complejas, también se destacan técnicas como el *semantic windowing* por su alta preservación de contexto [5].",
+    "citas": [
+      1,
+      2,
+      5
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "2607.01852v1",
+        "titulo": "Evaluating Chunking Strategies for Retrieval-Augmented Generation on Academic Texts",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "2607.01852v1",
+        "titulo": "Evaluating Chunking Strategies for Retrieval-Augmented Generation on Academic Texts",
+        "pagina": 3,
+        "citada": true
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2505.04680v1",
+        "titulo": "Retrieval Augmented Generation Evaluation for Health Documents",
+        "pagina": 14,
+        "citada": false
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "2607.01852v1",
+        "titulo": "Evaluating Chunking Strategies for Retrieval-Augmented Generation on Academic Texts",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2601.05264v1",
+        "titulo": "Engineering the RAG Stack: A Comprehensive Review of the Architecture and Trust Frameworks for Retrieval-Augmented Generation Systems",
+        "pagina": 37,
+        "citada": true
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2310.11703v4",
+        "titulo": "A Comprehensive Survey on Vector Database: Storage and Retrieval Technique, Challenge",
+        "pagina": 19,
+        "citada": false
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "2604.01733v1",
+        "titulo": "From BM25 to Corrective RAG: Benchmarking Retrieval Strategies for Text-and-Table Documents",
+        "pagina": 2,
+        "citada": false
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "2606.08950v1",
+        "titulo": "When More Cores Hurts: The Vector Database Scaling Paradox in HPC",
+        "pagina": 4,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 808.1517999526113,
+      "recuperacion_ms": 45.599599834531546,
+      "generacion_ms": 4403.760500019416
+    }
+  },
+  {
+    "id": "p27",
+    "pregunta": "¿Cómo se puede inferir de forma sigilosa si un documento está en la base de un sistema RAG?",
+    "esperados": [
+      "2502.00306v2"
+    ],
+    "consulta": "RAG membership inference attack covert document detection black-box LM privacy",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "Para inferir de forma sigilosa si un documento está en la base de datos de un sistema RAG sin ser detectado por los mecanismos de seguridad, se puede utilizar el ataque llamado *Interrogation Attack* (IA) [2]. \n\nEste método aprovecha consultas de texto natural que son altamente específicas y topográficas para un documento objetivo, de modo que puedan servir como sondas de inferencia de membresía sigilosas [2]. Inspirado en la tarea *doc2query* de la literatura de recuperación de información, el ataque emplea técnicas de *few-shot prompting* para guiar a un modelo de lenguaje (LLM) en la creación de consultas que están alineadas con el documento y solo pueden ser respondidas de manera única por este [2]. Estas consultas capturan información detallada y matizada sin requerir acceso a los modelos subyacentes ni utilizar consultas antinaturales o técnicas de *jailbreaking* que activen herramientas de detección [2].",
+    "citas": [
+      2
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "2502.00306v2",
+        "titulo": "Riddle Me This! Stealthy Membership Inference for Retrieval-Augmented Generation",
+        "pagina": 8,
+        "citada": false
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "2502.00306v2",
+        "titulo": "Riddle Me This! Stealthy Membership Inference for Retrieval-Augmented Generation",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2502.00306v2",
+        "titulo": "Riddle Me This! Stealthy Membership Inference for Retrieval-Augmented Generation",
+        "pagina": 13,
+        "citada": false
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "2207.11575v1",
+        "titulo": "Testing the Robustness of Learned Index Structures",
+        "pagina": 2,
+        "citada": false
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2207.11575v1",
+        "titulo": "Testing the Robustness of Learned Index Structures",
+        "pagina": 2,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 732.5714998878539,
+      "recuperacion_ms": 54.758899845182896,
+      "generacion_ms": 3723.968399921432
+    }
+  },
+  {
+    "id": "p28",
+    "pregunta": "¿Cómo usa EFANNA un grafo de k vecinos para acelerar la búsqueda aproximada?",
+    "esperados": [
+      "1609.07228v3"
+    ],
+    "consulta": "EFANNA k-nearest neighbor graph approximate nearest neighbor search acceleration",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "EFANNA utiliza una estructura de índice que combina múltiples estructuras jerárquicas aleatorias (como KD-trees truncados) y un grafo de vecinos más cercanos aproximado ($k$NN graph) [2]. \n\nEn la etapa de búsqueda en línea, EFANNA realiza primero una búsqueda en las estructuras jerárquicas para obtener vecinos candidatos para un punto de consulta dado [2]. Posteriormente, refina estos resultados aplicando la expansión de vecinos cercanos (*NN-expansion*) sobre el grafo $k$NN [2]. Esta aproximación aprovecha una buena inicialización para evitar converger a óptimos locales y reducir el costo computacional de la búsqueda [1][2].",
+    "citas": [
+      2,
+      1
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "1609.07228v3",
+        "titulo": "EFANNA : An Extremely Fast Approximate Nearest Neighbor Search Algorithm Based on kNN Graph",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "1609.07228v3",
+        "titulo": "EFANNA : An Extremely Fast Approximate Nearest Neighbor Search Algorithm Based on kNN Graph",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "1609.07228v3",
+        "titulo": "EFANNA : An Extremely Fast Approximate Nearest Neighbor Search Algorithm Based on kNN Graph",
+        "pagina": 2,
+        "citada": false
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "1603.09320v4",
+        "titulo": "Efficient and robust approximate nearest neighbor search using Hierarchical Navigable Small World graphs",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2606.08950v1",
+        "titulo": "When More Cores Hurts: The Vector Database Scaling Paradox in HPC",
+        "pagina": 2,
+        "citada": false
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2310.19126v1",
+        "titulo": "Worst-case Performance of Popular Approximate Nearest Neighbor Search Implementations: Guarantees and Limitations",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "1610.02455v1",
+        "titulo": "Approximate Nearest Neighbor Search on High Dimensional Data --- Experiments, Analyses, and Improvement (v1.0)",
+        "pagina": 6,
+        "citada": false
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "2505.12524v1",
+        "titulo": "HAKES: Scalable Vector Database for Embedding Search Service",
+        "pagina": 2,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 632.8206001780927,
+      "recuperacion_ms": 24.05860018916428,
+      "generacion_ms": 4721.476300153881
+    }
+  },
+  {
+    "id": "p29",
+    "pregunta": "¿Cómo se buscan vecinos aproximados restringidos a una ventana de valores de un atributo?",
+    "esperados": [
+      "2402.00943v2"
+    ],
+    "consulta": "approximate nearest neighbor search attribute value range window filtering restricted",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "Para resolver el problema de búsqueda de vecinos más cercanos aproximados dentro de un rango o ventana arbitraria de etiquetas numéricas (también conocido como búsqueda en ventana o *window search*), se propone un marco estructurado en un árbol modular [1]. Este enfoque transforma un índice diseñado para el problema tradicional de vecinos más cercanos aproximados ($c$-ANN) en una estructura de datos capaz de resolver búsquedas con filtros de ventana [1]. \n\nA diferencia de otros métodos que construyen índices de vecinos cercanos únicamente en las \"hojas\" de los árboles, este marco modular construye índices en los nodos internos del árbol [5]. Esto garantiza que el método solo necesite consultar un número logarítmico de índices de vecinos más cercanos aproximados (ANNS) para responder a una consulta con filtros de ventana [5].",
+    "citas": [
+      1,
+      5
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "2402.00943v2",
+        "titulo": "Approximate Nearest Neighbor Search with Window Filters",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "2608.01255v1",
+        "titulo": "RaG-Tree: Combining R-Tree and HNSW for Multi-Attribute Range Filtered Approximate Nearest Neighbor Search",
+        "pagina": 12,
+        "citada": false
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2402.00943v2",
+        "titulo": "Approximate Nearest Neighbor Search with Window Filters",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "2607.24173v1",
+        "titulo": "Simple and Fast Algorithm for Graph-based Filtered Approximate Nearest Neighbor Search (Full Version)",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2402.00943v2",
+        "titulo": "Approximate Nearest Neighbor Search with Window Filters",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2608.01255v1",
+        "titulo": "RaG-Tree: Combining R-Tree and HNSW for Multi-Attribute Range Filtered Approximate Nearest Neighbor Search",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "2608.01255v1",
+        "titulo": "RaG-Tree: Combining R-Tree and HNSW for Multi-Attribute Range Filtered Approximate Nearest Neighbor Search",
+        "pagina": 1,
+        "citada": false
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "2607.24173v1",
+        "titulo": "Simple and Fast Algorithm for Graph-based Filtered Approximate Nearest Neighbor Search (Full Version)",
+        "pagina": 4,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 758.6525999940932,
+      "recuperacion_ms": 42.141100158914924,
+      "generacion_ms": 3938.9698000159115
+    }
+  },
+  {
+    "id": "p30",
+    "pregunta": "¿Cómo se envenenan los datos para atacar un índice aprendido?",
+    "esperados": [
+      "2008.00297v2"
+    ],
+    "consulta": "data poisoning learned index attack robust security",
+    "modelo": "gemini-3.5-flash-lite",
+    "respuesta": "El envenenamiento de datos en las estructuras de índices aprendidos (LIS) se realiza introduciendo una cierta cantidad de claves maliciosas o de envenenamiento (un subconjunto de datos) en el conjunto de datos de entrenamiento [3][4][5]. \n\nDado que estos modelos se entrenan típicamente utilizando la función de distribución acumulativa (CDF), donde la entrada es la clave ($k$) y la salida es el rango ($r$), cada inserción en el conjunto de entrenamiento tiene un impacto en cascada sobre múltiples valores de datos [1][3]. El objetivo del adversario al elegir este conjunto de claves maliciosas es maximizar la función de pérdida del modelo aumentado (por ejemplo, incrementando el error de aproximación de la regresión lineal), lo que deteriora significativamente el rendimiento general y la precisión del índice [3][4][5].",
+    "citas": [
+      3,
+      4,
+      5,
+      1
+    ],
+    "citas_descartadas": [],
+    "fuentes": [
+      {
+        "numero": 1,
+        "arxiv_id": "2008.00297v2",
+        "titulo": "The Price of Tailoring the Index to Your Data: Poisoning Attacks on Learned Index Structures",
+        "pagina": 1,
+        "citada": true
+      },
+      {
+        "numero": 2,
+        "arxiv_id": "2008.00297v2",
+        "titulo": "The Price of Tailoring the Index to Your Data: Poisoning Attacks on Learned Index Structures",
+        "pagina": 2,
+        "citada": false
+      },
+      {
+        "numero": 3,
+        "arxiv_id": "2207.11575v1",
+        "titulo": "Testing the Robustness of Learned Index Structures",
+        "pagina": 2,
+        "citada": true
+      },
+      {
+        "numero": 4,
+        "arxiv_id": "2207.11575v1",
+        "titulo": "Testing the Robustness of Learned Index Structures",
+        "pagina": 3,
+        "citada": true
+      },
+      {
+        "numero": 5,
+        "arxiv_id": "2207.11575v1",
+        "titulo": "Testing the Robustness of Learned Index Structures",
+        "pagina": 3,
+        "citada": true
+      },
+      {
+        "numero": 6,
+        "arxiv_id": "2008.00297v2",
+        "titulo": "The Price of Tailoring the Index to Your Data: Poisoning Attacks on Learned Index Structures",
+        "pagina": 13,
+        "citada": false
+      },
+      {
+        "numero": 7,
+        "arxiv_id": "2601.05264v1",
+        "titulo": "Engineering the RAG Stack: A Comprehensive Review of the Architecture and Trust Frameworks for Retrieval-Augmented Generation Systems",
+        "pagina": 45,
+        "citada": false
+      },
+      {
+        "numero": 8,
+        "arxiv_id": "2601.05264v1",
+        "titulo": "Engineering the RAG Stack: A Comprehensive Review of the Architecture and Trust Frameworks for Retrieval-Augmented Generation Systems",
+        "pagina": 48,
+        "citada": false
+      }
+    ],
+    "esperado_en_fuentes": true,
+    "esperado_citado": true,
+    "tiempos": {
+      "reescritura_ms": 750.6716998759657,
+      "recuperacion_ms": 32.111900160089135,
+      "generacion_ms": 3879.847100004554
+    }
+  }
+]
