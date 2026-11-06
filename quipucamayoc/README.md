@@ -65,6 +65,30 @@ variables:
 La interfaz solo necesita `VITE_SERVER_URL` (ver `web/.env.example`), y no lleva
 claves: todo lo que empieza con `VITE_` llega al navegador.
 
+## Preguntar: `POST /ask`
+
+```json
+{"pregunta": "¿Cuáles son las ventajas de HNSW sobre IVF?", "k": 8, "ranking": "BM25", "reescribir": true}
+```
+
+Solo `pregunta` es obligatoria. `k` va de 1 a 20 y `ranking` es `BM25` o
+`TF_IDF`. La respuesta trae:
+
+| Campo | Qué es |
+|---|---|
+| `consulta` | Lo que se buscó con `MATCH`: la pregunta reescrita en inglés, o la original |
+| `respuesta` | El texto de Gemini, con citas `[n]` que apuntan a `fuentes[n - 1]` |
+| `fuentes` | Los chunks enviados a Gemini, numerados, con su puntaje, si se citaron y su paper |
+| `citas`, `citas_descartadas` | Los números citados, y los que Gemini inventó y se quitaron del texto |
+| `sql` | Cada sentencia ejecutada en QuipuDB, con su plan y su tiempo |
+| `tiempos` | Reescritura, recuperación en QuipuDB, generación y total, en ms |
+| `modelo` | El modelo de Gemini que respondió (`null` si no hubo fragmentos y no se lo llamó) |
+
+Los errores responden `{"error": "...", "origen": "motor" | "llm"}`: 503 si el
+motor no responde o falta la clave de Gemini, y 502 si el motor rechazó la
+consulta o Gemini falló. Los modelos están en `server/app/contrato.py` y la
+documentación interactiva en `http://127.0.0.1:8001/docs`.
+
 ## Pruebas
 
 ```bash
