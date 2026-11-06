@@ -40,7 +40,10 @@ const ORGANIZACIONES: Record<string, TableStructure> = {
 const DROP_TABLE = /^\s*DROP\s+TABLE\s+([a-zA-Z_]\w*)\s*;?\s*$/i;
 
 const CREATE_INDEX =
-  /^\s*CREATE\s+INDEX\s+([a-zA-Z_]\w*)\s+ON\s+([a-zA-Z_]\w*)\s*\(\s*([a-zA-Z_]\w*)\s*\)\s*USING\s+([a-zA-Z_]\w*)\s*;?\s*$/i;
+  /^\s*CREATE\s+INDEX\s+([a-zA-Z_]\w*)\s+ON\s+([a-zA-Z_]\w*)\s*\(\s*([a-zA-Z_]\w*)\s*\)\s*USING\s+([a-zA-Z_]\w*)(?:\s+WITH\s+([a-zA-Z_]\w*)\s*=\s*([a-zA-Z_]\w*))?\s*;?\s*$/i;
+
+/** Los idiomas de `WITH LANGUAGE` de un indice de texto (#237). */
+const IDIOMAS = new Set(["spanish", "english"]);
 
 /** Las familias de indice secundario, con los alias que acepta el parser. */
 const ESTRUCTURAS: Record<string, IndexInfo["structure"]> = {
@@ -117,7 +120,7 @@ export function ejecutarCreateIndex(sql: string): string {
     });
   }
 
-  const [, nombre, nombreTabla, columna, estructuraTexto] = partes;
+  const [, nombre, nombreTabla, columna, estructuraTexto, opcion, idioma] = partes;
   const tabla = buscarTabla(nombreTabla);
   const falla = (mensaje: string, termino: string): never => {
     throw new MotorError({
@@ -166,6 +169,21 @@ export function ejecutarCreateIndex(sql: string): string {
         estructuraTexto.length,
       ),
     });
+  }
+
+  // WITH LANGUAGE solo existe para el indice de texto; el parser lee LANGUAGE
+  // y el idioma como identificadores y senala el que no reconoce.
+  if (opcion !== undefined) {
+    const parseo = (mensaje: string, termino: string): never => {
+      throw new MotorError({
+        error: mensaje,
+        kind: "parse",
+        ...ubicarEn(sql, sql.toLowerCase().lastIndexOf(termino.toLowerCase()), termino.length),
+      });
+    };
+    if (estructura !== "inverted_index") parseo("entrada inesperada 'WITH' al final de la sentencia", "WITH");
+    if (opcion.toLowerCase() !== "language") parseo("se esperaba LANGUAGE despues de WITH", opcion);
+    if (!IDIOMAS.has(idioma.toLowerCase())) parseo("el idioma debe ser spanish o english", idioma);
   }
 
   if (estructura === "rtree" && columnaInfo!.type !== "POINT") {
