@@ -47,6 +47,21 @@ npm install
 npm run dev                     # http://localhost:5174
 ```
 
+Con `VITE_USE_MOCK=true` (en `web/.env`) la interfaz usa los datos falsos de
+`web/src/api/mock.ts` y funciona sin servidor, motor ni clave.
+
+La interfaz tiene dos vistas:
+
+- **Preguntar**: la respuesta llega por `POST /ask/stream`, así que las fuentes
+  aparecen mientras Gemini todavía escribe. Cada cita `[n]` abre su fuente. Debajo,
+  *Cómo respondió la base de datos* muestra cada SQL que se ejecutó en QuipuDB con
+  su plan (los pasos que usan un índice van resaltados) y un botón para copiarlo al
+  Panel de Consultas del motor. La barra de tiempos separa la reescritura, la
+  recuperación en QuipuDB y la generación.
+- **Biblioteca**: los papers con sus chunks, filtrados por rango de años (B+ sobre
+  `anio`, en QuipuDB) y por autor (en el servidor: el SQL del motor no tiene
+  `LIKE`), y un formulario para agregar un PDF.
+
 ## Configuración
 
 Todo vive en `quipucamayoc/.env`, que git ignora. `.env.example` lista las
