@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from app.corpus.carga import CORPUS
@@ -158,9 +158,16 @@ def responder(
     reescribir_consulta: bool = True,
     llm_reescritura: LLM | None = None,
     tablas: Tablas = CORPUS,
+    avance: Callable[[str, object], None] | None = None,
 ) -> Respuesta:
-    """``llm_reescritura`` es el modelo de la reescritura; sin el, se usa ``llm``."""
+    """``llm_reescritura`` es el modelo de la reescritura; sin el, se usa ``llm``.
 
+    ``avance`` se llama al terminar cada etapa, antes de la generacion que es
+    la lenta: ``("consulta", str)`` y ``("recuperacion", Recuperacion)``. Con
+    eso la interfaz muestra las fuentes mientras Gemini todavia escribe.
+    """
+
+    avisar = avance or (lambda _etapa, _datos: None)
     pregunta = pregunta.strip()
     if not pregunta:
         raise ValueError("la pregunta esta vacia")
@@ -169,6 +176,7 @@ def responder(
     reescritor = llm_reescritura or llm
     consulta = (reescribir(reescritor, pregunta) if reescribir_consulta else None) or pregunta
     t_reescritura = (time.perf_counter() - inicio) * 1000
+    avisar("consulta", consulta)
 
     recuperacion = recuperar(motor, consulta, k=k, ranking=ranking, tablas=tablas)
     t_recuperacion = recuperacion.tiempo_ms
@@ -177,6 +185,7 @@ def responder(
         consulta = pregunta
         recuperacion = recuperar(motor, consulta, k=k, ranking=ranking, tablas=tablas)
         t_recuperacion += recuperacion.tiempo_ms
+    avisar("recuperacion", recuperacion)
 
     if not recuperacion.evidencias:
         return Respuesta(
