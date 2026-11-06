@@ -16,7 +16,16 @@ from dotenv import dotenv_values
 ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 """``quipucamayoc/.env``: git lo ignora, ahi va la clave de Gemini."""
 
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-3.5-flash"
+"""Medido el 2026-11-06: gemini-3.8-flash y 3.7-flash respondian 503 por alta
+demanda (hasta 87 s antes de rendirse) y 3.5-flash respondia en 5 a 11 s.
+Google ya no da gemini-2.5-flash a cuentas nuevas."""
+DEFAULT_REWRITE_MODEL = "gemini-3.5-flash-lite"
+"""Reescribir la pregunta como palabras clave es facil: un modelo lite tarda
+menos de un segundo, contra 6 a 9 s de uno que razona antes de responder."""
+DEFAULT_FALLBACK_MODELS = ("gemini-3.5-flash-lite",)
+"""Si el modelo principal esta saturado (503) o sin cuota (429), se prueban
+estos en orden: los mas nuevos son tambien los mas demandados."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +35,8 @@ class Settings:
     quipudb_api_url: str = "http://127.0.0.1:8000"
     quipudb_timeout_s: float = 30.0
     gemini_model: str = DEFAULT_MODEL
+    gemini_fallback_models: tuple[str, ...] = DEFAULT_FALLBACK_MODELS
+    gemini_rewrite_model: str = DEFAULT_REWRITE_MODEL
     cors_origins: tuple[str, ...] = ("http://localhost:5174", "http://127.0.0.1:5174")
     # repr=False: la clave no aparece si alguien imprime o registra la
     # configuracion.
@@ -54,14 +65,20 @@ def load_settings(
     defaults = Settings()
     timeout = texto("QUIPUDB_TIMEOUT_S")
     origenes = texto("QUIPUCAMAYOC_CORS_ORIGINS")
+    respaldos = valores.get("GEMINI_FALLBACK_MODELS")
     return Settings(
         quipudb_api_url=(texto("QUIPUDB_API_URL") or defaults.quipudb_api_url).rstrip("/"),
         quipudb_timeout_s=float(timeout) if timeout else defaults.quipudb_timeout_s,
         gemini_model=texto("GEMINI_MODEL") or defaults.gemini_model,
-        cors_origins=(
-            tuple(o.strip() for o in origenes.split(",") if o.strip())
-            if origenes
-            else defaults.cors_origins
+        gemini_rewrite_model=texto("GEMINI_REWRITE_MODEL") or defaults.gemini_rewrite_model,
+        # Vacia a proposito (GEMINI_FALLBACK_MODELS=) quiere decir sin respaldo.
+        gemini_fallback_models=(
+            _lista(respaldos) if respaldos is not None else defaults.gemini_fallback_models
         ),
+        cors_origins=_lista(origenes) if origenes else defaults.cors_origins,
         gemini_api_key=texto("GEMINI_API_KEY"),
     )
+
+
+def _lista(valor: str) -> tuple[str, ...]:
+    return tuple(parte.strip() for parte in valor.split(",") if parte.strip())

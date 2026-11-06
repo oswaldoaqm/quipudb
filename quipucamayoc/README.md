@@ -57,7 +57,9 @@ variables:
 | `QUIPUDB_API_URL` | URL del API del motor (`http://127.0.0.1:8000`; con `localhost`, Windows prueba IPv6 primero y cada petición tarda ~0,8 s más) |
 | `QUIPUDB_TIMEOUT_S` | Segundos antes de dar al motor por caído |
 | `GEMINI_API_KEY` | Clave de Gemini. Solo la lee el servidor; nunca llega al navegador ni a los logs |
-| `GEMINI_MODEL` | Modelo de Gemini (`gemini-2.5-flash` por omisión) |
+| `GEMINI_MODEL` | Modelo que responde (`gemini-3.5-flash`). Los 3.7 y 3.8 estaban saturados (503) al medirlo; Google ya no da `gemini-2.5-flash` a cuentas nuevas |
+| `GEMINI_REWRITE_MODEL` | Modelo que reescribe la pregunta como palabras clave en inglés (`gemini-3.5-flash-lite`: rápido) |
+| `GEMINI_FALLBACK_MODELS` | Modelos que se prueban, en orden, si el principal está saturado (503) o sin cuota (429). Vacío: sin respaldo |
 | `QUIPUCAMAYOC_CORS_ORIGINS` | Orígenes que pueden llamar al servidor, separados por comas |
 
 La interfaz solo necesita `VITE_SERVER_URL` (ver `web/.env.example`), y no lleva

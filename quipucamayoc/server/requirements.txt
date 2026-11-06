@@ -13,3 +13,6 @@ ruff>=0.7
 
 # Ingesta de papers (#241)
 pypdf>=5.0           # texto de los PDFs; BSD, en Python puro
+
+# Generacion de respuestas (#246)
+google-genai>=1.0    # SDK oficial de Gemini
