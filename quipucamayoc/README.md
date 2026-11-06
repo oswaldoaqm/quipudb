@@ -104,6 +104,13 @@ motor no responde o falta la clave de Gemini, y 502 si el motor rechazó la
 consulta o Gemini falló. Los modelos están en `server/app/contrato.py` y la
 documentación interactiva en `http://127.0.0.1:8001/docs`.
 
+## Evaluación
+
+Con 30 preguntas de prueba, reescribir la pregunta en inglés sube el MRR@10 de
+BM25 de 0,21 a 0,93, y QuipuDB tarda unos 45 ms de los ~5 s de una respuesta.
+Detalle en [`docs/informe/rag_evaluacion.md`](../docs/informe/rag_evaluacion.md)
+y cómo se mide en [`benchmarks/README.md`](../benchmarks/README.md#evaluación-del-rag-de-quipucamayoc-issue-253).
+
 ## Pruebas
 
 ```bash
