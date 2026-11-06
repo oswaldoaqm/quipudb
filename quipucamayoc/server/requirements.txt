@@ -1,0 +1,12 @@
+# Servidor de Quipucamayoc (ADR 0010). Va aparte de requirements.txt de la raiz:
+# no importa el motor, solo habla con su API por HTTP, y no necesita el modulo
+# nativo ni OpenCV.
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pydantic>=2.9
+httpx>=0.27          # cliente del API del motor, y TestClient en las pruebas
+python-dotenv>=1.0   # lee quipucamayoc/.env
+
+# Desarrollo
+pytest>=8.3
+ruff>=0.7
