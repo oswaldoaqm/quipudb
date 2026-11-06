@@ -97,9 +97,13 @@ class ClienteMotor:
         *,
         timeout_s: float = 30.0,
         transport: httpx.BaseTransport | None = None,
+        http: httpx.Client | None = None,
     ) -> None:
+        """``http`` es un cliente ya armado, como el ``TestClient`` de FastAPI
+        con el que las pruebas corren el motor dentro del mismo proceso."""
+
         self.base_url = base_url.rstrip("/")
-        self._http = httpx.Client(
+        self._http = http or httpx.Client(
             base_url=self.base_url,
             timeout=timeout_s,
             transport=transport,

@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
-import os
 import sys
-import uuid
 from pathlib import Path
 
 import httpx
@@ -156,27 +154,13 @@ def test_el_literal_llega_intacto_y_en_una_sola_sentencia(parse_sql, pregunta: s
 
 
 # ---------------------------------------------------------------------------
-# Contra el API real: QUIPUCAMAYOC_TEST_MOTOR_URL=http://localhost:8000
+# Contra el motor real (ver motor_real en conftest.py)
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
-def motor_real():
-    url = os.environ.get("QUIPUCAMAYOC_TEST_MOTOR_URL")
-    if not url:
-        pytest.skip("sin QUIPUCAMAYOC_TEST_MOTOR_URL no hay motor real")
-    cliente = ClienteMotor(url)
-    tabla = f"prueba_{uuid.uuid4().hex[:8]}"
-    yield cliente, tabla
-    try:
-        cliente.query(f"DROP TABLE {tabla}")
-    except MotorError:
-        pass
-    cliente.close()
-
-
 def test_motor_real_crea_carga_y_busca_sin_inyeccion(motor_real) -> None:
-    cliente, tabla = motor_real
+    cliente, prefijo = motor_real
+    tabla = f"{prefijo}docs"
     cliente.query(
         f"CREATE TABLE {tabla} (id INT PRIMARY KEY, texto VARCHAR(200)) USING HEAP;"
         f"CREATE INDEX {tabla}_texto ON {tabla} (texto) USING FULLTEXT WITH LANGUAGE=english"
