@@ -4,9 +4,15 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from engine.parser import CreateIndexStatement, IndexKind, SqlTypeName, parse_sql
+from engine.parser import (
+    CreateIndexStatement,
+    IndexKind,
+    SqlTypeName,
+    TextLanguage,
+    parse_sql,
+)
 from engine.parser.bound_ast import BoundColumn, BoundCreateIndexStatement, BoundSchema
-from engine.parser.errors import SQLSemanticError
+from engine.parser.errors import SQLParseError, SQLSemanticError
 from engine.parser.semantic import bind_create_index
 
 _SCHEMA = BoundSchema(
@@ -128,6 +134,75 @@ def test_bind_create_index_de_texto_sobre_varchar(spelling: str) -> None:
 
     assert bound.kind is IndexKind.INVERTED_INDEX
     assert bound.column_name == "nombre"
+
+
+@pytest.mark.parametrize(
+    ("clause", "expected"),
+    [
+        ("", None),
+        (" WITH LANGUAGE=english", TextLanguage.ENGLISH),
+        (" WITH LANGUAGE = Spanish", TextLanguage.SPANISH),
+        (" with language=ENGLISH", TextLanguage.ENGLISH),
+    ],
+)
+def test_bind_create_index_de_texto_conserva_el_idioma(
+    clause: str, expected: TextLanguage | None
+) -> None:
+    statement = _create_index(f"CREATE INDEX por_nombre ON alumnos (nombre) USING FULLTEXT{clause}")
+
+    bound = bind_create_index(statement, _SCHEMA)
+
+    assert statement.language is expected
+    assert bound.language is expected
+
+
+def test_language_sigue_sirviendo_como_nombre_de_columna() -> None:
+    # LANGUAGE no es palabra reservada: una tabla con esa columna no se rompe.
+    statement = parse_sql("CREATE INDEX por_idioma ON libros (language) USING FULLTEXT")
+
+    assert isinstance(statement, CreateIndexStatement)
+    assert statement.column.name == "language"
+
+
+@pytest.mark.parametrize(
+    ("source", "message", "offending"),
+    [
+        (
+            "CREATE INDEX i ON alumnos (nombre) USING FULLTEXT WITH LANGUAGE=klingon",
+            "el idioma debe ser spanish o english",
+            "klingon",
+        ),
+        (
+            "CREATE INDEX i ON alumnos (nombre) USING FULLTEXT WITH LANGUAGE='english'",
+            "el idioma debe ser spanish o english",
+            "'english'",
+        ),
+        (
+            "CREATE INDEX i ON alumnos (nombre) USING FULLTEXT WITH METRIC=cosine",
+            "se esperaba LANGUAGE despues de WITH",
+            "METRIC",
+        ),
+        (
+            "CREATE INDEX i ON alumnos (nombre) USING FULLTEXT WITH LANGUAGE english",
+            "se esperaba '=' despues de LANGUAGE",
+            "english",
+        ),
+    ],
+)
+def test_with_language_mal_formado_es_error_ubicado(
+    source: str, message: str, offending: str
+) -> None:
+    with pytest.raises(SQLParseError, match=message) as caught:
+        parse_sql(source)
+
+    span = caught.value.span
+    assert source[span.start : span.end] == offending
+    assert span.line == 1
+
+
+def test_with_language_solo_aplica_al_indice_de_texto() -> None:
+    with pytest.raises(SQLParseError):
+        parse_sql("CREATE INDEX i ON alumnos (nombre) USING HASH WITH LANGUAGE=english")
 
 
 def test_bind_create_index_de_texto_rechaza_columna_que_no_es_texto() -> None:
