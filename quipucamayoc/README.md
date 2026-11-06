@@ -54,7 +54,7 @@ variables:
 
 | Variable | Para qué |
 |---|---|
-| `QUIPUDB_API_URL` | URL del API del motor (`http://localhost:8000`) |
+| `QUIPUDB_API_URL` | URL del API del motor (`http://127.0.0.1:8000`; con `localhost`, Windows prueba IPv6 primero y cada petición tarda ~0,8 s más) |
 | `QUIPUDB_TIMEOUT_S` | Segundos antes de dar al motor por caído |
 | `GEMINI_API_KEY` | Clave de Gemini. Solo la lee el servidor; nunca llega al navegador ni a los logs |
 | `GEMINI_MODEL` | Modelo de Gemini (`gemini-2.5-flash` por omisión) |

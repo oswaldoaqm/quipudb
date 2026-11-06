@@ -26,7 +26,7 @@ def test_health_dice_que_el_motor_responde_y_cuantas_tablas_tiene() -> None:
 
     assert cuerpo["status"] == "ok"
     assert cuerpo["engine"] == {
-        "url": "http://localhost:8000",
+        "url": "http://127.0.0.1:8000",
         "reachable": True,
         "tables": 2,
         "error": None,
