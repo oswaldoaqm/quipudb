@@ -220,6 +220,36 @@ def test_create_index_sql_es_usado_por_select_y_explain(db):
     assert selected.plan.root.walk()[0].structure.value == quipudb.kind.EXTENDIBLE_HASH
 
 
+def test_en_un_heap_el_indice_sobre_la_clave_evita_recorrer_la_tabla(db):
+    # La busqueda por clave de un heap recorre sus paginas; con un hash o un B+
+    # sobre la clave, el optimizador usa el indice (#255).
+    processor = QueryProcessor(db)
+    processor.execute(
+        "CREATE TABLE papers (id INT PRIMARY KEY, titulo VARCHAR(2000)) USING HEAP"
+    )
+    processor.execute(";".join(f"INSERT INTO papers VALUES ({i}, 't{i}')" for i in range(1, 121)))
+    sin_indice = processor.execute("SELECT titulo FROM papers WHERE id = 100")
+    processor.execute("CREATE INDEX por_id ON papers (id) USING HASH")
+    processor.execute("CREATE INDEX por_id_ordenado ON papers (id) USING BPLUS")
+
+    igualdad = processor.execute("SELECT titulo FROM papers WHERE id = 100")
+    rango = processor.execute("SELECT id FROM papers WHERE id BETWEEN 50 AND 52")
+
+    assert [paso.op.value for paso in sin_indice.plan.root.walk()] == ["search", "project"]
+    assert [paso.op.value for paso in igualdad.plan.root.walk()] == [
+        "index_search",
+        "fetch",
+        "project",
+    ]
+    assert igualdad.rows == sin_indice.rows == (("t100",),)
+    assert (
+        igualdad.plan.root.subtree_stats().pages_read
+        < sin_indice.plan.root.subtree_stats().pages_read
+    )
+    assert rango.plan.root.walk()[0].op.value == "index_range"
+    assert sorted(rango.rows) == [(50,), (51,), (52,)]
+
+
 def test_explain_analyze_ejecuta_select_y_mide_plan_real(db):
     processor = QueryProcessor(db)
     processor.execute("CREATE TABLE personas (id INT PRIMARY KEY, nombre VARCHAR(20))")
