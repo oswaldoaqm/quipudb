@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.config import Settings, load_settings
+from app.motor import usa_tls
 
 
 class EngineHealth(BaseModel):
@@ -46,6 +47,7 @@ def check_engine(settings: Settings, transport: httpx.BaseTransport | None = Non
             base_url=settings.quipudb_api_url,
             timeout=min(settings.quipudb_timeout_s, 5.0),
             transport=transport,
+            verify=usa_tls(settings.quipudb_api_url),
         ) as cliente:
             respuesta = cliente.get("/tables")
             respuesta.raise_for_status()
