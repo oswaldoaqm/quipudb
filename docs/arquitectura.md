@@ -175,9 +175,10 @@ ampliar la interfaz compartida de 2.1.2.
 
 ## SQL multimedia y contrato del plan (#188)
 
-`SIMILAR_TO([columna,] 'archivo', [k=] entero) USING HNSW|IVF
+`SIMILAR_TO([columna,] 'archivo' | VECTOR(...), [k=] entero) USING HNSW|IVF
 [WITH METRIC=euclidean|cosine|dot]` se analiza y enlaza sin dependencias
-multimedia. La columna implícita exige un único VECTOR; se rechazan JOIN,
+multimedia. Con un `VECTOR(...)` literal (#251) el vector queda resuelto en el
+enlace, con la validación de un `INSERT`, y la ejecución no extrae nada. La columna implícita exige un único VECTOR; se rechazan JOIN,
 GROUP BY y DELETE por similitud. El planner elige solo la estructura
 solicitada, o el k-NN exacto si no existe un índice de ese tipo.
 
