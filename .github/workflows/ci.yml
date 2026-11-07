@@ -100,6 +100,7 @@ jobs:
           engine/executor/test_media_load.py
           engine/executor/test_similar_native.py
           engine/executor/test_similarity_score_native.py
+          engine/test_vector_literal_sql.py
           engine/api/test_main.py
           engine/api/test_carga.py
           engine/api/test_media_load.py
