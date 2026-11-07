@@ -117,7 +117,7 @@ jobs:
         working-directory: quipucamayoc/server
         run: |
           pip install -r requirements.txt
-          python -m pytest tests/test_motor.py tests/test_carga.py tests/test_recuperacion.py tests/test_generacion.py tests/test_ask.py tests/test_biblioteca.py -q -rs -p no:cacheprovider
+          python -m pytest tests/test_motor.py tests/test_carga.py tests/test_recuperacion.py tests/test_generacion.py tests/test_ask.py tests/test_biblioteca.py tests/test_vectores.py -q -rs -p no:cacheprovider
 
   quipucamayoc:
     name: Probar Quipucamayoc (servidor e interfaz)

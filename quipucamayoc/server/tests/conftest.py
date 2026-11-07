@@ -110,3 +110,22 @@ def corpus(motor_real, tmp_path: Path):
     reporte = cargar(motor, papers, tmp_path, tablas=tablas)
     assert reporte.fallidos == []
     return motor, tablas
+
+
+@pytest.fixture()
+def corpus_vectorial(corpus, tmp_path: Path):
+    """El mismo corpus con sus embeddings (falsos) cargados y el HNSW creado."""
+
+    from app.corpus.vectores import cargar as cargar_vectores
+    from app.corpus.vectores import chunks_del_motor
+    from tests.llm_falso import EmbedderFalso
+
+    motor, tablas = corpus
+    embedder = EmbedderFalso()
+    chunks = chunks_del_motor(motor, tablas)
+    vectores = dict(
+        zip([c for c, _, _ in chunks], embedder.documentos([t for _, _, t in chunks]), strict=True)
+    )
+    reporte = cargar_vectores(motor, chunks, vectores, tablas=tablas)
+    assert reporte.indice_creado and not reporte.sin_embedding
+    return motor, tablas
