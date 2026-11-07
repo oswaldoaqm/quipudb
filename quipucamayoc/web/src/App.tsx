@@ -65,7 +65,7 @@ export default function App() {
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-[90rem] px-6 py-6">{vista === "preguntar" ? <Preguntar /> : <Biblioteca />}</main>
+      <main className="mx-auto max-w-[90rem] px-6 py-6">{vista === "preguntar" ? <Preguntar busquedaVectorial={salud?.engine.vector_search ?? false} /> : <Biblioteca />}</main>
     </div>
   );
 }
