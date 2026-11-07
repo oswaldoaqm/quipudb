@@ -1,9 +1,11 @@
 /**
- * En que se fue el tiempo de una respuesta: reescritura (Gemini rapido),
- * recuperacion (QuipuDB) y generacion (Gemini). Barra apilada de una sola
- * fila: colores categoricos 1-3 de la paleta validada, en orden fijo, con
- * 2px de separacion, extremos redondeados y leyenda con los valores (el aqua
- * queda bajo 3:1 contra el fondo, asi que el valor siempre esta escrito).
+ * En que se fue el tiempo de una respuesta: embedding de la pregunta (solo en
+ * los modos vectorial e hibrido), reescritura (Gemini rapido), recuperacion
+ * (QuipuDB) y generacion (Gemini). Barra apilada de una sola fila, en el orden
+ * en que ocurren: colores categoricos 1-4 de la paleta validada, con 2px de
+ * separacion, extremos redondeados y leyenda con los valores (amarillo y aqua
+ * quedan bajo 3:1 contra el fondo, asi que el valor siempre esta escrito).
+ * El amarillo va primero y no junto al naranja: ese par no se distingue bien.
  */
 
 import { useState } from "react";
@@ -11,6 +13,7 @@ import { useState } from "react";
 import type { Tiempos } from "@/api/types";
 
 const ETAPAS = [
+  { clave: "embedding_ms", nombre: "Embedding (Gemini)", color: "#eda100" },
   { clave: "reescritura_ms", nombre: "Reescritura (Gemini)", color: "#2a78d6" },
   { clave: "recuperacion_ms", nombre: "Recuperación (QuipuDB)", color: "#eb6834" },
   { clave: "generacion_ms", nombre: "Generación (Gemini)", color: "#1baf7a" },
@@ -65,7 +68,7 @@ export function BarraTiempos({ tiempos }: { tiempos: Tiempos }) {
         </div>
       </div>
       <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-600">
-        {ETAPAS.map((e) => (
+        {ETAPAS.filter((e) => e.clave !== "embedding_ms" || tiempos.embedding_ms > 0).map((e) => (
           <li key={e.clave} className="flex items-center gap-1.5">
             <span className="size-2.5 rounded-sm" style={{ backgroundColor: e.color }} />
             {e.nombre} <span className="font-medium text-stone-900">{formatearMs(tiempos[e.clave])}</span>
