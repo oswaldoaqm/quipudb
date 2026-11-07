@@ -678,7 +678,12 @@ def _bind_condition(
             column = _resolve_column(condition.column, scope, source)
         if column.column.data_type is not SqlTypeName.VECTOR:
             _fail("SIMILAR_TO requiere una columna VECTOR", column.span, source)
-        if not condition.query.value or "\0" in condition.query.value:
+        vector = None
+        if isinstance(condition.query, VectorLiteral):
+            # Misma validacion que un INSERT: dimension de la columna y
+            # componentes finitas, con el error en la componente que falla.
+            vector = _bind_vector(condition.query, column.column, source)
+        elif not condition.query.value or "\0" in condition.query.value:
             _fail("SIMILAR_TO requiere una ruta de archivo valida", condition.query.span, source)
         if (
             isinstance(condition.k.value, bool)
@@ -687,8 +692,11 @@ def _bind_condition(
         ):
             _fail("k requiere un entero no negativo", condition.k.span, source)
         return BoundSimilarCondition(
-            column, condition.query.value, condition.k.value, condition.kind, condition.metric,
+            column,
+            "" if vector is not None else condition.query.value,
+            condition.k.value, condition.kind, condition.metric,
             condition.query.span, condition.metric_span, condition.span,
+            vector=vector,
         )
 
     column = _resolve_column(condition.column, scope, source)
