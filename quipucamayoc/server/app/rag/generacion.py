@@ -185,18 +185,20 @@ def responder(
     if modo != "texto" and embedder is None:
         raise ValueError(f"el modo {modo} necesita un embedder")
 
-    inicio = time.perf_counter()
-    reescritor = llm_reescritura or llm
-    reescribe = reescribir_consulta and modo != "vectores"
-    consulta = (reescribir(reescritor, pregunta) if reescribe else None) or pregunta
-    t_reescritura = (time.perf_counter() - inicio) * 1000
-
+    # Primero el embedding, que tarda menos: si Gemini no puede embeber, no se
+    # gasta antes una reescritura.
     vector = None
     t_embedding = 0.0
     if modo != "texto":
         inicio = time.perf_counter()
         vector = embedder.consulta(pregunta)  # type: ignore[union-attr]
         t_embedding = (time.perf_counter() - inicio) * 1000
+
+    inicio = time.perf_counter()
+    reescritor = llm_reescritura or llm
+    reescribe = reescribir_consulta and modo != "vectores"
+    consulta = (reescribir(reescritor, pregunta) if reescribe else None) or pregunta
+    t_reescritura = (time.perf_counter() - inicio) * 1000
     avisar("consulta", consulta)
 
     def buscar(texto: str) -> Recuperacion:
