@@ -606,7 +606,7 @@ class QueryProcessor:
         query_text: str,
     ) -> QueryResult:
         bound, physical_plan, referencias, esquemas = self._prepare_select(statement, source)
-        if isinstance(bound.where, BoundSimilarCondition):
+        if isinstance(bound.where, BoundSimilarCondition) and bound.where.vector is None:
             condition = self._vector_search.extract(bound.schema.table_name, bound.where, source)
             bound = replace(bound, where=condition)
             physical_plan = replace(physical_plan, statement=bound)
@@ -684,7 +684,8 @@ class QueryProcessor:
 
         bound = bind_select(statement, esquemas, source)
         if isinstance(bound.where, BoundSimilarCondition):
-            self._vector_search.paths(bound.schema.table_name, bound.where, source)
+            if bound.where.vector is None:
+                self._vector_search.paths(bound.schema.table_name, bound.where, source)
             bound = replace(bound, where=replace(
                 bound.where,
                 nprobe=self._vector_search.nprobe,
