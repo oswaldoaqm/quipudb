@@ -19,6 +19,9 @@ BYTES_PAPERS = {
     "url": 100,
 }
 BYTES_TEXTO_CHUNK = 4000
+DIMENSION_EMBEDDING = 768
+"""Igual a ``app.rag.embeddings.DIMENSION``; se repite para no importar el SDK de
+Gemini al definir el esquema."""
 
 CHUNKS_POR_PAPER = 10_000
 """El id de un chunk es ``paper_id * CHUNKS_POR_PAPER + orden``: determinista,
@@ -38,6 +41,26 @@ class Tablas:
     @property
     def chunks(self) -> str:
         return f"{self.prefijo}chunks"
+
+    @property
+    def vectores(self) -> str:
+        """El embedding de cada chunk (#252): aparte, porque con el texto no cabe."""
+        return f"{self.prefijo}chunk_vectores"
+
+    @property
+    def hnsw(self) -> str:
+        return f"{self.vectores}_hnsw"
+
+    @property
+    def chunks_por_id(self) -> str:
+        return f"{self.chunks}_por_id"
+
+    def ddl_vectores(self) -> str:
+        # 4 + 4 + 768 x 4 = 3 080 bytes: cabe en un registro de heap.
+        return (
+            f"CREATE TABLE {self.vectores} (chunk_id INT PRIMARY KEY, paper_id INT, "
+            f"embedding VECTOR({DIMENSION_EMBEDDING})) USING HEAP"
+        )
 
     def ddl(self) -> list[str]:
         p, c = self.papers, self.chunks
