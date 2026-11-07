@@ -137,6 +137,7 @@ function fuentes(): Fuente[] {
       pagina: i + 2,
       texto,
       relevancia: 16.7 - i * 1.9,
+      origen: i === 2 ? ["vectores"] : ["texto", "vectores"],
       citada: false,
       paper: { id: ficha.id, arxiv_id: ficha.arxiv_id, titulo: ficha.titulo, autores: ficha.autores, anio: ficha.anio, url: ficha.url },
     };
@@ -147,7 +148,7 @@ export async function salud(): Promise<Health> {
   await esperar(150);
   return {
     status: "ok",
-    engine: { url: "(datos falsos)", reachable: true, tables: 2, error: null },
+    engine: { url: "(datos falsos)", reachable: true, tables: 3, vector_search: true, error: null },
     llm: { provider: "gemini", model: "gemini-3.5-flash (falso)", configured: true },
   };
 }
@@ -157,8 +158,9 @@ export async function preguntar(
   alLlegar: (evento: Evento) => void,
   senal?: AbortSignal,
 ): Promise<void> {
-  const consulta = peticion.reescribir ? "HNSW IVF advantages recall latency" : peticion.pregunta;
-  if (peticion.reescribir) await esperar(900, senal);
+  const reescribe = peticion.reescribir && peticion.modo !== "vectores";
+  const consulta = reescribe ? "HNSW IVF advantages recall latency" : peticion.pregunta;
+  if (reescribe || peticion.modo !== "texto") await esperar(900, senal);
   alLlegar({ etapa: "consulta", consulta });
 
   await esperar(300, senal);
@@ -180,11 +182,18 @@ export async function preguntar(
         "A cambio, IVF usa menos memoria y se combina bien con cuantización de productos [3].",
       modelo: "gemini-3.5-flash (falso)",
       ranking: peticion.ranking,
+      modo: peticion.modo,
       citas,
       citas_descartadas: [],
       fuentes: encontradas.map((f) => ({ ...f, citada: citas.includes(f.numero) })),
       sql,
-      tiempos: { reescritura_ms: 1905, recuperacion_ms: 68, generacion_ms: 6620, total_ms: 8610 },
+      tiempos: {
+        embedding_ms: peticion.modo === "texto" ? 0 : 420,
+        reescritura_ms: reescribe ? 1905 : 0,
+        recuperacion_ms: 68,
+        generacion_ms: 6620,
+        total_ms: 8610,
+      },
     },
   });
 }
@@ -223,6 +232,8 @@ export async function agregar(nuevo: NuevoPaper): Promise<Agregado> {
   return {
     arxiv_id: FICHAS.at(-1)!.arxiv_id,
     chunks: 12,
+    vectores: 12,
+    aviso: null,
     tiempos: { extraccion_s: 1.1, chunking_s: 0.02, carga_s: 0.05, indice_s: 3.0 },
   };
 }
