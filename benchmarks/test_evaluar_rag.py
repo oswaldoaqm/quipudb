@@ -62,3 +62,34 @@ def test_las_preguntas_versionadas_estan_bien_formadas() -> None:
     assert 20 <= len(preguntas) <= 30
     assert len({p["id"] for p in preguntas}) == len(preguntas)
     assert all(p["pregunta"].strip() and p["esperados"] for p in preguntas)
+
+
+def test_el_resumen_separa_los_modos_y_lee_csv_sin_columna_modo() -> None:
+    fila = {"id": "p1", "posicion": "2", "tiempo_ms": "9", "tiempo_motor_ms": "3"}
+    filas = [
+        {**fila, "consulta": "original", "ranking": "BM25"},  # CSV de antes de #252
+        {**fila, "modo": "vectores", "consulta": "original", "ranking": "HNSW", "posicion": "1"},
+        {**fila, "modo": "hibrido", "consulta": "reescrita", "ranking": "BM25", "posicion": ""},
+    ]
+
+    resumen = {r["modo"]: r for r in resumen_recuperacion(filas)}
+
+    assert set(resumen) == {"texto", "vectores", "hibrido"}
+    assert (resumen["texto"]["mrr@10"], resumen["vectores"]["mrr@10"], resumen["hibrido"]["hit@10"]) == (
+        0.5, 1.0, 0.0,
+    )
+
+
+def test_el_hibrido_ordena_los_papers_como_la_aplicacion() -> None:
+    for modulo in ("pypdf", "httpx", "dotenv"):
+        pytest.importorskip(modulo, reason="importa el RAG de quipucamayoc/server")
+    from benchmarks.scripts.evaluar_rag import _servidor, ordenar_papers
+
+    _servidor()
+    texto = [(10, 1), (11, 2), (12, 3)]
+    vectores = [(12, 3), (20, 4)]
+
+    assert ordenar_papers("texto", texto, vectores) == [1, 2, 3]
+    assert ordenar_papers("vectores", texto, vectores) == [3, 4]
+    # El chunk 12 esta en las dos listas: su paper sube al primer lugar.
+    assert ordenar_papers("hibrido", texto, vectores)[0] == 3
