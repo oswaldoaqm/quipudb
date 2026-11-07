@@ -21,6 +21,9 @@ DEFAULT_MODEL = "gemini-3.5-flash"
 demanda (hasta 87 s antes de rendirse) y 3.5-flash respondia en 5 a 11 s.
 Google ya no da gemini-2.5-flash a cuentas nuevas."""
 DEFAULT_REWRITE_MODEL = "gemini-3.5-flash-lite"
+DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001"
+"""Para la busqueda vectorial (#252). gemini-embedding-2 junta una lista de
+textos en un solo vector, asi que no sirve para embeber chunks por lotes."""
 """Reescribir la pregunta como palabras clave es facil: un modelo lite tarda
 menos de un segundo, contra 6 a 9 s de uno que razona antes de responder."""
 DEFAULT_FALLBACK_MODELS = ("gemini-3.5-flash-lite",)
@@ -37,6 +40,7 @@ class Settings:
     gemini_model: str = DEFAULT_MODEL
     gemini_fallback_models: tuple[str, ...] = DEFAULT_FALLBACK_MODELS
     gemini_rewrite_model: str = DEFAULT_REWRITE_MODEL
+    gemini_embedding_model: str = DEFAULT_EMBEDDING_MODEL
     cors_origins: tuple[str, ...] = ("http://localhost:5174", "http://127.0.0.1:5174")
     # repr=False: la clave no aparece si alguien imprime o registra la
     # configuracion.
@@ -71,6 +75,9 @@ def load_settings(
         quipudb_timeout_s=float(timeout) if timeout else defaults.quipudb_timeout_s,
         gemini_model=texto("GEMINI_MODEL") or defaults.gemini_model,
         gemini_rewrite_model=texto("GEMINI_REWRITE_MODEL") or defaults.gemini_rewrite_model,
+        gemini_embedding_model=(
+            texto("GEMINI_EMBEDDING_MODEL") or defaults.gemini_embedding_model
+        ),
         # Vacia a proposito (GEMINI_FALLBACK_MODELS=) quiere decir sin respaldo.
         gemini_fallback_models=(
             _lista(respaldos) if respaldos is not None else defaults.gemini_fallback_models
