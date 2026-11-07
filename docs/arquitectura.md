@@ -1877,9 +1877,10 @@ engine/api (:8000) ──► core
 
 ### Las tablas
 
-`papers` (relacional) y `chunks` (texto), ambas en heap. `papers` tiene un hash
-sobre `id` y un B+ sobre `anio`; `chunks` tiene el índice de texto en inglés
-sobre `texto` y un hash sobre `paper_id`. Un chunk ocupa 4 016 bytes y entra en
+`papers` (relacional), `chunks` (texto) y `chunk_vectores` (vectorial, #252),
+las tres en heap. `papers` tiene un hash sobre `id` y un B+ sobre `anio`;
+`chunks`, el índice de texto en inglés sobre `texto` y hashes sobre `paper_id` e
+`id`; `chunk_vectores`, un HNSW de coseno sobre `embedding VECTOR(768)`. Un chunk ocupa 4 016 bytes y entra en
 una página de 4 KiB. El DDL vive en un solo lugar,
 `quipucamayoc/server/app/corpus/esquema.py`.
 
@@ -1888,7 +1889,8 @@ una página de 4 KiB. El DDL vive en un solo lugar,
 | Etapa | Dónde | Qué hace |
 |---|---|---|
 | Reescritura | Gemini (`gemini-3.5-flash-lite`) | La pregunta en español pasa a palabras clave en inglés, el idioma del corpus |
-| Recuperación | QuipuDB | `SELECT id, paper_id, orden, pagina, texto, SCORE() AS relevancia FROM chunks WHERE MATCH(texto, '...') USING BM25 LIMIT 24` va por el índice invertido; luego `SELECT ... FROM papers WHERE id = n` por cada paper, por el hash |
+| Embedding (modos vectores e híbrido) | Gemini (`gemini-embedding-001`) | La pregunta original pasa a un vector de 768 números |
+| Recuperación | QuipuDB | Por palabras: `MATCH(texto, '...') USING BM25 LIMIT 24` sobre `chunks`, por el índice invertido. Por significado: `SIMILAR_TO(embedding, VECTOR(...), k=24) USING HNSW WITH METRIC=cosine` sobre `chunk_vectores` (#251). En el híbrido, las dos listas se fusionan con RRF. Después, `chunks WHERE id = n` para el texto de lo que solo encontró el HNSW y `papers WHERE id = n` para los metadatos, los dos por hash |
 | Selección | servidor | Los 8 chunks más relevantes, a lo sumo 3 por paper |
 | Generación | Gemini (`gemini-3.5-flash`) | Responde citando los chunks como `[n]`; las citas a números que no se enviaron se quitan del texto |
 
