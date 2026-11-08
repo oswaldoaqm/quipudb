@@ -102,6 +102,19 @@ class Motor:
                 )
             yield self._processor, self._database, self._native
 
+    def flush(self) -> None:
+        """Vacia a disco tablas e indices abiertos, si el motor llego a abrirse.
+
+        El grafo de un HNSW vive en memoria y solo baja a disco con
+        ``Database.flush()`` o con el destructor del core, y al apagar uvicorn
+        los destructores no corren: sin esto, reiniciar la API dejaba cada HNSW
+        vacio mientras las tablas, IVF y los indices de texto sobrevivian.
+        """
+
+        with self._lock:
+            if self._database is not None:
+                self._database.flush()
+
 
 def _sin_ubicacion(error: Exception) -> JSONResponse:
     cuerpo = QueryErrorResponse(error=str(error) or type(error).__name__)
@@ -134,7 +147,10 @@ def create_app(
         try:
             yield
         finally:
+            # Primero las cargas: un trabajo multimedia puede seguir
+            # insertando en los indices hasta que termine su lote.
             await run_in_threadpool(media_jobs.close)
+            await run_in_threadpool(motor.flush)
 
     app = FastAPI(
         title="QuipuDB",
