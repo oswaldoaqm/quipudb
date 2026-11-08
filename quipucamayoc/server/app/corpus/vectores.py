@@ -253,6 +253,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Embeddings de los chunks y su carga en QuipuDB")
     parser.add_argument("paso", choices=["embeber", "cargar"])
     parser.add_argument("--limite", type=int, default=None, help="solo los primeros N chunks")
+    parser.add_argument("--lote", type=int, default=LOTE, help=f"textos por peticion ({LOTE})")
+    parser.add_argument(
+        "--tokens-por-minuto",
+        type=float,
+        default=TOKENS_POR_MINUTO,
+        help=f"ritmo de la cuota ({TOKENS_POR_MINUTO}, la gratuita); el nivel pagado admite mas",
+    )
     args = parser.parse_args(argv)
 
     settings = load_settings()
@@ -261,7 +268,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         chunks = chunks_del_motor(motor, CORPUS)[: args.limite]
         if args.paso == "embeber":
             reporte = embeber(
-                GeminiEmbedder.desde(settings), [(i, t) for i, _, t in chunks], cache, log=print
+                GeminiEmbedder.desde(settings),
+                [(i, t) for i, _, t in chunks],
+                cache,
+                lote=args.lote,
+                tokens_por_minuto=args.tokens_por_minuto,
+                log=print,
             )
             print(
                 f"embebidos: {reporte.nuevos}, ya estaban: {reporte.ya_estaban}, "
