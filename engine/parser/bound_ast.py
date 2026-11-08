@@ -245,7 +245,12 @@ class BoundMatchCondition:
 
 @dataclass(frozen=True, slots=True)
 class BoundSimilarCondition:
-    """Archivo y VECTOR resueltos; la extraccion pertenece a la ejecucion."""
+    """Archivo y VECTOR resueltos; la extraccion pertenece a la ejecucion.
+
+    Con un archivo, ``query`` es su ruta y ``vector`` queda en ``None`` hasta
+    que ExtractFeatures lo calcula. Con un ``VECTOR(...)`` literal (#251),
+    ``query`` es ``""`` y ``vector`` ya viene desde el enlace.
+    """
 
     column: BoundColumnReference
     query: str

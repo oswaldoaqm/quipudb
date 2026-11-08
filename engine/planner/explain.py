@@ -258,6 +258,9 @@ def vector_search_step(
             else f"ef_search={condition.ef_search}"
         )
         strategy = f"indice {index.name}; {parameter}"
+    if not condition.query:
+        dimension = len(condition.vector) if condition.vector is not None else "?"
+        strategy = f"consulta VECTOR literal de {dimension} componentes; {strategy}"
     return Step(
         op=Op.KNN_SEARCH,
         structure=index.structure if index is not None else access.table.structure,

@@ -62,6 +62,24 @@ La interfaz tiene dos vistas:
   `anio`, en QuipuDB) y por autor (en el servidor: el SQL del motor no tiene
   `LIKE`), y un formulario para agregar un PDF.
 
+### Búsqueda por significado (opcional)
+
+Para los modos *Significado* e *Híbrido* hacen falta los embeddings de los
+chunks. Con el motor levantado y el corpus cargado, desde `quipucamayoc/server`:
+
+```bash
+.venv/Scripts/python -m app.corpus.vectores embeber   # ~1 000 chunks por día con la cuota gratuita
+.venv/Scripts/python -m app.corpus.vectores cargar    # tabla chunk_vectores e índice HNSW, ~1 min
+```
+
+La cuota gratuita de Gemini admite unos 1 000 embeddings por día y el corpus
+tiene 6 242 chunks: `embeber` se corre una vez al día hasta completarlos. Cada
+lote se guarda en `quipucamayoc/datos/embeddings/` en cuanto llega, así que se
+puede cortar (o apagar la máquina) y retoma donde quedó; volver a cargar el
+corpus tampoco vuelve a gastar cuota. En un proyecto con facturación, `--lote` y
+`--tokens-por-minuto` suben el ritmo al de su nivel. Sin embeddings, la interfaz deja
+esos modos deshabilitados.
+
 ## Configuración
 
 Todo vive en `quipucamayoc/.env`, que git ignora. `.env.example` lista las
@@ -74,6 +92,7 @@ variables:
 | `GEMINI_API_KEY` | Clave de Gemini. Solo la lee el servidor; nunca llega al navegador ni a los logs |
 | `GEMINI_MODEL` | Modelo que responde (`gemini-3.5-flash`). Los 3.7 y 3.8 estaban saturados (503) al medirlo; Google ya no da `gemini-2.5-flash` a cuentas nuevas |
 | `GEMINI_REWRITE_MODEL` | Modelo que reescribe la pregunta como palabras clave en inglés (`gemini-3.5-flash-lite`: rápido) |
+| `GEMINI_EMBEDDING_MODEL` | Modelo de embeddings para la búsqueda por significado (`gemini-embedding-001`) |
 | `GEMINI_FALLBACK_MODELS` | Modelos que se prueban, en orden, si el principal está saturado (503) o sin cuota (429). Vacío: sin respaldo |
 | `QUIPUCAMAYOC_CORS_ORIGINS` | Orígenes que pueden llamar al servidor, separados por comas |
 
@@ -83,20 +102,21 @@ claves: todo lo que empieza con `VITE_` llega al navegador.
 ## Preguntar: `POST /ask`
 
 ```json
-{"pregunta": "¿Cuáles son las ventajas de HNSW sobre IVF?", "k": 8, "ranking": "BM25", "reescribir": true}
+{"pregunta": "¿Cuáles son las ventajas de HNSW sobre IVF?", "k": 8, "ranking": "BM25", "reescribir": true, "modo": "hibrido"}
 ```
 
-Solo `pregunta` es obligatoria. `k` va de 1 a 20 y `ranking` es `BM25` o
-`TF_IDF`. La respuesta trae:
+Solo `pregunta` es obligatoria. `k` va de 1 a 20, `ranking` es `BM25` o
+`TF_IDF` y `modo` es `texto` (por omisión), `vectores` o `hibrido`; los dos
+últimos responden 409 si no hay embeddings cargados. La respuesta trae:
 
 | Campo | Qué es |
 |---|---|
 | `consulta` | Lo que se buscó con `MATCH`: la pregunta reescrita en inglés, o la original |
 | `respuesta` | El texto de Gemini, con citas `[n]` que apuntan a `fuentes[n - 1]` |
-| `fuentes` | Los chunks enviados a Gemini, numerados, con su puntaje, si se citaron y su paper |
+| `fuentes` | Los chunks enviados a Gemini, numerados, con su puntaje, qué búsqueda los encontró (`origen`: `texto`, `vectores` o las dos), si se citaron y su paper |
 | `citas`, `citas_descartadas` | Los números citados, y los que Gemini inventó y se quitaron del texto |
 | `sql` | Cada sentencia ejecutada en QuipuDB, con su plan y su tiempo |
-| `tiempos` | Reescritura, recuperación en QuipuDB, generación y total, en ms |
+| `tiempos` | Embedding, reescritura, recuperación en QuipuDB, generación y total, en ms |
 | `modelo` | El modelo de Gemini que respondió (`null` si no hubo fragmentos y no se lo llamó) |
 
 Los errores responden `{"error": "...", "origen": "motor" | "llm"}`: 503 si el

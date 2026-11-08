@@ -172,6 +172,50 @@ interfaz no podía mostrar las fuentes mientras Gemini escribe ni distinguir
   recorrerlo (#255). El esquema de la sección 2 no cambia: `arxiv_id` sigue
   siendo la clave natural.
 
+### 9. Búsqueda por significado e híbrida (#251, #252)
+
+La recuperación tiene tres modos, que se eligen por pregunta:
+
+| Modo | Búsqueda en QuipuDB | Consulta |
+|---|---|---|
+| `texto` | `MATCH ... USING BM25` (índice invertido, Parte 3) | La pregunta reescrita en inglés |
+| `vectores` | `SIMILAR_TO(embedding, VECTOR(...), k)` con HNSW y coseno (Parte 4) | El embedding de la pregunta original |
+| `hibrido` | Las dos, fusionadas con Reciprocal Rank Fusion (k = 60) | La reescrita para BM25 y el embedding para HNSW |
+
+- **Un tercer tipo de dato.** `chunk_vectores (chunk_id INT PRIMARY KEY,
+  paper_id INT, embedding VECTOR(768))` con un HNSW de coseno. Va aparte de
+  `chunks` porque texto y vector no caben juntos en 4 087 bytes: el vector
+  solo ocupa 3 072. `paper_id` permite aplicar el tope de 3 chunks por paper
+  sin traer el texto.
+- **El motor acepta un vector en SQL (#251).** `SIMILAR_TO` recibía solo un
+  archivo, que pasaba por `ExtractFeatures`. Ahora también acepta el literal
+  `VECTOR(...)` de `INSERT`, validado igual, y lo busca tal cual. El plan lo
+  dice en el paso `knn_search`.
+- **El texto de cada chunk por su id.** El HNSW devuelve `chunk_id`; el texto
+  sale de `chunks WHERE id = n`, que usa el hash nuevo sobre `chunks.id` gracias
+  a #255. Sin ese arreglo, cada chunk recorría los 25 MB de la tabla.
+- **Embeddings de Gemini.** `gemini-embedding-001` con 768 dimensiones,
+  normalizados. Los chunks se embeben como `RETRIEVAL_DOCUMENT` y la pregunta
+  como `RETRIEVAL_QUERY`. El embedding cruza idiomas: la pregunta en español
+  se busca sin reescribirla. `gemini-embedding-2` se descartó porque junta una
+  lista de textos en un solo vector.
+- **Cuota.** La cuota gratuita de `gemini-embedding-001` permite 100
+  peticiones y 30 000 tokens por minuto, y 1 000 peticiones por día; cada
+  texto de un lote cuenta como una petición. Con ~670 tokens por chunk, los
+  6 242 chunks llevan unos 7 días de cuota gratuita (con facturación, minutos
+  y menos de un dólar). Por eso `python -m app.corpus.vectores embeber` guarda
+  cada lote en una caché binaria en `datos/embeddings/`, se corta solo cuando
+  se agota la cuota y retoma donde quedó; `--lote` y `--tokens-por-minuto`
+  ajustan el ritmo a un nivel pagado.
+  `cargar` inserta con lotes de `INSERT` (la carga CSV no admite `VECTOR`) y
+  crea el HNSW después de cargar, que es más barato que mantenerlo fila por
+  fila.
+- **Números en decimal fijo.** El lexer no lee notación científica, así que
+  las componentes van con 7 decimales; están normalizadas y nunca pasan de 1.
+- **PDFs subidos.** Si existe la tabla de embeddings, la biblioteca también
+  embebe los chunks del PDF nuevo. Si Gemini falla, el paper queda cargado y la
+  respuesta lo avisa.
+
 ## Alternativas descartadas
 
 - **Interfaz que llama directo al motor y a Gemini.** Expondría la clave en el
@@ -181,9 +225,12 @@ interfaz no podía mostrar las fuentes mientras Gemini escribe ni distinguir
   módulo nativo.
 - **Una sola tabla con metadatos y texto.** No cabe en 4 087 bytes y repite los
   metadatos en cada chunk.
-- **Embeddings como recuperación principal.** El enunciado los deja como
-  opcionales; BM25 usa el índice de la Parte 3 y no necesita un modelo extra.
-  La recuperación híbrida queda en #252.
+- **Embeddings como única recuperación.** El enunciado los deja como
+  opcionales, embeber el corpus cuesta días de cuota gratuita, y BM25 no necesita un
+  modelo extra. Se agregaron como modo aparte y como mitad del híbrido (#252),
+  sin quitar el modo de solo texto.
+- **Embeddings locales (sentence-transformers).** Evitan la cuota, pero
+  arrastran torch al servidor y al CI.
 
 ## Consecuencias
 

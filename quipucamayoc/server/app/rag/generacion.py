@@ -22,8 +22,9 @@ from dataclasses import dataclass
 from app.corpus.carga import CORPUS
 from app.corpus.esquema import Tablas
 from app.motor import ClienteMotor
+from app.rag.embeddings import Embedder
 from app.rag.llm import LLM, LLMError
-from app.rag.recuperacion import Evidencia, K, Ranking, Recuperacion, recuperar
+from app.rag.recuperacion import Evidencia, K, Modo, Ranking, Recuperacion, recuperar
 
 MAX_CONTEXTO = 24_000
 """Caracteres de chunks que entran al prompt (unos 6 000 tokens): sobra para
@@ -64,6 +65,8 @@ class Tiempos:
     reescritura_ms: float = 0.0
     recuperacion_ms: float = 0.0
     generacion_ms: float = 0.0
+    embedding_ms: float = 0.0
+    """El embedding de la pregunta (modos vectores e hibrido, #252)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,8 +162,15 @@ def responder(
     llm_reescritura: LLM | None = None,
     tablas: Tablas = CORPUS,
     avance: Callable[[str, object], None] | None = None,
+    modo: Modo = "texto",
+    embedder: Embedder | None = None,
 ) -> Respuesta:
     """``llm_reescritura`` es el modelo de la reescritura; sin el, se usa ``llm``.
+
+    En los modos ``vectores`` e ``hibrido``, ``embedder`` convierte la pregunta
+    *original* en un vector: el embedding cruza idiomas, asi que no hace falta
+    reescribirla. En ``vectores`` ni siquiera se reescribe; en ``hibrido`` la
+    reescritura alimenta a BM25 y el embedding al HNSW.
 
     ``avance`` se llama al terminar cada etapa, antes de la generacion que es
     la lenta: ``("consulta", str)`` y ``("recuperacion", Recuperacion)``. Con
@@ -172,18 +182,36 @@ def responder(
     if not pregunta:
         raise ValueError("la pregunta esta vacia")
 
+    if modo != "texto" and embedder is None:
+        raise ValueError(f"el modo {modo} necesita un embedder")
+
+    # Primero el embedding, que tarda menos: si Gemini no puede embeber, no se
+    # gasta antes una reescritura.
+    vector = None
+    t_embedding = 0.0
+    if modo != "texto":
+        inicio = time.perf_counter()
+        vector = embedder.consulta(pregunta)  # type: ignore[union-attr]
+        t_embedding = (time.perf_counter() - inicio) * 1000
+
     inicio = time.perf_counter()
     reescritor = llm_reescritura or llm
-    consulta = (reescribir(reescritor, pregunta) if reescribir_consulta else None) or pregunta
+    reescribe = reescribir_consulta and modo != "vectores"
+    consulta = (reescribir(reescritor, pregunta) if reescribe else None) or pregunta
     t_reescritura = (time.perf_counter() - inicio) * 1000
     avisar("consulta", consulta)
 
-    recuperacion = recuperar(motor, consulta, k=k, ranking=ranking, tablas=tablas)
+    def buscar(texto: str) -> Recuperacion:
+        return recuperar(
+            motor, texto, k=k, ranking=ranking, tablas=tablas, modo=modo, vector=vector
+        )
+
+    recuperacion = buscar(consulta)
     t_recuperacion = recuperacion.tiempo_ms
-    if not recuperacion.evidencias and consulta != pregunta:
+    if not recuperacion.evidencias and consulta != pregunta and modo == "texto":
         # La reescritura pudo perder un termino que el corpus si tiene.
         consulta = pregunta
-        recuperacion = recuperar(motor, consulta, k=k, ranking=ranking, tablas=tablas)
+        recuperacion = buscar(consulta)
         t_recuperacion += recuperacion.tiempo_ms
     avisar("recuperacion", recuperacion)
 
@@ -195,7 +223,7 @@ def responder(
             (),
             (),
             recuperacion,
-            Tiempos(t_reescritura, t_recuperacion, 0.0),
+            Tiempos(t_reescritura, t_recuperacion, 0.0, t_embedding),
             None,
         )
 
@@ -212,7 +240,7 @@ def responder(
         citas=tuple(Cita(n, evidencias[n - 1]) for n in validas),
         evidencias=tuple(evidencias),
         recuperacion=recuperacion,
-        tiempos=Tiempos(t_reescritura, t_recuperacion, t_generacion),
+        tiempos=Tiempos(t_reescritura, t_recuperacion, t_generacion, t_embedding),
         modelo=llm.modelo,
         citas_descartadas=tuple(descartadas),
     )

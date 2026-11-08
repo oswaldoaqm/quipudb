@@ -114,6 +114,29 @@ no convierte una búsqueda aproximada en exacta. Un `LIMIT` sin orden corta
 el ranking de vecinos. Se rechazan JOIN, GROUP BY y DELETE con SIMILAR_TO;
 `SCORE()` sigue perteneciendo exclusivamente a MATCH de texto.
 
+## Con un vector en lugar de un archivo (#251)
+
+`SIMILAR_TO` también acepta un `VECTOR(...)` calculado fuera del motor, como el
+embedding de una pregunta. Ese vector se busca tal cual: no pasa por
+`ExtractFeatures` y no necesita vocabulario ni `QUIPUDB_MEDIA_ROOT`.
+
+```sql
+SELECT chunk_id, SIMILARITY_SCORE() AS score FROM chunk_vectores
+WHERE SIMILAR_TO(embedding, VECTOR(0.0132, -0.0451, ...), k=24)
+USING HNSW WITH METRIC=cosine;
+```
+
+- El literal es el mismo de `INSERT`, con la misma validación: tiene que tener
+  la dimensión de la columna y componentes finitas. Si sobran componentes, el
+  error señala la primera que sobra; si faltan, el literal entero.
+- Los números van en decimal (`-0.0451`): el lexer no lee notación científica.
+- El plan lo dice en el paso `knn_search`: `consulta VECTOR literal de N
+  componentes`.
+- Con archivo, todo sigue igual.
+
+Es lo que usa la búsqueda híbrida de Quipucamayoc (#252): un embedding de 768
+dimensiones son unos 8 KB de SQL por consulta.
+
 ## Puntaje y orden por alias (#189)
 
 `SIMILARITY_SCORE()` expone el **valor natural de la métrica**, usando

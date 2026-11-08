@@ -29,6 +29,7 @@ def test_health_dice_que_el_motor_responde_y_cuantas_tablas_tiene() -> None:
         "url": "http://127.0.0.1:8000",
         "reachable": True,
         "tables": 2,
+        "vector_search": False,
         "error": None,
     }
     assert cuerpo["llm"] == {"provider": "gemini", "model": DEFAULT_MODEL, "configured": True}
@@ -99,3 +100,11 @@ def test_sin_archivo_ni_entorno_quedan_los_valores_por_omision(tmp_path: Path) -
 
     assert settings == Settings()
     assert settings.llm_configured is False
+
+
+def test_health_dice_si_hay_busqueda_vectorial() -> None:
+    tablas = [{"name": "papers"}, {"name": "chunks"}, {"name": "chunk_vectores"}]
+
+    cuerpo = _cliente(Settings(), _motor(lambda _: httpx.Response(200, json=tablas))).get("/health").json()
+
+    assert cuerpo["engine"]["vector_search"] is True

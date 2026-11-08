@@ -119,3 +119,31 @@ def test_faltan_campos_es_422(corpus, tmp_path: Path) -> None:
 
     assert _subir(cliente, _PDF_NUEVO, anio="hace mucho").status_code == 422
     assert _subir(cliente, _PDF_NUEVO, titulo="").status_code == 422
+
+
+def test_con_busqueda_vectorial_el_pdf_subido_tambien_se_embebe(corpus_vectorial, tmp_path: Path) -> None:
+    from tests.llm_falso import EmbedderFalso
+
+    motor, tablas = corpus_vectorial
+    embedder = EmbedderFalso()
+    cliente = TestClient(
+        create_app(
+            Settings(gemini_api_key="clave"), motor=motor, llm=LLMFalso(), embedder=embedder,
+            tablas=tablas, carpeta_subidos=tmp_path / "subidos",
+        )
+    )
+
+    cuerpo = _subir(cliente, _PDF_NUEVO).json()
+
+    assert (cuerpo["chunks"], cuerpo["vectores"], cuerpo["aviso"]) == (1, 1, None)
+    vector = embedder.consulta("learned bloom filters backup classifier")
+    from app.rag.recuperacion import recuperar
+
+    r = recuperar(motor, "", modo="vectores", vector=vector, tablas=tablas)
+    assert r.evidencias[0].paper.arxiv_id == cuerpo["arxiv_id"]
+
+
+def test_sin_busqueda_vectorial_el_pdf_se_carga_sin_vectores(corpus, tmp_path: Path) -> None:
+    cuerpo = _subir(_cliente(corpus, tmp_path), _PDF_NUEVO).json()
+
+    assert (cuerpo["chunks"], cuerpo["vectores"]) == (1, 0)

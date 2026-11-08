@@ -54,8 +54,19 @@ export function Fuentes({
                   {f.paper.autores} · {f.paper.anio} · pág. {f.pagina}
                 </span>
               </span>
-              <span className="shrink-0 text-xs text-stone-500" title="Puntaje del ranking en QuipuDB">
-                {f.relevancia.toFixed(2)}
+              <span className="flex shrink-0 flex-col items-end gap-1 text-xs text-stone-500" title="Puntaje en QuipuDB">
+                {f.relevancia < 1 ? f.relevancia.toFixed(3) : f.relevancia.toFixed(2)}
+                <span className="flex gap-1">
+                  {f.origen.map((o) => (
+                    <span
+                      key={o}
+                      className="rounded border border-stone-300 px-1 text-[0.65rem] text-stone-600"
+                      title={o === "texto" ? "Encontrado por palabras (índice invertido)" : "Encontrado por significado (HNSW)"}
+                    >
+                      {o === "texto" ? "palabras" : "significado"}
+                    </span>
+                  ))}
+                </span>
               </span>
             </button>
             {abierta && (
