@@ -239,6 +239,26 @@ uvicorn engine.api.main:app --reload --port 8000
 La documentación interactiva queda en `http://localhost:8000/docs`. La API
 acepta CORS desde el servidor de desarrollo del frontend (`localhost:5173`).
 
+#### Alternativa: la API en Docker
+
+Las Partes 3 y 4 necesitan numpy, OpenCV (SIFT) y soundfile en el **mismo**
+Python que carga `quipudb_native`. Donde eso no se puede —por ejemplo, el Python
+de MSYS2 en Windows—, la imagen compila el core y los bindings en Linux, igual
+que el job `bindings` del CI:
+
+```bash
+docker compose up -d --build                                  # API en http://localhost:8000
+docker compose exec motor python scripts/sembrar_demo.py      # tablas de demostración
+```
+
+`sembrar_demo.py` carga, todo a través de la API: `articulos` (español) y
+`documentos` (Quora, si existe `benchmarks/datasets/documentos_1000.csv`) con
+índice FULLTEXT; `imagenes` (48 PNG, `VECTOR(32)`, HNSW coseno e IVF) y
+`canciones` (36 WAV, `VECTOR(24)`, IVF y HNSW euclidiano), con sus vocabularios
+entrenados. Deja `foto_consulta.jpg` y `audio_query.wav` en la raíz multimedia
+para consultar con `SIMILAR_TO('foto_consulta.jpg', k=10) USING HNSW`. Los datos
+viven en el volumen `quipudb-datos`; `--rehacer` recrea las tablas.
+
 ### 7. Levantar la interfaz
 
 ```bash
