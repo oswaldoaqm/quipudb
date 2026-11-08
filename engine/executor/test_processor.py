@@ -287,6 +287,10 @@ class _FakeDatabase:
     def has_table(self, name: str) -> bool:
         return name in self.tables
 
+    def flush(self) -> None:
+        # La API vacia la base al apagarse; aqui no hay nada en disco.
+        pass
+
     def table(self, name: str) -> _FakeTable:
         try:
             return self.tables[name]
