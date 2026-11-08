@@ -5,12 +5,32 @@
  * mismo, que es lo que permite comparar dos ejecuciones durante una demo.
  */
 
+import { TABLAS_MULTIMODALES } from "@/api/mock/datos-multimodal";
 import type { CellValue, DataType, TableInfo } from "@/api/types";
+
+export type Metrica = "euclidean" | "cosine" | "dot";
+
+/**
+ * Lo que `CREATE INDEX ... WITH` fija y `IndexInfo` no lleva: la metrica de un
+ * HNSW (#188) y el idioma de un indice de texto (#237). El motor los guarda en
+ * el indice; aqui van por nombre de indice.
+ */
+export interface OpcionesIndice {
+  metrica?: Metrica;
+  idioma?: "spanish" | "english";
+}
 
 export interface TablaFalsa {
   info: TableInfo;
   tipos: DataType[];
   filas: CellValue[][];
+  opciones?: Record<string, OpcionesIndice>;
+  /**
+   * El vocabulario configurado para la tabla, como `QUIPUDB_MEDIA_VOCABULARIES`.
+   * Sin el, SIMILAR_TO con un archivo falla igual que en el motor; un VECTOR
+   * literal no lo necesita.
+   */
+  vocabulario?: string;
 }
 
 const PILA = [
@@ -183,7 +203,13 @@ const profesores: TablaFalsa = {
   ]),
 };
 
-export const TABLAS: TablaFalsa[] = [alumnos, cursos, matriculas, profesores];
+export const TABLAS: TablaFalsa[] = [
+  alumnos,
+  cursos,
+  matriculas,
+  profesores,
+  ...TABLAS_MULTIMODALES,
+];
 
 /**
  * El catalogo, leido en el momento.
