@@ -349,3 +349,19 @@ def test_una_peticion_sin_sql_dice_que_campo_falta(cliente) -> None:
     respuesta = cliente.post("/query", json={})
     assert respuesta.status_code == 422
     assert respuesta.json()["error"] == "peticion invalida: sql: Field required"
+
+
+def test_al_apagarse_la_api_el_hnsw_queda_en_disco(tmp_path) -> None:
+    # El grafo del HNSW solo baja a disco con Database.flush(); antes, reiniciar
+    # la API lo dejaba vacio aunque la tabla y el catalogo si persistian.
+    database = quipudb.Database(tmp_path / "catalogo.txt")
+    app = create_app(processor=QueryProcessor(database), database=database, native=quipudb)
+    with TestClient(app) as cliente:
+        cliente.post("/query", json={"sql": "CREATE TABLE t (id INT PRIMARY KEY, v VECTOR(3)) USING HEAP"})
+        filas = ";".join(f"INSERT INTO t VALUES ({i}, VECTOR({i}, 1, 0))" for i in range(1, 21))
+        assert cliente.post("/query", json={"sql": filas}).status_code == 200
+        sql = "CREATE INDEX t_h ON t (v) USING HNSW WITH METRIC=euclidean"
+        assert cliente.post("/query", json={"sql": sql}).status_code == 200
+
+    reabierta = quipudb.Database(tmp_path / "catalogo.txt")
+    assert reabierta.index("t", "t_h").size() == 20
