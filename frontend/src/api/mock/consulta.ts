@@ -241,7 +241,7 @@ export function leerConsulta(sql: string): ConsultaLeida | null {
 }
 
 /** Orden total entre valores del mismo tipo, como el `compare` del core. */
-function comparar(a: CellValue, b: CellValue): number {
+export function comparar(a: CellValue, b: CellValue): number {
   if (a === null || b === null) return a === b ? 0 : a === null ? -1 : 1;
   if (typeof a === "number" && typeof b === "number") return a - b;
   if (typeof a === "boolean" && typeof b === "boolean")
@@ -316,11 +316,11 @@ function compararOrden(a: CellValue, b: CellValue, orden: OrdenLeido): number {
   return signo * comparar(a, b);
 }
 
-function paginas(filas: number): number {
+export function paginas(filas: number): number {
   return Math.max(1, Math.ceil(filas / REGISTROS_POR_PAGINA));
 }
 
-function stats(leidas: number, examinados: number, devueltos: number): Stats {
+export function stats(leidas: number, examinados: number, devueltos: number): Stats {
   return {
     pages_read: leidas,
     pages_written: 0,
@@ -329,7 +329,7 @@ function stats(leidas: number, examinados: number, devueltos: number): Stats {
   };
 }
 
-function paso(
+export function paso(
   op: Step["op"],
   structure: Structure,
   tabla: string,
@@ -560,7 +560,7 @@ export interface Ejecucion {
   plan: Plan;
 }
 
-function armarPlan(sql: string, raiz: Step): Plan {
+export function armarPlan(sql: string, raiz: Step): Plan {
   const suma = totales(raiz);
   return {
     query: sql,

@@ -12,6 +12,7 @@ import {
   agregarTabla,
   buscarTabla,
   eliminarTabla,
+  type Metrica,
   type TablaFalsa,
 } from "@/api/mock/datos";
 import { ubicarEn } from "@/api/mock/ubicacion";
@@ -45,6 +46,9 @@ const CREATE_INDEX =
 /** Los idiomas de `WITH LANGUAGE` de un indice de texto (#237). */
 const IDIOMAS = new Set(["spanish", "english"]);
 
+/** Las metricas de `WITH METRIC` de un HNSW (#188). */
+const METRICAS = new Set<Metrica>(["euclidean", "cosine", "dot"]);
+
 /** Las familias de indice secundario, con los alias que acepta el parser. */
 const ESTRUCTURAS: Record<string, IndexInfo["structure"]> = {
   bplus: "bplus_unclustered",
@@ -54,7 +58,24 @@ const ESTRUCTURAS: Record<string, IndexInfo["structure"]> = {
   rtree: "rtree",
   fulltext: "inverted_index",
   inverted_index: "inverted_index",
+  hnsw: "hnsw",
+  ivf: "ivf",
 };
+
+/** Como nombra `IndexKind` a cada estructura en los mensajes del motor. */
+const NOMBRE_DEL_TIPO: Record<IndexInfo["structure"], string> = {
+  bplus_unclustered: "BPLUS_UNCLUSTERED",
+  extendible_hash: "EXTENDIBLE_HASH",
+  rtree: "RTREE",
+  inverted_index: "INVERTED_INDEX",
+  hnsw: "HNSW",
+  ivf: "IVF",
+};
+
+/** Texto literal de `Parser._create_index` cuando no reconoce la estructura. */
+const ESTRUCTURAS_ESPERADAS =
+  "se esperaba BPLUS, BPLUS_UNCLUSTERED, HASH, EXTENDIBLE_HASH, RTREE, " +
+  "FULLTEXT, INVERTED_INDEX, HNSW o IVF despues de USING";
 
 /** Cualquier CREATE: el que no sea un CREATE INDEX lo atiende el CREATE TABLE. */
 export function esCreate(sql: string): boolean {
@@ -111,8 +132,7 @@ export function ejecutarCreateIndex(sql: string): string {
           ? "se esperaba ')' despues de la columna indexada"
           : !/\bUSING\b/i.test(sql)
             ? "se esperaba USING despues de la columna indexada"
-            : "se esperaba BPLUS, BPLUS_UNCLUSTERED, HASH, EXTENDIBLE_HASH, RTREE, " +
-              "FULLTEXT o INVERTED_INDEX despues de USING";
+            : ESTRUCTURAS_ESPERADAS;
     throw new MotorError({
       error: falta,
       kind: "parse",
@@ -159,9 +179,7 @@ export function ejecutarCreateIndex(sql: string): string {
   const estructura = ESTRUCTURAS[estructuraTexto.toLowerCase()];
   if (!estructura) {
     throw new MotorError({
-      error:
-        "se esperaba BPLUS, BPLUS_UNCLUSTERED, HASH, EXTENDIBLE_HASH, RTREE, " +
-        "FULLTEXT o INVERTED_INDEX despues de USING",
+      error: ESTRUCTURAS_ESPERADAS,
       kind: "parse",
       ...ubicarEn(
         sql,
@@ -171,8 +189,9 @@ export function ejecutarCreateIndex(sql: string): string {
     });
   }
 
-  // WITH LANGUAGE solo existe para el indice de texto; el parser lee LANGUAGE
-  // y el idioma como identificadores y senala el que no reconoce.
+  // WITH LANGUAGE solo existe para el indice de texto y WITH METRIC para el
+  // HNSW; el parser lee LANGUAGE y el idioma como identificadores y senala el
+  // que no reconoce. IVF no lleva WITH: su metrica la elige cada consulta.
   if (opcion !== undefined) {
     const parseo = (mensaje: string, termino: string): never => {
       throw new MotorError({
@@ -181,9 +200,16 @@ export function ejecutarCreateIndex(sql: string): string {
         ...ubicarEn(sql, sql.toLowerCase().lastIndexOf(termino.toLowerCase()), termino.length),
       });
     };
-    if (estructura !== "inverted_index") parseo("entrada inesperada 'WITH' al final de la sentencia", "WITH");
-    if (opcion.toLowerCase() !== "language") parseo("se esperaba LANGUAGE despues de WITH", opcion);
-    if (!IDIOMAS.has(idioma.toLowerCase())) parseo("el idioma debe ser spanish o english", idioma);
+    if (estructura === "hnsw") {
+      if (opcion.toLowerCase() !== "metric") parseo("se esperaba METRIC despues de WITH", opcion);
+      if (!METRICAS.has(idioma.toLowerCase() as Metrica)) {
+        parseo("la metrica debe ser euclidean, cosine o dot", idioma);
+      }
+    } else {
+      if (estructura !== "inverted_index") parseo("entrada inesperada 'WITH' al final de la sentencia", "WITH");
+      if (opcion.toLowerCase() !== "language") parseo("se esperaba LANGUAGE despues de WITH", opcion);
+      if (!IDIOMAS.has(idioma.toLowerCase())) parseo("el idioma debe ser spanish o english", idioma);
+    }
   }
 
   if (estructura === "rtree" && columnaInfo!.type !== "POINT") {
@@ -219,12 +245,45 @@ export function ejecutarCreateIndex(sql: string): string {
     );
   }
 
+  const vectorial = estructura === "hnsw" || estructura === "ivf";
+  if (vectorial && columnaInfo!.type !== "VECTOR") {
+    falla("IVF y HNSW requieren una columna VECTOR", columna);
+  }
+  if (!vectorial && columnaInfo!.type === "VECTOR") {
+    falla(
+      `la columna '${columna}' es VECTOR y se busca por similitud; ` +
+        `${NOMBRE_DEL_TIPO[estructura]} indexa por igualdad u orden`,
+      columna,
+    );
+  }
+  // IVF entrena sus centroides sobre los vectores guardados: sin filas no
+  // hay de donde sacarlos (`VectorSearch.centroids`).
+  if (estructura === "ivf" && tabla!.filas.length === 0) {
+    falla(
+      `no se pudo crear el indice '${nombre.toLowerCase()}': IVF necesita filas para ` +
+        "entrenar centroides; carga los vectores primero",
+      nombre,
+    );
+  }
+
   tabla!.info.indexes.push({
     name: nombre.toLowerCase(),
     column: columna.toLowerCase(),
     structure: estructura!,
     supports_range: estructura === "bplus_unclustered",
   });
+
+  // Lo que el indice guarda y `IndexInfo` no muestra: la metrica del HNSW
+  // (cosine si se omite) y el idioma del indice de texto (spanish).
+  if (estructura === "hnsw" || estructura === "inverted_index") {
+    tabla!.opciones = {
+      ...tabla!.opciones,
+      [nombre.toLowerCase()]:
+        estructura === "hnsw"
+          ? { metrica: (opcion ? idioma.toLowerCase() : "cosine") as Metrica }
+          : { idioma: (opcion ? idioma.toLowerCase() : "spanish") as "spanish" | "english" },
+    };
+  }
 
   return nombre.toLowerCase();
 }

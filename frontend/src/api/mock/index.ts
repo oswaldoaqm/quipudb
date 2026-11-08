@@ -7,6 +7,7 @@
  */
 
 import { MotorError } from "@/api/errors";
+import { ejecutarBusqueda, esBusqueda } from "@/api/mock/busqueda";
 import {
   cumple,
   ejecutar,
@@ -134,7 +135,13 @@ export function detectarError(sql: string): QueryError | null {
     };
   }
 
-  const reservada = RESERVADA.exec(fuera);
+  // `AS` solo existe para nombrar el puntaje: `SCORE() AS relevancia` (#169).
+  // En cualquier otro lugar sigue siendo una palabra fuera del subconjunto.
+  const sinAliasDePuntaje = fuera.replace(
+    /(\b(?:SIMILARITY_)?SCORE\s*\(\s*\)\s*)AS\b/gi,
+    (_, previo: string) => `${previo}  `,
+  );
+  const reservada = RESERVADA.exec(sinAliasDePuntaje);
   if (reservada) {
     return {
       error: `${reservada[0].toUpperCase()} no esta soportado por el subconjunto SQL de QuipuDB`,
@@ -177,6 +184,27 @@ export function detectarError(sql: string): QueryError | null {
       ),
     };
   }
+
+  // MATCH y SIMILAR_TO rankean; un DELETE no borra por relevancia ni por
+  // parecido (`bind_delete` en `semantic.py`).
+  if (/^\s*DELETE\b/i.test(fuera)) {
+    const busqueda = /\b(MATCH|SIMILAR_TO)\s*\(/i.exec(fuera);
+    if (busqueda) {
+      const palabra = busqueda[1].toUpperCase();
+      return {
+        error:
+          palabra === "MATCH"
+            ? "MATCH solo se admite en SELECT: un DELETE no borra por relevancia"
+            : "SIMILAR_TO solo se admite en SELECT",
+        kind: "unsupported",
+        ...ubicarEn(sql, busqueda.index, palabra.length),
+      };
+    }
+  }
+
+  // MATCH, SIMILAR_TO y sus puntajes tienen su propio lector, con los errores
+  // del motor; las comprobaciones de abajo son para el SELECT de la Parte 1.
+  if (esBusqueda(sql)) return null;
 
   // Antes de leer la consulta: una conjuncion tambien invalida un DELETE, y
   // `leerConsulta` solo entiende SELECT, asi que ahi ya seria tarde.
@@ -373,6 +401,8 @@ function ejecutarUna(sql: string): QueryResult {
   if (esDelete(sql)) {
     return { ...SIN_FILAS, affected_rows: ejecutarDelete(sql) };
   }
+
+  if (esBusqueda(sql)) return ejecutarBusqueda(sql);
 
   const consultaCruda = leerConsulta(sql);
   if (consultaCruda && hayJoin(sql)) return ejecutarJoin(sql, consultaCruda);
