@@ -199,10 +199,14 @@ La recuperación tiene tres modos, que se eligen por pregunta:
   como `RETRIEVAL_QUERY`. El embedding cruza idiomas: la pregunta en español
   se busca sin reescribirla. `gemini-embedding-2` se descartó porque junta una
   lista de textos en un solo vector.
-- **Cuota.** La cuota gratuita de embeddings ronda los 30 000 tokens por
-  minuto y un chunk tiene ~670 tokens: embeber los 6 242 chunks lleva unas
-  3 horas. Por eso `python -m app.corpus.vectores embeber` guarda cada lote en
-  una caché binaria en `datos/embeddings/` y se puede cortar y retomar.
+- **Cuota.** La cuota gratuita de `gemini-embedding-001` permite 100
+  peticiones y 30 000 tokens por minuto, y 1 000 peticiones por día; cada
+  texto de un lote cuenta como una petición. Con ~670 tokens por chunk, los
+  6 242 chunks llevan unos 7 días de cuota gratuita (con facturación, minutos
+  y menos de un dólar). Por eso `python -m app.corpus.vectores embeber` guarda
+  cada lote en una caché binaria en `datos/embeddings/`, se corta solo cuando
+  se agota la cuota y retoma donde quedó; `--lote` y `--tokens-por-minuto`
+  ajustan el ritmo a un nivel pagado.
   `cargar` inserta con lotes de `INSERT` (la carga CSV no admite `VECTOR`) y
   crea el HNSW después de cargar, que es más barato que mantenerlo fila por
   fila.
@@ -222,7 +226,7 @@ La recuperación tiene tres modos, que se eligen por pregunta:
 - **Una sola tabla con metadatos y texto.** No cabe en 4 087 bytes y repite los
   metadatos en cada chunk.
 - **Embeddings como única recuperación.** El enunciado los deja como
-  opcionales, embeber el corpus cuesta horas de cuota, y BM25 no necesita un
+  opcionales, embeber el corpus cuesta días de cuota gratuita, y BM25 no necesita un
   modelo extra. Se agregaron como modo aparte y como mitad del híbrido (#252),
   sin quitar el modo de solo texto.
 - **Embeddings locales (sentence-transformers).** Evitan la cuota, pero

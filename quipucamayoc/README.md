@@ -68,12 +68,16 @@ Para los modos *Significado* e *Híbrido* hacen falta los embeddings de los
 chunks. Con el motor levantado y el corpus cargado, desde `quipucamayoc/server`:
 
 ```bash
-.venv/Scripts/python -m app.corpus.vectores embeber   # ~3 h por la cuota de Gemini; se puede cortar y retomar
+.venv/Scripts/python -m app.corpus.vectores embeber   # ~1 000 chunks por día con la cuota gratuita
 .venv/Scripts/python -m app.corpus.vectores cargar    # tabla chunk_vectores e índice HNSW, ~1 min
 ```
 
-`embeber` guarda los vectores en `quipucamayoc/datos/embeddings/`: volver a
-cargar el corpus no vuelve a gastar cuota. Sin embeddings, la interfaz deja
+La cuota gratuita de Gemini admite unos 1 000 embeddings por día y el corpus
+tiene 6 242 chunks: `embeber` se corre una vez al día hasta completarlos. Cada
+lote se guarda en `quipucamayoc/datos/embeddings/` en cuanto llega, así que se
+puede cortar (o apagar la máquina) y retoma donde quedó; volver a cargar el
+corpus tampoco vuelve a gastar cuota. En un proyecto con facturación, `--lote` y
+`--tokens-por-minuto` suben el ritmo al de su nivel. Sin embeddings, la interfaz deja
 esos modos deshabilitados.
 
 ## Configuración
