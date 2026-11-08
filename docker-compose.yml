@@ -1,0 +1,24 @@
+# API del motor en Docker. Desde la raiz del repo:
+#
+#   docker compose up -d --build           # levanta http://localhost:8000
+#   docker compose exec motor python scripts/sembrar_demo.py   # tablas de demo
+#
+# y el frontend con VITE_USE_MOCK=false (frontend/.env) en `npm run dev`.
+services:
+  motor:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # El vocabulario con que se cargo cada tabla multimedia: SIMILAR_TO con
+      # un archivo lo necesita para extraer la consulta igual que la carga.
+      QUIPUDB_MEDIA_VOCABULARIES: '{"imagenes":"imagenes.npz","canciones":"canciones.npz"}'
+    volumes:
+      # Catalogo, paginas de las tablas y archivos multimedia. Un volumen y
+      # no una carpeta del repo: asi no aparecen archivos del motor en git.
+      - quipudb-datos:/app/datos
+      # Los corpus de texto que genera benchmarks/scripts/generar_documentos.py.
+      - ./benchmarks/datasets:/app/benchmarks/datasets:ro
+
+volumes:
+  quipudb-datos:
