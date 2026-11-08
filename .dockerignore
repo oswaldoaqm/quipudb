@@ -1,0 +1,17 @@
+# Solo entra lo que la imagen compila o ejecuta: core, bindings, engine, scripts.
+.git
+build/
+build-py/
+build-*/
+**/__pycache__
+**/*.pyc
+**/node_modules
+frontend
+quipucamayoc
+benchmarks
+docs
+material
+datos
+datos_demo
+*.docx
+*.pptx
