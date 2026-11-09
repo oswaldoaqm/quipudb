@@ -62,6 +62,20 @@ La interfaz tiene dos vistas:
   `anio`, en QuipuDB) y por autor (en el servidor: el SQL del motor no tiene
   `LIKE`), y un formulario para agregar un PDF.
 
+### Volver a cargar papers
+
+`python -m app.corpus.carga` salta los papers que ya están en el motor. Si
+cambia la limpieza de los PDF, como con los bloques `latexit` (#265), los
+papers afectados se vuelven a extraer así:
+
+```bash
+.venv/Scripts/python -m app.corpus.carga --recargar 2408.04113v1 1908.10598v2
+```
+
+Cada uno se borra con sus chunks y sus embeddings, y vuelve con un id nuevo.
+Después hay que correr `embeber` y `cargar` de la sección siguiente para sus
+chunks nuevos.
+
 ### Búsqueda por significado (opcional)
 
 Para los modos *Significado* e *Híbrido* hacen falta los embeddings de los

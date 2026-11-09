@@ -96,6 +96,10 @@ CREATE INDEX chunks_por_paper ON chunks (paper_id) USING HASH;
   1 900 caracteres, así que el tope solo actúa con texto muy denso en símbolos.
 - Se descarta la sección de referencias: sus nombres y títulos atraen
   coincidencias de BM25 que no responden ninguna pregunta.
+- Se quitan los bloques `<latexit sha1_base64="...">...</latexit>` (#265).
+  Algunas figuras guardan así el código de sus fórmulas, en base64, y `pypdf`
+  lo extrae como texto. En el paper de UpLIF eso eran 644 de sus 672 chunks.
+  Sin los bloques le quedan 31.
 
 ### 4. Idioma: corpus en inglés, preguntas en español
 
