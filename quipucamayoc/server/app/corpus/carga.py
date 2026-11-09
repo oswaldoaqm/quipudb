@@ -4,9 +4,11 @@ Uso, desde ``quipucamayoc/server`` y con el motor levantado::
 
     python -m app.corpus.carga             # todo lo descargado
     python -m app.corpus.carga --limite 20
+    python -m app.corpus.carga --recargar 2408.04113v1
 
 Se puede volver a ejecutar: los papers que ya estan en la tabla se saltan, y
 cada lote entra entero o no entra (carga CSV atomica del motor, #114).
+``--recargar`` borra los papers indicados y los vuelve a extraer.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ import argparse
 import itertools
 import sys
 import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -115,6 +117,15 @@ def _limpiar_huerfanos(motor: ClienteMotor, tablas: Tablas, papers: set[int]) ->
     return len(huerfanos)
 
 
+def _sacar(motor: ClienteMotor, tablas: Tablas, paper_id: int) -> None:
+    """Borra un paper, sus chunks y, si ya hay embeddings (#252), sus vectores."""
+
+    if tablas.vectores in {info["name"] for info in motor.tables()}:
+        motor.query(f"DELETE FROM {tablas.vectores} WHERE paper_id = {paper_id}")
+    motor.query(f"DELETE FROM {tablas.chunks} WHERE paper_id = {paper_id}")
+    motor.query(f"DELETE FROM {tablas.papers} WHERE id = {paper_id}")
+
+
 def _preparar(
     papers: Sequence[tuple[Paper, int]],
     pdfs: Path,
@@ -182,18 +193,31 @@ def cargar(
     *,
     tablas: Tablas = CORPUS,
     lote: int = LOTE,
+    recargar: Collection[str] = (),
     log: Callable[[str], None] = lambda _: None,
 ) -> Reporte:
-    """Carga en el motor los ``papers`` que aun no estan, con sus chunks."""
+    """Carga en el motor los ``papers`` que aun no estan, con sus chunks.
+
+    Los ``arxiv_id`` de ``recargar`` se borran antes, con sus chunks y sus
+    embeddings, y se vuelven a extraer: sirve cuando cambia la limpieza del
+    PDF (#265). Vuelven con un id nuevo, mayor que todos los anteriores, para
+    que sus chunks nunca reciban un embedding guardado de los chunks viejos.
+    """
 
     reporte = Reporte()
+    papers = list(papers)
     crear_esquema(motor, tablas)
     cargados = _papers_cargados(motor, tablas)
+    siguiente = max(cargados.values(), default=0) + 1
+    # Solo los que se van a volver a cargar: sin su PDF, borrarlo seria perderlo.
+    a_recargar = set(recargar) & cargados.keys() & {p.arxiv_id for p in papers}
+    for arxiv_id in sorted(a_recargar):
+        _sacar(motor, tablas, cargados.pop(arxiv_id))
+        log(f"{arxiv_id}: se borro para volver a cargarlo")
     huerfanos = _limpiar_huerfanos(motor, tablas, set(cargados.values()))
     if huerfanos:
         log(f"se borraron los chunks de {huerfanos} papers que no llegaron a cargarse")
 
-    siguiente = max(cargados.values(), default=0) + 1
     pendientes: list[tuple[Paper, int]] = []
     for paper in papers:
         if paper.arxiv_id in cargados:
@@ -223,11 +247,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Carga el corpus descargado en QuipuDB")
     parser.add_argument("--datos", type=Path, default=DATOS, help="carpeta de la descarga")
     parser.add_argument("--limite", type=int, default=None, help="solo los primeros N papers")
+    parser.add_argument(
+        "--recargar",
+        nargs="+",
+        default=(),
+        metavar="ARXIV_ID",
+        help="borra estos papers (chunks y embeddings incluidos) y los vuelve a extraer",
+    )
     args = parser.parse_args(argv)
 
     papers = list(itertools.islice(leer_metadatos(args.datos), args.limite))
     with ClienteMotor.desde(load_settings()) as motor:
-        reporte = cargar(motor, papers, args.datos / "pdf", log=print)
+        reporte = cargar(motor, papers, args.datos / "pdf", recargar=args.recargar, log=print)
     t = reporte.tiempos
     print(
         f"papers cargados: {reporte.papers}, chunks: {reporte.chunks}, "
