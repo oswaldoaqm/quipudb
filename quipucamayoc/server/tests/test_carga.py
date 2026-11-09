@@ -9,8 +9,8 @@ import pytest
 from app.corpus.arxiv import Paper
 from app.corpus.carga import cargar, fila_paper, filas_chunks
 from app.corpus.chunks import Chunk
-from app.corpus.esquema import BYTES_PAPERS, Tablas, chunk_id, recortar
-from app.motor import literal
+from app.corpus.esquema import BYTES_PAPERS, DIMENSION_EMBEDDING, Tablas, chunk_id, recortar
+from app.motor import literal, literal_vector
 from tests.pdfs import escribir
 
 
@@ -141,3 +141,42 @@ def test_los_chunks_huerfanos_de_una_carga_cortada_se_limpian(motor_real, tmp_pa
     assert (reporte.papers, reporte.fallidos) == (1, [])
     textos = [fila[0] for fila in motor.query(f"SELECT texto FROM {tablas.chunks}").rows]
     assert textos and "resto viejo" not in textos
+
+
+def test_recargar_borra_chunks_y_vectores_y_vuelve_con_un_id_nuevo(motor_real, tmp_path: Path) -> None:
+    motor, prefijo = motor_real
+    tablas = Tablas(prefijo)
+    papers = [_paper("2401.00001v1"), _paper("2401.00002v1")]
+    pdfs = _pdfs(tmp_path / "pdf", papers)
+    cargar(motor, papers, pdfs, tablas=tablas)
+    motor.query(tablas.ddl_vectores())
+    unitario = literal_vector([1.0] + [0.0] * (DIMENSION_EMBEDDING - 1))
+    for paper_id in (1, 2):
+        motor.query(f"INSERT INTO {tablas.vectores} VALUES ({chunk_id(paper_id, 0)}, {paper_id}, {unitario})")
+
+    # El 2 es el id mas alto: si volviera con el mismo, sus chunks nuevos
+    # tomarian los embeddings guardados de los viejos (#265).
+    reporte = cargar(motor, papers, pdfs, tablas=tablas, recargar=["2401.00002v1"])
+
+    assert (reporte.papers, reporte.ya_cargados, reporte.fallidos) == (1, 1, [])
+    assert sorted(motor.query(f"SELECT arxiv_id, id FROM {tablas.papers}").rows) == [
+        ("2401.00001v1", 1),
+        ("2401.00002v1", 3),
+    ]
+    por_paper = motor.query(f"SELECT paper_id, COUNT(*) FROM {tablas.chunks} GROUP BY paper_id").rows
+    assert sorted(por_paper) == [(1, 1), (3, 1)]
+    assert list(motor.query(f"SELECT paper_id FROM {tablas.vectores}").rows) == [(1,)]
+
+
+def test_recargar_un_paper_fuera_de_la_lista_no_lo_borra(motor_real, tmp_path: Path) -> None:
+    motor, prefijo = motor_real
+    tablas = Tablas(prefijo)
+    papers = [_paper("2401.00001v1"), _paper("2401.00002v1")]
+    pdfs = _pdfs(tmp_path / "pdf", papers)
+    cargar(motor, papers, pdfs, tablas=tablas)
+
+    # Con --limite 1 el segundo no esta en la lista: no hay con que reemplazarlo.
+    reporte = cargar(motor, papers[:1], pdfs, tablas=tablas, recargar=["2401.00002v1"])
+
+    assert (reporte.papers, reporte.ya_cargados) == (0, 1)
+    assert sorted(motor.query(f"SELECT id FROM {tablas.papers}").rows) == [(1,), (2,)]
