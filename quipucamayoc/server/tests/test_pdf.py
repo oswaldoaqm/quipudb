@@ -85,6 +85,37 @@ def test_una_ruta_con_guion_bajo_no_es_una_ligadura() -> None:
     assert limpiar(["see /usr_bin/tool and a_b"]).paginas == ("see /usr_bin/tool and a_b",)
 
 
+# Como sale de la figura de UpLIF (2408.04113v1): la etiqueta de cada eje y,
+# entre ellas, la formula en base64 partida en lineas (#265).
+_FIGURA_CON_LATEXIT = (
+    "UpLIF uses four core modules:\nApproximator\nBMA Nullifier\n"
+    '<latexit sha1_base64="JdTQumnZr0SStrkwOVd4/5M2JLg=">AAADG3icbVJLbxMxEHaWVwmvFo5cVkRIHKoo\n'
+    "iXj0WIkLxyKRtlIaVbZ3dteKX7LHkGiVfjt88/H14HTSrc8BeU5ekFdkTN6RU/KBnJEp4aQmX8k38j37kf3MfmW/"
+    "t6VZr7vzjCSR/fkHZrYHzA==</latexit>\nkeys\n"
+    '<latexit sha1_base64="URAgEk5axdrWVu91EfAxdh=">AAACx3icjVHLSsNAFD2Nr1pfVZdugkVwVZIi6r'
+    "LoRncV7ANqkWQ6bYfmRTIplOLCH3Cr/+cv6B/onXEKahGdkOTMufecmXuvnwQik47zWrCWlldW14rr\n"
+    "pY3Nre2d8u5eK4vzlPEmi4M47fhexgMR8aYUMuCdJOVe6Ae87Y8vVbw94WkmYni6Gl+PxWF8Hd+5\n"
+    "</latexit>\npositions"
+)
+
+
+def test_quita_las_formulas_de_latexit_y_conserva_las_etiquetas() -> None:
+    documento = limpiar([_FIGURA_CON_LATEXIT])
+
+    assert documento.paginas == (
+        "UpLIF uses four core modules: Approximator BMA Nullifier keys positions",
+    )
+
+
+def test_un_latexit_sin_cerrar_no_se_lleva_el_texto_que_sigue() -> None:
+    pagina = (
+        '<latexit sha1_base64="abc=">AAADG3icbVJL\nThe model predicts positions.\n'
+        '<latexit sha1_base64="def=">AAACx3ic</latexit>\nError bounds stay small.'
+    )
+
+    assert limpiar([pagina]).paginas == ("The model predicts positions. Error bounds stay small.",)
+
+
 def test_quita_el_sello_lateral_de_arxiv() -> None:
     paginas = ["arXiv:1603.09320v4 [cs.DS] 14 Aug 2018\nWe present a new approach."]
 
