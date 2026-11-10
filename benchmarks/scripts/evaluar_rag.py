@@ -481,8 +481,9 @@ def figura_latencia(plt, por_modo: dict[str, list[dict]]):
     manejadores, etiquetas = ax.get_legend_handles_labels()
     unicos = dict(zip(etiquetas, manejadores, strict=True))
     orden = [n for _, n, _ in ETAPAS if n in unicos]
-    fig.legend([unicos[n] for n in orden], orden, loc="outside lower center", ncol=4, frameon=False,
-               fontsize=9, labelcolor=TINTA)
+    # Las cuatro etapas no caben en una fila del ancho de la figura: van en dos.
+    fig.legend([unicos[n] for n in orden], orden, loc="outside lower center",
+               ncol=len(orden) if len(orden) <= 3 else 2, frameon=False, fontsize=9, labelcolor=TINTA)
     _estilo(ax)
     return fig
 
