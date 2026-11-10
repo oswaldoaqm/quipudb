@@ -62,3 +62,25 @@ export function partes(texto: string): Parte[] {
     .map((trozo, i) => ({ texto: trozo, marca: i % 2 === 1 }))
     .filter((parte) => parte.texto !== "");
 }
+
+export type Nodo =
+  | { tipo: "texto"; texto: string }
+  | { tipo: "cita"; numero: number }
+  | { tipo: "codigo"; texto: string }
+  | { tipo: "negrita" | "cursiva"; hijos: Nodo[] };
+
+/**
+ * Las marcas en linea como arbol. La negrita y la cursiva se vuelven a
+ * recorrer: Gemini pone citas dentro de las dos, como en
+ * ``*(Nota: ... inserciones [8])*`` (#271). Termina porque el contenido de
+ * cada marca es mas corto que la marca.
+ */
+export function arbol(texto: string): Nodo[] {
+  return partes(texto).map(({ texto: parte, marca }): Nodo => {
+    if (!marca) return { tipo: "texto", texto: parte };
+    if (parte.startsWith("**") && parte.endsWith("**")) return { tipo: "negrita", hijos: arbol(parte.slice(2, -2)) };
+    if (/^\[\d+\]$/.test(parte)) return { tipo: "cita", numero: Number(parte.slice(1, -1)) };
+    if (parte.startsWith("`") || parte.startsWith("$")) return { tipo: "codigo", texto: parte.slice(1, -1) };
+    return { tipo: "cursiva", hijos: arbol(parte.slice(1, -1)) };
+  });
+}
