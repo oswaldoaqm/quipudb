@@ -31,7 +31,7 @@ e indexación anterior en siglos al disco duro.
 | 2 | Base de datos espacial: R-Tree, consultas por radio, k-NN y polígono, métricas euclidiana y Haversine, mapa, SQL espacial y comparación contra PostGIS | **Completa** |
 | 3 | Búsqueda de texto: SPIMI, TF-IDF + coseno, BM25, `MATCH` y `SCORE()` en SQL y comparación contra GIN | **Completa** |
 | 4 | Búsqueda vectorial multimedia: SIFT/MFCC, bolsa de palabras, IVF, HNSW, `SIMILAR_TO` en SQL y experimentos | **Completa** |
-| 5 | [Quipucamayoc](quipucamayoc/README.md): RAG sobre 187 papers de arXiv (opción A), con QuipuDB y Gemini | **Completa** (los embeddings opcionales, #251 y #252, pendientes) |
+| 5 | [Quipucamayoc](quipucamayoc/README.md): RAG sobre 187 papers de arXiv (opción A), con QuipuDB y Gemini | **Completa**, con la búsqueda opcional por significado e híbrida (#251, #252) |
 
 ## Arquitectura del sistema
 
@@ -735,10 +735,12 @@ protocolos completos de cada suite.
 ## Aplicación: Quipucamayoc
 
 Un chatbot que responde preguntas sobre papers académicos citando de dónde
-sale cada afirmación (Parte 5, opción A). La pregunta se busca en QuipuDB con el
-índice invertido de la Parte 3 (`MATCH ... USING BM25`), los metadatos de cada
-paper salen de una tabla relacional por su hash, y Gemini redacta la respuesta
-con esos fragmentos. La interfaz muestra, junto a la respuesta, cada SQL que se
+sale cada afirmación (Parte 5, opción A). La pregunta se busca en QuipuDB por
+palabras, con el índice invertido de la Parte 3 (`MATCH ... USING BM25`); por
+significado, con el HNSW de la Parte 4 sobre los embeddings de los chunks
+(`SIMILAR_TO`); o con las dos, fusionadas. Los metadatos de cada paper salen de
+una tabla relacional por su hash, y Gemini redacta la respuesta con esos
+fragmentos. La interfaz muestra, junto a la respuesta, cada SQL que se
 ejecutó en el motor con su plan.
 
 Detalles: [`quipucamayoc/README.md`](quipucamayoc/README.md), el
