@@ -69,7 +69,7 @@ cambia la limpieza de los PDF, como con los bloques `latexit` (#265), los
 papers afectados se vuelven a extraer así:
 
 ```bash
-.venv/Scripts/python -m app.corpus.carga --recargar 2408.04113v1 1908.10598v2
+.venv/Scripts/python -m app.corpus.carga --recargar 2408.04113v1 1908.10598v2 2403.11472v1
 ```
 
 Cada uno se borra con sus chunks y sus embeddings, y vuelve con un id nuevo.
@@ -79,20 +79,28 @@ chunks nuevos.
 ### Búsqueda por significado (opcional)
 
 Para los modos *Significado* e *Híbrido* hacen falta los embeddings de los
-chunks. Con el motor levantado y el corpus cargado, desde `quipucamayoc/server`:
+chunks. Embeberlos con la cuota gratuita de Gemini toma unos 5 días, así que
+están publicados en el Release
+[`embeddings-corpus-v1`](https://github.com/oswaldoaqm/quipudb/releases/tag/embeddings-corpus-v1).
+Sus ids son los de una carga desde cero del corpus, con la limpieza de #265.
+Con el motor levantado y el corpus cargado, desde `quipucamayoc/server`:
 
 ```bash
-.venv/Scripts/python -m app.corpus.vectores embeber   # ~1 000 chunks por día con la cuota gratuita
-.venv/Scripts/python -m app.corpus.vectores cargar    # tabla chunk_vectores e índice HNSW, ~1 min
+mkdir -p ../datos/embeddings
+curl -L -o ../datos/embeddings/gemini-embedding-001_768.bin   https://github.com/oswaldoaqm/quipudb/releases/download/embeddings-corpus-v1/gemini-embedding-001_768.bin
+.venv/Scripts/python -m app.corpus.vectores embeber   # con el archivo, solo embebe lo que falte
+.venv/Scripts/python -m app.corpus.vectores cargar    # tabla chunk_vectores e índice HNSW, ~4 min
 ```
 
-La cuota gratuita de Gemini admite unos 1 000 embeddings por día y el corpus
-tiene 6 242 chunks: `embeber` se corre una vez al día hasta completarlos. Cada
-lote se guarda en `quipucamayoc/datos/embeddings/` en cuanto llega, así que se
-puede cortar (o apagar la máquina) y retoma donde quedó; volver a cargar el
-corpus tampoco vuelve a gastar cuota. En un proyecto con facturación, `--lote` y
-`--tokens-por-minuto` suben el ritmo al de su nivel. Sin embeddings, la interfaz deja
-esos modos deshabilitados.
+Si `embeber` empieza a pedir los 5 473 chunks, los ids no coinciden: el corpus
+se cargó antes de #265 o en otro orden.
+
+Sin el archivo, `embeber` pide a Gemini unos 1 000 embeddings por día, que es la
+cuota gratuita. Cada lote se guarda en `quipucamayoc/datos/embeddings/` en
+cuanto llega, así que se puede cortar (o apagar la máquina) y retoma donde
+quedó. Volver a cargar el corpus tampoco vuelve a gastar cuota. En un proyecto
+con facturación, `--lote` y `--tokens-por-minuto` suben el ritmo al de su nivel.
+Sin embeddings, la interfaz deja esos modos deshabilitados.
 
 ## Configuración
 

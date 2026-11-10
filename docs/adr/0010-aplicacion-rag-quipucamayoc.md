@@ -205,12 +205,14 @@ La recuperación tiene tres modos, que se eligen por pregunta:
   lista de textos en un solo vector.
 - **Cuota.** La cuota gratuita de `gemini-embedding-001` permite 100
   peticiones y 30 000 tokens por minuto, y 1 000 peticiones por día; cada
-  texto de un lote cuenta como una petición. Con ~670 tokens por chunk, los
-  6 242 chunks llevan unos 7 días de cuota gratuita (con facturación, minutos
-  y menos de un dólar). Por eso `python -m app.corpus.vectores embeber` guarda
-  cada lote en una caché binaria en `datos/embeddings/`, se corta solo cuando
-  se agota la cuota y retoma donde quedó; `--lote` y `--tokens-por-minuto`
-  ajustan el ritmo a un nivel pagado.
+  texto de un lote cuenta como una petición. Los 5 473 chunks del corpus
+  limpio (#265) tomaron 5 días de cuota gratuita (con facturación serían
+  minutos y menos de un dólar). Por eso `python -m app.corpus.vectores embeber`
+  guarda cada lote en una caché binaria en `datos/embeddings/`, se corta solo
+  cuando se agota la cuota y retoma donde quedó; `--lote` y
+  `--tokens-por-minuto` ajustan el ritmo a un nivel pagado. La caché del
+  corpus está publicada en el Release `embeddings-corpus-v1` (#267), con los
+  ids de una carga desde cero, para que nadie vuelva a gastar la cuota.
   `cargar` inserta con lotes de `INSERT` (la carga CSV no admite `VECTOR`) y
   crea el HNSW después de cargar, que es más barato que mantenerlo fila por
   fila.
