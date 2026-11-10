@@ -121,20 +121,39 @@ qué búsqueda la encontró.
 
 ## Interfaz
 
-![Respuesta con citas, tiempos y el SQL ejecutado con su plan](capturas/quipucamayoc/respuesta.png)
+![Respuesta en modo híbrido, con el origen de cada fuente, los tiempos y el SQL ejecutado con su plan](capturas/quipucamayoc/respuesta.png)
+
+Arriba se elige cómo buscar: *Palabras* (BM25 o TF-IDF), *Significado* (HNSW) o
+*Híbrido*, que es el modo por omisión cuando hay embeddings. Cada fuente lleva
+una etiqueta con la búsqueda que la encontró, *palabras*, *significado* o las
+dos, y su puntaje de RRF. La barra de tiempos separa el embedding de la
+pregunta, la reescritura, la recuperación en QuipuDB y la generación.
 
 La respuesta llega por etapas (`POST /ask/stream`): las fuentes aparecen
 mientras Gemini todavía escribe. Cada cita abre su fragmento:
 
 ![Una cita abre el fragmento que leyó Gemini](capturas/quipucamayoc/cita.png)
 
+Debajo, *Cómo respondió la base de datos* lista cada sentencia que se ejecutó
+en QuipuDB con su plan. En el modo híbrido son la búsqueda BM25, la del HNSW,
+el texto de los chunks que solo encontró el HNSW y los metadatos de cada paper,
+estos dos por hash. La del HNSW usa el índice `chunk_vectores_hnsw`, con
+`ef_search` = 64 y coseno, y tarda unos 3 ms en el motor:
+
+![El paso knn_search del HNSW, con el literal VECTOR recortado en la captura](capturas/quipucamayoc/sql-hnsw.png)
+
+En la interfaz, el literal `VECTOR(...)` tiene los 768 números de la pregunta;
+en la captura se recortó a tres líneas.
+
 La biblioteca filtra por rango de años con el B+ sobre `anio` (el plan muestra
-`index_range`) y permite agregar un PDF, que pasa por la misma ingesta:
+`index_range`) y permite agregar un PDF, que pasa por la misma ingesta y, si hay
+embeddings, también se embebe:
 
 ![Biblioteca filtrada por años](capturas/quipucamayoc/biblioteca.png)
 
-Los errores dicen quién falló. Con el motor apagado, Gemini alcanza a reescribir
-la pregunta y la interfaz señala a QuipuDB:
+Los errores dicen quién falló. Si el motor no responde, Gemini alcanza a
+reescribir la pregunta y la interfaz señala a QuipuDB. Además, sin motor no hay
+búsqueda vectorial, así que *Significado* e *Híbrido* quedan deshabilitados:
 
 ![Error del motor](capturas/quipucamayoc/error-motor.png)
 
