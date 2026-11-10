@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { bloques, partes } from "../src/lib/markdown.ts";
+import { arbol, bloques, partes } from "../src/lib/markdown.ts";
 
 const marcas = (texto) => partes(texto).filter((p) => p.marca).map((p) => p.texto);
 
@@ -52,5 +52,39 @@ test("agrupa parrafos, titulos y listas de vinetas o numeradas", () => {
     { tipo: "lista", ordenada: false, items: ["uno", "dos"] },
     { tipo: "lista", ordenada: true, items: ["primero", "segundo"] },
     { tipo: "parrafo", texto: "Cierre." },
+  ]);
+});
+
+test("las citas dentro de una cursiva siguen siendo citas (#271)", () => {
+  const texto = "*(Nota: IVF admite más inserciones [8], y VQ es más chico [3]).*";
+
+  assert.deepEqual(arbol(texto), [
+    {
+      tipo: "cursiva",
+      hijos: [
+        { tipo: "texto", texto: "(Nota: IVF admite más inserciones " },
+        { tipo: "cita", numero: 8 },
+        { tipo: "texto", texto: ", y VQ es más chico " },
+        { tipo: "cita", numero: 3 },
+        { tipo: "texto", texto: ")." },
+      ],
+    },
+  ]);
+});
+
+test("la negrita con una cursiva adentro queda anidada, y el codigo no se recorre", () => {
+  assert.deepEqual(arbol("**Mejor (*recall*):** `k=[1]` [2]"), [
+    {
+      tipo: "negrita",
+      hijos: [
+        { tipo: "texto", texto: "Mejor (" },
+        { tipo: "cursiva", hijos: [{ tipo: "texto", texto: "recall" }] },
+        { tipo: "texto", texto: "):" },
+      ],
+    },
+    { tipo: "texto", texto: " " },
+    { tipo: "codigo", texto: "k=[1]" },
+    { tipo: "texto", texto: " " },
+    { tipo: "cita", numero: 2 },
   ]);
 });
