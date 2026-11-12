@@ -1,5 +1,10 @@
 # Arquitectura de QuipuDB
 
+El diseño propuesto para el Issue #275 se documenta en
+[Arquitectura distribuida](arquitectura-distribuida.md) y su
+[contrato HTTP/JSON v1](contrato-distribuido-v1.md). Esa capa todavía no está
+implementada; las secciones siguientes describen el motor local existente.
+
 ## Vista general
 
 QuipuDB esta partido en dos capas con un contrato explicito entre ellas.
