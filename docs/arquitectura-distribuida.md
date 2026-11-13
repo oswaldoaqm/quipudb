@@ -1,13 +1,16 @@
 # Arquitectura distribuida de QuipuDB — Issue #275
 
 - Fecha: 2026-11-12.
-- Estado: diseño propuesto para implementación en #276–#280; no implementado.
+- Estado: metadatos #276 y servicio local #277 implementados; coordinación #278–#280 pendiente.
 - Contrato normativo: [protocolo interno v1](contrato-distribuido-v1.md).
 - Base: [arquitectura actual](arquitectura.md).
 
 La implementación de metadatos, rangos y preparación física del #276 se describe
-en [Fragmentación horizontal](fragmentacion-horizontal.md). El coordinador y los
-endpoints de esta arquitectura siguen siendo trabajo de issues posteriores.
+en [Fragmentación horizontal](fragmentacion-horizontal.md).
+
+El servicio local y los cuatro endpoints internos del #277 están documentados
+en [Operaciones sobre fragmentos](operaciones-fragmentos.md). El coordinador y
+la combinación global siguen fuera de esos módulos.
 
 ## 1. Objetivo y decisiones
 
