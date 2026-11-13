@@ -1,7 +1,7 @@
 # Arquitectura distribuida de QuipuDB — Issue #275
 
 - Fecha: 2026-11-12.
-- Estado: metadatos #276, servicio local #277, coordinador #278 y enrutamiento #279 implementados; integración #280 pendiente.
+- Estado: #276 a #280 implementados. Cómo levantarlo, pruebas y evidencias: [Integración distribuida](integracion-distribuida.md).
 - Contrato normativo: [protocolo interno v1](contrato-distribuido-v1.md).
 - Base: [arquitectura actual](arquitectura.md).
 

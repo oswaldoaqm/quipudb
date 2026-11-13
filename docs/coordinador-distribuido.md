@@ -72,8 +72,9 @@ mismos orígenes que la API local.
 
 Con los bindings compilados y un catálogo cuyos nodos apunten a 8001 y 8002,
 como [`catalogo-nodos-locales-v1.json`](ejemplos/catalogo-nodos-locales-v1.json).
-Primero se preparan los directorios de los nodos, una sola vez, como indica
-[Operaciones sobre fragmentos](operaciones-fragmentos.md). Después, cada comando
+Primero se preparan los directorios de los nodos, una sola vez, con
+`python -m scripts.preparar_nodo` (ver
+[Integración distribuida](integracion-distribuida.md)). Después, cada comando
 en su terminal:
 
 ```bash
@@ -92,6 +93,9 @@ curl http://localhost:8000/tables
 
 El coordinador puede arrancar antes que los nodos: al arrancar informa en el
 log cuáles no están listos, y `GET /health` vuelve a revisarlos en cada llamada.
+
+`--timeout` cambia los segundos que el coordinador espera a que un nodo lea o
+responda (30 por omisión). Conectar siempre tiene 3 s.
 
 ## Pruebas
 
