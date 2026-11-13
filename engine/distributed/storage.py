@@ -74,7 +74,7 @@ def verify_range_node(
     No modifica registros ni repara datos incorrectos. No sustituye los locks
     ni las validaciones por petición que implementará #277.
     """
-    tables = _tables(catalog, node_id)
+    _tables(catalog, node_id)
     directory = Path(data_dir).resolve()
     catalog_path = directory / "catalogo.txt"
     if not catalog_path.is_file() or catalog_path.is_symlink():
@@ -82,44 +82,67 @@ def verify_range_node(
     native = load_native()
     database = native.Database(catalog_path)
     try:
-        if set(database.table_names()) != {t.name for t in tables}:
-            raise ValueError("las tablas físicas no coinciden con el catálogo distribuido")
-        for table in tables:
-            info = database.table_info(table.name)
-            for filename in (info.file, *(i.file for i in info.indexes)):
-                path = directory / filename
-                if path.is_symlink() or path.resolve().parent != directory or not path.is_file():
-                    raise ValueError("archivo físico fuera del directorio propio del nodo")
-        actual = {t.name: t for t in describe_catalog(database, native)}
-        counts = {}
-        for table in tables:
-            physical = actual[table.name]
-            expected_columns = [
-                {
-                    "name": c.name,
-                    "type": c.type,
-                    "size": c.size,
-                    "is_primary_key": c.name == table.primary_key,
-                }
-                for c in table.columns
-            ]
-            expected_indexes = sorted(
-                (i.model_dump() for i in table.indexes), key=lambda i: i["name"]
-            )
-            if (
-                physical.storage != table.storage
-                or [c.model_dump() for c in physical.columns] != expected_columns
-                or sorted((i.model_dump() for i in physical.indexes), key=lambda i: i["name"])
-                != expected_indexes
-            ):
-                raise ValueError(f"esquema/índices físicos incompatibles: {table.name}")
-            fragment = next(f for f in table.fragments if f.node_id == node_id)
-            count = 0
-            for row in native.source_of(database.table(table.name)):
-                if owner_for_key(table, row[table.bound_schema.key_column]) != fragment:
-                    raise ValueError(f"registro fuera del fragmento {fragment.fragment_id}")
-                count += 1
-            counts[fragment.fragment_id] = count
-        return counts
+        return audit_node_storage(catalog, node_id, database, native, directory)
     finally:
         _close(database)
+
+
+def audit_node_storage(
+    catalog: DistributedCatalog,
+    node_id: str,
+    database,
+    native,
+    directory: Path,
+    *,
+    check_records: bool = True,
+) -> dict[str, int]:
+    """Audita el MISMO handle del servicio; admite tablas range y single.
+
+    El llamador posee la exclusión mutua. No abre otra Database ni la cierra.
+    El recorrido de pertenencia completo es para arranque; por petición se
+    comparan metadatos sin volver a recorrer toda la tabla.
+    """
+    catalog.node(node_id)
+    tables = tuple(t for t in catalog.tables if any(f.node_id == node_id for f in t.fragments))
+    directory = directory.resolve()
+    if set(database.table_names()) != {t.name for t in tables}:
+        raise ValueError("las tablas físicas no coinciden con el catálogo distribuido")
+    for table in tables:
+        info = database.table_info(table.name)
+        for filename in (info.file, *(i.file for i in info.indexes)):
+            path = directory / filename
+            if path.is_symlink() or path.resolve().parent != directory or not path.is_file():
+                raise ValueError("archivo físico fuera del directorio propio del nodo")
+    actual = {t.name: t for t in describe_catalog(database, native)}
+    counts = {}
+    for table in tables:
+        physical = actual[table.name]
+        expected_columns = [
+            {
+                "name": c.name,
+                "type": c.type,
+                "size": c.size,
+                "is_primary_key": c.name == table.primary_key,
+            }
+            for c in table.columns
+        ]
+        expected_indexes = sorted((i.model_dump() for i in table.indexes), key=lambda i: i["name"])
+        if (
+            physical.storage != table.storage
+            or [c.model_dump() for c in physical.columns] != expected_columns
+            or sorted((i.model_dump() for i in physical.indexes), key=lambda i: i["name"])
+            != expected_indexes
+        ):
+            raise ValueError(f"esquema/índices físicos incompatibles: {table.name}")
+        fragment = next(f for f in table.fragments if f.node_id == node_id)
+        count = 0
+        rows = native.source_of(database.table(table.name)) if check_records else ()
+        for row in rows:
+            if (
+                table.mode == "range"
+                and owner_for_key(table, row[table.bound_schema.key_column]) != fragment
+            ):
+                raise ValueError(f"registro fuera del fragmento {fragment.fragment_id}")
+            count += 1
+        counts[fragment.fragment_id] = count if check_records else physical.record_count
+    return counts
