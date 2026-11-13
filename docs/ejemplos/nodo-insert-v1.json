@@ -1,0 +1,7 @@
+{
+  "protocol_version": 1,
+  "catalog_version": 1,
+  "request_id": "22cd8ee3-9faa-4c55-93df-4f0f38453f91",
+  "table": "items",
+  "sql": "INSERT INTO items VALUES (42, 'Quipu');"
+}

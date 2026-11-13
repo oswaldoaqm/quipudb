@@ -1,11 +1,13 @@
 # Contrato interno distribuido v1 — Issue #275
 
-- Fecha: 2026-11-12. Estado: propuesto, aún no implementado.
+- Fecha: 2026-11-12. Estado: modelos #276 y servicio de nodo #277 implementados.
 - Responsables: Mauricio (modelos y servidor de nodo), Oswaldo (cliente y coordinador).
 - Alcance y restricciones: [arquitectura distribuida](arquitectura-distribuida.md).
 
 Las palabras «debe» y «rechaza» son requisitos de implementación de v1. Este
-documento define interfaces futuras; no describe endpoints ya disponibles.
+documento define las interfaces normativas; el servicio implementado se describe
+en [Operaciones sobre fragmentos](operaciones-fragmentos.md). El cliente del
+coordinador sigue correspondiendo a #278.
 
 ## 1. Transporte, identidad y versiones
 
