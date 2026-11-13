@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { cargarCarpeta, consultaDeEjemplo, filtrarArchivos, nombreDeVocabulario, revisarTabla } from '../src/lib/media-ingest.ts';
+import { cargarCarpeta, consultaDeEjemplo, filtrarArchivos, insertarRuta, nombreDeVocabulario, revisarTabla, subirArchivoDeConsulta } from '../src/lib/media-ingest.ts';
 
 const archivo = (name) => ({ name, file: new Blob(['x']) });
 
@@ -164,4 +164,28 @@ test('solo admite tablas con el esquema de la carga multimedia', () => {
 test('el nombre del vocabulario sale de la carpeta elegida', () => {
   assert.equal(nombreDeVocabulario('Fotos de Perú', 64), 'Fotos-de-Peru-k64');
   assert.equal(nombreDeVocabulario('???', 8), 'vocabulario-k8');
+});
+
+test('un archivo de consulta se sube solo y devuelve su ruta', async () => {
+  const { api, llamadas } = apiFalsa();
+  const ruta = await subirArchivoDeConsulta(api.upload, archivo('mi foto.jpg'));
+  assert.deepEqual(llamadas, [['upload', ['mi foto.jpg'], { name: 'consulta' }]]);
+  assert.equal(ruta, 'subidas/consulta-abc12345/mi foto.jpg');
+  await assert.rejects(subirArchivoDeConsulta(apiFalsa({ rechazar: ['x.png'] }).api.upload, archivo('x.png')), /no se pudo subir x.png: rechazado/);
+  await assert.rejects(subirArchivoDeConsulta(api.upload, archivo('notas.pdf')), /no es una imagen ni un audio/);
+  assert.equal(llamadas.length, 1); // el PDF no llega a subirse
+});
+
+test('la ruta entra como literal donde esta el cursor', () => {
+  const ruta = 'subidas/c-1/foto.png';
+  // Cursor suelto: con comillas.
+  assert.deepEqual(insertarRuta('SIMILAR_TO(, k=5)', 11, 11, ruta), {
+    texto: "SIMILAR_TO('subidas/c-1/foto.png', k=5)", cursor: 33,
+  });
+  // Entre comillas ya escritas: sin duplicarlas.
+  assert.equal(insertarRuta("SIMILAR_TO('', k=5)", 12, 12, ruta).texto, "SIMILAR_TO('subidas/c-1/foto.png', k=5)");
+  // Reemplaza lo seleccionado dentro de las comillas.
+  assert.equal(insertarRuta("SIMILAR_TO('vieja.png', k=5)", 12, 21, ruta).texto, "SIMILAR_TO('subidas/c-1/foto.png', k=5)");
+  // Una comilla en la ruta se duplica.
+  assert.equal(insertarRuta('', 0, 0, "subidas/c-1/o'brien.png").texto, "'subidas/c-1/o''brien.png'");
 });
