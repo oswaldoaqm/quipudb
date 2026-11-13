@@ -201,7 +201,8 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(ORIGENES),
-        allow_methods=["GET", "POST"],
+        # PUT: asociar un vocabulario a una tabla desde el frontend (#289).
+        allow_methods=["GET", "POST", "PUT"],
         allow_headers=["Content-Type"],
     )
     app.state.motor = motor
