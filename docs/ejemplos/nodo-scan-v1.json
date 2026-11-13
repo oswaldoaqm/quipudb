@@ -1,0 +1,7 @@
+{
+  "protocol_version": 1,
+  "catalog_version": 1,
+  "request_id": "769d2a64-5921-496b-b3aa-5ea45f896d64",
+  "table": "items",
+  "sql": "SELECT * FROM items WHERE id >= 0;"
+}

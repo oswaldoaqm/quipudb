@@ -1,0 +1,7 @@
+{
+  "protocol_version": 1,
+  "catalog_version": 1,
+  "request_id": "4e2e07fb-e0f2-490e-8ef2-4456353e1773",
+  "table": "items",
+  "sql": "DELETE FROM items WHERE id = 42;"
+}
