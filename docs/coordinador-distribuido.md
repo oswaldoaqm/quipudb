@@ -2,8 +2,8 @@
 
 Implementa el lado del coordinador del [contrato v1](contrato-distribuido-v1.md):
 el cliente HTTP que habla con cada nodo y el proceso coordinador que los revisa
-y arma la vista lógica de las tablas. El enrutamiento de `POST /query` y la
-combinación de resultados son del #279.
+y arma la vista lógica de las tablas. `POST /query`, que usa estos clientes, se
+describe en [Enrutamiento y combinación de resultados](enrutamiento-distribuido.md) (#279).
 
 | Archivo | Qué hace |
 |---|---|
@@ -62,6 +62,7 @@ incompleto.
 |---|---|
 | `GET /health` | 200 si todos los nodos están listos, 503 si no; el estado y el motivo de cada nodo. |
 | `GET /tables` | La misma forma de `GET /tables` de la API local, con las tablas lógicas. |
+| `POST /query` | La misma forma de la API local; ver [enrutamiento](enrutamiento-distribuido.md). |
 
 Los errores usan el `QueryErrorResponse` de siempre, así que el frontend los
 muestra sin cambios. El coordinador escucha en el puerto 8000 y acepta los

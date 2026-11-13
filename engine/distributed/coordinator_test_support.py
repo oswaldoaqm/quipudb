@@ -34,16 +34,18 @@ def table_info(table, record_count: int = 0) -> dict:
 class FakeNode:
     """Un nodo que responde como dice el contrato, salvo lo que se cambie.
 
-    ``counts`` da el ``record_count`` de cada fragmento. ``override`` es una
-    función ``(request, body) -> httpx.Response | None`` que puede reemplazar
-    la respuesta de cualquier petición; ``requests`` guarda todo lo recibido.
+    ``counts`` da el ``record_count`` de cada fragmento y ``rows`` las filas
+    que devuelve su scan. ``override`` es una función
+    ``(request, body) -> httpx.Response | None`` que puede reemplazar la
+    respuesta de cualquier petición; ``requests`` guarda todo lo recibido.
     """
 
-    def __init__(self, catalog, node_id: str, counts=None, override=None) -> None:
+    def __init__(self, catalog, node_id: str, counts=None, override=None, rows=None) -> None:
         self.catalog = catalog
         self.node_id = node_id
         self.counts = counts or {}
         self.override = override
+        self.rows = rows or {}
         self.requests: list[tuple[httpx.Request, dict | None]] = []
 
     @property
@@ -94,21 +96,26 @@ class FakeNode:
                 ),
             )
         fragment_id = path.split("/")[-2]
+        result = {
+            "columns": [],
+            "column_types": [],
+            "rows": [],
+            "affected_rows": 1,
+            "plan": None,
+            "spatial_context": None,
+            "is_explain": False,
+        }
+        if path.endswith("/scan"):
+            table = self.catalog.table(body["table"])
+            result.update(
+                columns=[c.name for c in table.columns],
+                column_types=[c.type for c in table.columns],
+                rows=self.rows.get(fragment_id, []),
+                affected_rows=0,
+            )
         return httpx.Response(
             200,
-            json=self.base(
-                request_id=body["request_id"],
-                fragment_id=fragment_id,
-                result={
-                    "columns": [],
-                    "column_types": [],
-                    "rows": [],
-                    "affected_rows": 1,
-                    "plan": None,
-                    "spatial_context": None,
-                    "is_explain": False,
-                },
-            ),
+            json=self.base(request_id=body["request_id"], fragment_id=fragment_id, result=result),
         )
 
 

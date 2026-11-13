@@ -76,3 +76,31 @@ def test_coordinador_por_tcp_con_dos_procesos(cluster):
         "not_started",
     )
     assert filas.result.rows == [[1, "x"]]
+
+
+def test_consultas_distribuidas_por_tcp(cluster):
+    """#279: escribir, leer combinado y caer un nodo con procesos reales."""
+
+    nodes, catalog = cluster
+
+    async def recorrido():
+        coordinator = Coordinator(catalog, timeout=httpx.Timeout(5.0, connect=1.0, pool=1.0))
+        try:
+            for key in (9999, 1, 10000, 20000):
+                await coordinator.query(f"INSERT INTO items VALUES ({key}, 'k{key}')")
+            todas = await coordinator.query("SELECT id FROM items ORDER BY id DESC LIMIT 3")
+            una = await coordinator.query("SELECT nombre FROM items WHERE id = 10000")
+            nodes["n2"].close()
+            solo_n1 = await coordinator.query("SELECT id FROM items WHERE id < 10000 ORDER BY id")
+            with pytest.raises(NodeFailure) as caido:
+                await coordinator.query("SELECT id FROM items")
+            return todas, una, solo_n1, caido.value
+        finally:
+            await coordinator.aclose()
+
+    todas, una, solo_n1, caido = asyncio.run(recorrido())
+    assert todas.rows == [[20000], [10000], [9999]]
+    assert una.rows == [["k10000"]]
+    # Sin n2 sigue respondiendo lo que solo vive en n1; lo que necesita a n2 falla.
+    assert solo_n1.rows == [[1], [9999]]
+    assert (caido.code, caido.node_id) == ("NODE_UNAVAILABLE", "n2")
