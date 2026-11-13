@@ -27,6 +27,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile as StarletteUploadFile
+from starlette.exceptions import HTTPException
 
 from engine.api.media_load import MediaJobs, MediaLoadConflict
 from engine.api.schemas import (
@@ -37,12 +39,23 @@ from engine.api.schemas import (
     QueryRequest,
     QueryResponse,
     TableInfo,
+    UploadedFile,
+    UploadRejected,
+    UploadResponse,
     VocabularyInfo,
     VocabularyJobResponse,
     VocabularyRegisterRequest,
     VocabularyTrainRequest,
 )
 from engine.api.service import describe_catalog, to_error, to_load_response, to_response
+from engine.api.uploads import (
+    MAX_FILES_PER_REQUEST,
+    UploadError,
+    existing_upload_folder,
+    new_upload_folder,
+    remove_if_empty,
+    save_files,
+)
 from engine.api.vocabularies import (
     VocabularyConflict,
     VocabularyJobs,
@@ -341,6 +354,70 @@ def create_app(
                 )
             registry.register(registry_key(tabla, peticion.column), relative, processor_)
         return next(v for v in list_vocabularies(root, registry) if v.path == relative)
+
+    @app.post(
+        "/media/uploads",
+        response_model=UploadResponse,
+        responses={400: {"model": QueryErrorResponse}},
+    )
+    async def subir_multimedia(
+        request: Request,
+        max_file_bytes: Annotated[
+            int, Query(ge=1, le=64 * 1024**2, description="Límite por archivo")
+        ] = 32 * 1024**2,
+    ) -> UploadResponse | JSONResponse:
+        """Guarda imágenes o audios del navegador dentro de la raíz multimedia (#288).
+
+        Campos multipart: ``files`` (uno o varios; el nombre puede traer
+        subcarpetas), ``name`` para la carpeta nueva y ``folder`` para agregar
+        a una carpeta de ``subidas/`` devuelta por una petición anterior.
+        """
+
+        try:
+            form = await request.form(max_files=MAX_FILES_PER_REQUEST, max_fields=8)
+        except HTTPException as error:
+            mensaje = str(error.detail)
+            if "Too many files" in mensaje:
+                mensaje = (
+                    f"se admiten hasta {MAX_FILES_PER_REQUEST} archivos por petición; "
+                    "sube el resto en otra petición con el mismo folder"
+                )
+            return JSONResponse(
+                status_code=400,
+                content=QueryErrorResponse(error=f"peticion invalida: {mensaje}").model_dump(),
+            )
+        uploads = [f for f in form.getlist("files") if isinstance(f, StarletteUploadFile)]
+        if not uploads:
+            raise UploadError("la petición no trae archivos en el campo files")
+        folder_value = form.get("folder")
+        name_value = form.get("name")
+        resolved_root = root.resolve()
+        try:
+            if isinstance(folder_value, str) and folder_value:
+                folder = existing_upload_folder(resolved_root, folder_value)
+                created = False
+            else:
+                folder = new_upload_folder(
+                    resolved_root, name_value if isinstance(name_value, str) else None
+                )
+                created = True
+            report = await run_in_threadpool(
+                save_files,
+                resolved_root,
+                folder,
+                [(u.filename or "", u.file) for u in uploads],
+                max_file_bytes=max_file_bytes,
+            )
+            if created and not report.saved:
+                remove_if_empty(folder)
+        finally:
+            await form.close()
+        return UploadResponse(
+            folder=report.folder,
+            saved=len(report.saved),
+            files=[UploadedFile(name=n, path=p, bytes=b) for n, p, b in report.saved],
+            rejected=[UploadRejected(name=n, error=e) for n, e in report.rejected],
+        )
 
     @app.exception_handler(VocabularyConflict)
     async def _vocabulary_conflict(_: Request, error: VocabularyConflict) -> JSONResponse:

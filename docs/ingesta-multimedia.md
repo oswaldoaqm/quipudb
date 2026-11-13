@@ -50,6 +50,46 @@ duración de audio que la ingesta para describir los objetos de igual forma.
 El [manual de SIMILAR_TO](consultas-multimedia.md) explica cómo configurar el
 mismo vocabulario y crear los índices IVF/HNSW desde SQL después de cargar.
 
+## Subir archivos desde el navegador (#288)
+
+`load-media`, `POST /vocabularies` y `SIMILAR_TO` leen rutas del servidor. Si la
+API corre en Docker o en otra máquina, el servidor no ve el disco del usuario,
+así que primero se suben los archivos:
+
+```bash
+curl -F "files=@engine/multimedia/datos/ejemplo.png;filename=viaje/dia1/a.png" \
+     -F "files=@engine/multimedia/datos/ejemplo.png;filename=../x.png" \
+     -F "name=viaje" http://localhost:8000/media/uploads
+```
+
+```json
+{"folder": "subidas/viaje-838fe851", "saved": 1,
+ "files": [{"name": "viaje/dia1/a.png", "path": "subidas/viaje-838fe851/viaje/dia1/a.png", "bytes": 512}],
+ "rejected": [{"name": "../x.png", "error": "el nombre no puede tener '..', '.' ni partes vacías"}]}
+```
+
+Cada subida crea una carpeta nueva `subidas/<name>-<id>` dentro de
+`QUIPUDB_MEDIA_ROOT`; `folder` es la ruta que después se pasa a
+`POST /vocabularies` o a `load-media`, y cada `path` sirve tal cual en
+`SIMILAR_TO('...')`. El nombre de cada archivo puede traer subcarpetas, como
+las manda el navegador al subir una carpeta.
+
+Se aceptan hasta 500 archivos por petición. Una carpeta más grande se sube en
+tandas: las siguientes peticiones mandan `folder` con la carpeta que devolvió la
+primera. Solo se puede agregar a carpetas de `subidas/`, nunca a otra parte de
+la raíz.
+
+Cada archivo se revisa por separado y, si no pasa, va a `rejected` con su motivo
+mientras los demás se guardan: rutas absolutas o con `..`, caracteres no
+válidos, extensiones que no son imagen ni audio, un nombre que ya existe en la
+carpeta y archivos por encima de `max_file_bytes` (32 MiB por omisión, hasta
+64 MiB, como parámetro de la URL). Un archivo que se pasa del límite no deja
+restos, y una subida nueva en la que no se guardó nada no deja carpeta.
+
+Starlette guarda en un temporal cada archivo de la petición antes de que la API
+lo revise, así que el límite por archivo no acota lo que ocupa una petición
+mientras llega; para eso está el máximo de 500 archivos.
+
 ## Entrenar el vocabulario por REST (#287)
 
 Con la API levantada, el vocabulario de una carpeta del servidor se entrena sin
