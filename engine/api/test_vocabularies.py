@@ -257,3 +257,20 @@ def test_trabajo_inexistente(api):
     with client:
         response = client.get("/vocabularies/no-existe")
     assert response.status_code == 404
+
+
+def test_el_frontend_puede_asociar_con_put(api):
+    # El navegador pregunta antes de un PUT con JSON; sin PUT en CORS el
+    # frontend no llega a asociar un vocabulario existente (#289).
+    client, _ = api()
+    with client:
+        response = client.options(
+            "/tables/fotos/vocabulary",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "PUT",
+                "Access-Control-Request-Headers": "Content-Type",
+            },
+        )
+    assert response.status_code == 200
+    assert "PUT" in response.headers["access-control-allow-methods"]
