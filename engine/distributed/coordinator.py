@@ -30,7 +30,7 @@ import argparse
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 import httpx
@@ -38,11 +38,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from engine.api.schemas import QueryErrorResponse, TableInfo
+from engine.api.schemas import QueryErrorResponse, QueryRequest, QueryResponse, TableInfo
+from engine.api.service import to_error
 from engine.distributed.catalog import DistributedCatalog, load_catalog
 from engine.distributed.client import DEFAULT_TIMEOUT, NodeClient, NodeFailure
 from engine.distributed.contracts import DistributedTable
+from engine.distributed.merge import merge
 from engine.distributed.protocol import CatalogResponse
+from engine.distributed.router import Execute, Scan, route
+from engine.parser.errors import SQLError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -193,6 +197,44 @@ class Coordinator:
                 result.append(parts[0].model_copy(update={"record_count": total}))
         return result
 
+    # -- consultas --------------------------------------------------------------
+
+    async def query(self, sql: str) -> QueryResponse:
+        """``POST /query`` del clúster.
+
+        Lanza ``SQLError`` si la sentencia no es válida o v1 no la admite, y
+        ``NodeFailure`` si falla un nodo. Una lectura con varios fragmentos
+        falla entera si falla uno: nunca hay filas parciales.
+        """
+
+        target = route(self.catalog, sql)
+        if isinstance(target, Execute):
+            response = await self.clients[target.node_id].execute(
+                target.fragment_id, target.table, target.sql, write=target.write
+            )
+            return response.result
+        return await self._scan(target)
+
+    async def _scan(self, scan: Scan) -> QueryResponse:
+        results = await asyncio.gather(
+            *(
+                self.clients[f.node_id].scan(f.fragment_id, scan.table.name, scan.sql)
+                for f in scan.fragments
+            ),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, NodeFailure):
+                # El nodo leyó un SQL generado aquí, no el del usuario: sus
+                # posiciones no corresponden a la consulta pública.
+                raise replace(result, line=None, column=None, end_line=None, end_column=None)
+            if isinstance(result, BaseException):
+                raise result
+        return merge(
+            scan,
+            [(f, r.result) for f, r in zip(scan.fragments, results, strict=True)],
+        )
+
 
 def failure_response(failure: NodeFailure) -> JSONResponse:
     """Un ``NodeFailure`` como ``QueryErrorResponse``, el error público de siempre."""
@@ -236,6 +278,10 @@ def create_coordinator_app(coordinator: Coordinator) -> FastAPI:
     async def _node_failure(_, failure: NodeFailure) -> JSONResponse:
         return failure_response(failure)
 
+    @app.exception_handler(SQLError)
+    async def _sql_error(_, error: SQLError) -> JSONResponse:
+        return JSONResponse(status_code=400, content=to_error(error).model_dump())
+
     @app.get("/health")
     async def health() -> JSONResponse:
         """Estado del clúster: 200 si todos los nodos están listos, 503 si no."""
@@ -252,6 +298,10 @@ def create_coordinator_app(coordinator: Coordinator) -> FastAPI:
     @app.get("/tables", response_model=list[TableInfo])
     async def tables() -> list[TableInfo]:
         return await coordinator.tables()
+
+    @app.post("/query", response_model=QueryResponse)
+    async def query(request: QueryRequest) -> QueryResponse:
+        return await coordinator.query(request.sql)
 
     return app
 
