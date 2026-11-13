@@ -5,6 +5,10 @@
 - Contrato normativo: [protocolo interno v1](contrato-distribuido-v1.md).
 - Base: [arquitectura actual](arquitectura.md).
 
+La implementación de metadatos, rangos y preparación física del #276 se describe
+en [Fragmentación horizontal](fragmentacion-horizontal.md). El coordinador y los
+endpoints de esta arquitectura siguen siendo trabajo de issues posteriores.
+
 ## 1. Objetivo y decisiones
 
 Ejecutar QuipuDB con un coordinador y al menos dos nodos de datos independientes.
