@@ -138,6 +138,16 @@ class QueryProcessor:
             Path(media_root), media_vocabularies or {}, vector_nprobe, vector_ef_search, ivf_nlist,
         )
 
+    def register_vocabulary(self, key: str, vocabulary: str | Path) -> None:
+        """Asocia un vocabulario a ``tabla`` o ``tabla.columna`` para SIMILAR_TO.
+
+        Es lo mismo que pasar ``media_vocabularies`` al construir, pero con el
+        procesador ya abierto: la API lo usa al entrenar o asociar un
+        vocabulario sin reiniciarse (#287).
+        """
+
+        self._vector_search.vocabularies[key] = vocabulary
+
     def execute(self, source: str) -> QueryResult:
         """Ejecuta una o varias sentencias separadas por punto y coma.
 

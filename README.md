@@ -566,6 +566,10 @@ creación de índices, configuración por tabla, parámetros y límites.
 | `POST /tables/{tabla}/load` | Carga un CSV en una tabla existente |
 | `POST /tables/{tabla}/load-media` | Inicia la ingesta de una carpeta del servidor y devuelve 202 con un identificador de trabajo |
 | `GET /tables/{tabla}/load-media/{job_id}` | Consulta progreso, archivos insertados/fallidos, errores y tiempo de la ingesta multimedia |
+| `POST /vocabularies` | Entrena el vocabulario de una carpeta del servidor en segundo plano y, si se indica, lo asocia a una tabla |
+| `GET /vocabularies/{job_id}` | Consulta el avance del entrenamiento |
+| `GET /vocabularies` | Lista los vocabularios guardados y las tablas que los usan |
+| `PUT /tables/{tabla}/vocabulary` | Asocia un vocabulario ya entrenado a la tabla para `SIMILAR_TO`, sin reiniciar la API |
 
 #### Carga masiva desde CSV
 
@@ -642,14 +646,23 @@ CREATE TABLE fotos (
 ) USING HEAP;
 ```
 
-Con `QUIPUDB_MEDIA_ROOT=datos/multimedia` (valor por defecto), una carpeta
-`datos/multimedia/fotos_demo` y un vocabulario de **8 palabras** en
-`datos/multimedia/fotos_demo.npz`:
+Con `QUIPUDB_MEDIA_ROOT=datos/multimedia` (valor por defecto) y una carpeta
+`datos/multimedia/fotos_demo`, primero se entrena su vocabulario de **8
+palabras** y se asocia a la tabla:
+
+```bash
+curl -X POST http://localhost:8000/vocabularies \
+  -H 'Content-Type: application/json' \
+  -d '{"folder":"fotos_demo","k":8,"name":"fotos_demo","table":"fotos"}'
+```
+
+Cuando `GET /vocabularies/{job_id}` diga `completed`, se carga la carpeta con
+`vocabularios/fotos_demo.npz`:
 
 ```bash
 curl -X POST http://localhost:8000/tables/fotos/load-media \
   -H 'Content-Type: application/json' \
-  -d '{"folder":"fotos_demo","vocabulary":"fotos_demo.npz","batch_size":32}'
+  -d '{"folder":"fotos_demo","vocabulary":"vocabularios/fotos_demo.npz","batch_size":32}'
 ```
 
 La respuesta incluye `job_id`. Consúltalo en

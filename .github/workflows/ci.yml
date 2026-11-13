@@ -107,6 +107,7 @@ jobs:
           engine/api/test_carga.py
           engine/api/test_media_load.py
           engine/api/test_media_native.py
+          engine/api/test_vocabularies_native.py
           engine/api/test_similar_native.py
           engine/api/test_spatial_context.py -q -rs -p no:cacheprovider
       # Las del sistema distribuido con motor real: en el job de Python se

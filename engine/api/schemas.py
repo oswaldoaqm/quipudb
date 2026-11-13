@@ -188,6 +188,68 @@ class MediaJobResponse(BaseModel):
     error: str | None = None
 
 
+class VocabularyTrainRequest(BaseModel):
+    """Carpeta del servidor con imagenes o audios de una sola modalidad (#287).
+
+    ``table`` y ``column`` son opcionales: si vienen, al terminar el
+    vocabulario queda asociado a esa tabla para ``SIMILAR_TO``.
+    """
+
+    folder: str = Field(min_length=1, max_length=4096)
+    k: int = Field(default=64, ge=2, le=4096, strict=True)
+    seed: int = Field(default=0, ge=0, le=2**31 - 1, strict=True)
+    name: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    table: str | None = Field(default=None, min_length=1, max_length=128)
+    column: str | None = Field(default=None, min_length=1, max_length=128)
+    recursive: bool = False
+    max_files: int = Field(default=500, ge=1, le=10_000, strict=True)
+    max_descriptors: int = Field(default=50_000, ge=2, le=1_000_000, strict=True)
+    max_file_bytes: int = Field(default=32 * 1024**2, ge=1, le=64 * 1024**2, strict=True)
+    max_keypoints: int = Field(default=500, ge=1, le=5000, strict=True)
+    max_audio_seconds: float = Field(default=30.0, gt=0, le=300, allow_inf_nan=False)
+
+
+class VocabularyJobResponse(BaseModel):
+    """Progreso del entrenamiento; ``vocabulary`` es relativo a QUIPUDB_MEDIA_ROOT."""
+
+    job_id: str
+    status: Literal["pending", "running", "completed", "failed", "cancelled"]
+    kind: Literal["imagen", "audio"] | None = None
+    discovered: int
+    skipped: int
+    selected: int
+    described: int
+    failed: int
+    errors: list[MediaFileErrorResponse]
+    errors_truncated: bool
+    elapsed_ms: float
+    k: int
+    vocabulary: str | None = None
+    codebook_id: str | None = None
+    documents: int | None = None
+    registered_for: str | None = None
+    error: str | None = None
+
+
+class VocabularyInfo(BaseModel):
+    """Un vocabulario guardado y las tablas que lo usan para SIMILAR_TO."""
+
+    path: str
+    k: int
+    dimension: int
+    kind: Literal["imagen", "audio"]
+    documents: int
+    codebook_id: str
+    registered_for: list[str]
+
+
+class VocabularyRegisterRequest(BaseModel):
+    """Asocia un vocabulario ya entrenado a una tabla, sin reiniciar la API."""
+
+    vocabulary: str = Field(min_length=1, max_length=4096)
+    column: str | None = Field(default=None, min_length=1, max_length=128)
+
+
 __all__ = [
     "ColumnInfo",
     "ErrorKind",
@@ -204,4 +266,8 @@ __all__ = [
     "QueryResponse",
     "TableInfo",
     "TableStructure",
+    "VocabularyInfo",
+    "VocabularyJobResponse",
+    "VocabularyRegisterRequest",
+    "VocabularyTrainRequest",
 ]
