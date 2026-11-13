@@ -312,12 +312,25 @@ def main() -> None:
     parser.add_argument("--catalog-version", type=int, required=True)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT.read,
+        help="segundos para leer o escribir en un nodo; conectar siempre tiene 3",
+    )
     args = parser.parse_args()
     import uvicorn
 
     catalog = load_catalog(args.catalog, expected_catalog_version=args.catalog_version)
+    timeout = httpx.Timeout(
+        args.timeout, connect=DEFAULT_TIMEOUT.connect, pool=DEFAULT_TIMEOUT.pool
+    )
     logging.basicConfig(level=logging.INFO)
-    uvicorn.run(create_coordinator_app(Coordinator(catalog)), host=args.host, port=args.port)
+    uvicorn.run(
+        create_coordinator_app(Coordinator(catalog, timeout=timeout)),
+        host=args.host,
+        port=args.port,
+    )
 
 
 if __name__ == "__main__":

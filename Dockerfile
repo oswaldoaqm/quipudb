@@ -12,9 +12,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Solo lo que corre la API; los benchmarks (pandas, matplotlib, psycopg) no.
+# httpx lo usa el coordinador distribuido para hablar con los nodos (#278).
 # opencv-python-headless y no opencv-python: no hay pantalla ni libGL (#176).
 RUN pip install --no-cache-dir \
     "fastapi>=0.115" "uvicorn[standard]>=0.32" "pydantic>=2.9" "python-multipart>=0.0.9" \
+    "httpx>=0.27" \
     "numpy>=1.26" "opencv-python-headless>=4.4" "soundfile>=0.12"
 
 WORKDIR /app

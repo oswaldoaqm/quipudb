@@ -689,6 +689,21 @@ Cuatro hilos incrementan cinco veces la misma fila con
 contador termina por debajo de 20; con él, siempre en 20, y los interbloqueos de
 upgrade compartido→exclusivo se resuelven por timeout y reintento.
 
+### Modo distribuido
+
+Dos nodos de datos con la tabla `items` partida por rango de `id` (n1 hasta
+9999, n2 desde 10000) y un coordinador en el puerto 8000 que enruta cada
+consulta y combina los resultados. El frontend se conecta al coordinador sin
+cambios.
+
+```bash
+python -m scripts.demo_distribuida --root /tmp/quipudb-demo                  # local
+docker compose -f docker-compose.distribuido.yml up -d --build               # en Docker
+```
+
+Arquitectura, pruebas y evidencias en
+[`docs/integracion-distribuida.md`](docs/integracion-distribuida.md).
+
 ## Comparación experimental
 
 Los benchmarks llaman directamente a los bindings, sin SQL ni HTTP. Cada corrida
@@ -758,6 +773,7 @@ Detalles: [`quipucamayoc/README.md`](quipucamayoc/README.md), el
 | [`benchmarks/README.md`](benchmarks/README.md) | Datasets, protocolos y reproducción de las corridas |
 | [`docs/ingesta-multimedia.md`](docs/ingesta-multimedia.md) | Ingesta de carpetas de imágenes/audio, trabajos REST y ejemplo reproducible |
 | [`docs/consultas-multimedia.md`](docs/consultas-multimedia.md) | SIMILAR_TO, creación SQL de IVF/HNSW, métricas y vocabularios |
+| [`docs/integracion-distribuida.md`](docs/integracion-distribuida.md) | Modo distribuido: arquitectura, cómo levantarlo, pruebas integradas y evidencias |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Ramas, commits y pull requests |
 
 ## Equipo
