@@ -10,8 +10,11 @@ import type {
   TableInfo,
 } from "@/api/types";
 import { cn } from "@/lib/utils";
+import { CargaCarpeta, type CargaCarpetaProps } from "@/panels/CargaCarpeta";
 
-interface FilesPanelProps {
+type Multimedia = Omit<CargaCarpetaProps, "tabla">;
+
+interface FilesPanelProps extends Multimedia {
   tablas: TableInfo[];
   cargando: boolean;
   /** Sube el CSV y devuelve el informe del motor. Lo resuelve `App`. */
@@ -200,9 +203,11 @@ function Cargar({
 function Detalle({
   tabla,
   onCargarCsv,
+  multimedia,
 }: {
   tabla: TableInfo;
   onCargarCsv: FilesPanelProps["onCargarCsv"];
+  multimedia: Multimedia;
 }) {
   return (
     <div className="pb-2">
@@ -223,6 +228,7 @@ function Detalle({
       {/* La clave remonta el componente cuando cambia la tabla: el informe de
           una carga no debe quedar colgando bajo otra tabla. */}
       <Cargar key={tabla.name} tabla={tabla} onCargarCsv={onCargarCsv} />
+      <CargaCarpeta key={`carpeta-${tabla.name}`} tabla={tabla} {...multimedia} />
 
       <h3 className="px-3 pt-1 pb-0.5 text-[10px] tracking-wide text-muted-foreground uppercase">
         Columnas
@@ -256,6 +262,7 @@ export function FilesPanel({
   tablas,
   cargando,
   onCargarCsv,
+  ...multimedia
 }: FilesPanelProps) {
   const [elegida, setElegida] = useState<string | null>(null);
 
@@ -297,7 +304,7 @@ export function FilesPanel({
           </ul>
 
           <div className="min-h-0 flex-1 overflow-auto">
-            <Detalle tabla={tabla} onCargarCsv={onCargarCsv} />
+            <Detalle tabla={tabla} onCargarCsv={onCargarCsv} multimedia={multimedia} />
           </div>
         </div>
       )}

@@ -3,20 +3,43 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import {
   executeQuery,
   listTables,
+  listVocabularies,
   loadCsv,
+  loadMedia,
+  mediaJob,
+  registerVocabulary,
+  trainVocabulary,
+  uploadMedia,
   USA_DATOS_FALSOS,
+  vocabularyJob,
 } from "@/api/client";
 import { MotorError } from "@/api/errors";
 import { CONSULTA_DE_PRUEBA } from "@/api/mock";
 import { efectoDe, type Efecto } from "@/api/sentencia";
 import type { TableInfo } from "@/api/types";
 import { useSpatialContext } from "@/hooks/useSpatialContext";
+import { cargarCarpeta as cargarCarpetaEn, type MediaApi } from "@/lib/media-ingest";
 import { executionReducer, initialExecution } from "@/lib/query-execution";
 import { FilesPanel } from "@/panels/FilesPanel";
 import { MapPanel } from "@/panels/MapPanel";
 import { PlanPanel } from "@/panels/PlanPanel";
 import { QueryPanel } from "@/panels/QueryPanel";
 import { ResultsPanel } from "@/panels/ResultsPanel";
+
+/** Las funciones del cliente con la forma que espera `cargarCarpeta` (#289). */
+const API_MULTIMEDIA: MediaApi = {
+  upload: uploadMedia,
+  train: trainVocabulary,
+  trainStatus: vocabularyJob,
+  register: registerVocabulary,
+  async nextId(tabla) {
+    const r = await executeQuery(`SELECT id FROM ${tabla} ORDER BY id DESC LIMIT 1`);
+    const mayor = r.rows[0]?.[0];
+    return typeof mayor === "number" ? mayor + 1 : 1;
+  },
+  load: loadMedia,
+  loadStatus: mediaJob,
+};
 
 export default function App() {
   const [tablas, setTablas] = useState<TableInfo[]>([]);
@@ -85,6 +108,21 @@ export default function App() {
     [recargarCatalogo],
   );
 
+  const cargarCarpeta = useCallback(
+    async (
+      opciones: Parameters<typeof cargarCarpetaEn>[1],
+      alAvanzar: Parameters<typeof cargarCarpetaEn>[2],
+    ) => {
+      try {
+        return await cargarCarpetaEn(API_MULTIMEDIA, opciones, alAvanzar);
+      } finally {
+        setBaseRevision(revision => revision + 1);
+        await recargarCatalogo();
+      }
+    },
+    [recargarCatalogo],
+  );
+
   useEffect(() => {
     void recargarCatalogo().finally(() => setCargandoTablas(false));
 
@@ -110,6 +148,9 @@ export default function App() {
           tablas={tablas}
           cargando={cargandoTablas}
           onCargarCsv={cargarCsv}
+          onCargarCarpeta={cargarCarpeta}
+          onListarVocabularios={listVocabularies}
+          onUsarConsulta={setSql}
         />
 
         <div className="grid min-h-0 min-w-0 grid-rows-[minmax(160px,30%)_1fr] gap-2">

@@ -231,3 +231,69 @@ export interface QueryError {
   end_line: number | null;
   end_column: number | null;
 }
+
+/**
+ * Carga multimedia desde el navegador (#289). Espejos de `UploadResponse`,
+ * `VocabularyJobResponse`, `VocabularyInfo` y `MediaJobResponse` de
+ * `engine/api/schemas.py`. Las rutas son relativas a `QUIPUDB_MEDIA_ROOT`.
+ */
+export interface UploadResult {
+  folder: string;
+  saved: number;
+  files: { name: string; path: string; bytes: number }[];
+  rejected: { name: string; error: string }[];
+}
+
+export type JobStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+
+export interface MediaFileError {
+  path: string;
+  error: string;
+}
+
+export interface VocabularyJob {
+  job_id: string;
+  status: JobStatus;
+  kind: "imagen" | "audio" | null;
+  discovered: number;
+  skipped: number;
+  selected: number;
+  described: number;
+  failed: number;
+  errors: MediaFileError[];
+  errors_truncated: boolean;
+  elapsed_ms: number;
+  k: number;
+  vocabulary: string | null;
+  codebook_id: string | null;
+  documents: number | null;
+  registered_for: string | null;
+  error: string | null;
+}
+
+export interface VocabularyInfo {
+  path: string;
+  k: number;
+  dimension: number;
+  kind: "imagen" | "audio";
+  documents: number;
+  codebook_id: string;
+  registered_for: string[];
+}
+
+export interface MediaJob {
+  job_id: string;
+  table: string;
+  status: JobStatus;
+  discovered: number;
+  processed: number;
+  inserted: number;
+  failed: number;
+  next_id: number;
+  errors: MediaFileError[];
+  errors_truncated: boolean;
+  elapsed_ms: number;
+  codebook_id: string | null;
+  dimension: number | null;
+  error: string | null;
+}

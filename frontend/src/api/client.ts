@@ -10,9 +10,13 @@ import { MotorError } from "@/api/errors";
 import { mockExecuteQuery, mockListTables, mockLoadCsv } from "@/api/mock";
 import type {
   LoadResult,
+  MediaJob,
   QueryError,
   QueryResult,
   TableInfo,
+  UploadResult,
+  VocabularyInfo,
+  VocabularyJob,
 } from "@/api/types";
 
 const URL_API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -92,4 +96,76 @@ export function listTables(): Promise<TableInfo[]> {
     return mockListTables();
   }
   return pedir<TableInfo[]>("/tables");
+}
+
+/*
+ * Carga multimedia (#289). Los datos falsos no tienen archivos ni vectores
+ * que extraer, asi que estas funciones solo existen con el motor real.
+ */
+
+function soloConMotor(): never {
+  throw MotorError.sinUbicacion(
+    "La carga de carpetas necesita el motor real: pon VITE_USE_MOCK=false",
+  );
+}
+
+/** Sube archivos a una carpeta nueva de `subidas/`, o a `folder` si viene. */
+export function uploadMedia(
+  archivos: { name: string; file: Blob }[],
+  destino: { folder?: string; name?: string },
+): Promise<UploadResult> {
+  if (USA_DATOS_FALSOS) soloConMotor();
+  const cuerpo = new FormData();
+  for (const { name, file } of archivos) cuerpo.append("files", file, name);
+  if (destino.folder) cuerpo.append("folder", destino.folder);
+  if (destino.name) cuerpo.append("name", destino.name);
+  return pedir<UploadResult>("/media/uploads", { method: "POST", body: cuerpo });
+}
+
+export function listVocabularies(): Promise<VocabularyInfo[]> {
+  if (USA_DATOS_FALSOS) return Promise.resolve([]);
+  return pedir<VocabularyInfo[]>("/vocabularies");
+}
+
+export function trainVocabulary(peticion: {
+  folder: string;
+  k: number;
+  table?: string;
+  name?: string;
+  recursive?: boolean;
+}): Promise<VocabularyJob> {
+  if (USA_DATOS_FALSOS) soloConMotor();
+  return pedir<VocabularyJob>("/vocabularies", {
+    method: "POST",
+    body: JSON.stringify(peticion),
+  });
+}
+
+export function vocabularyJob(id: string): Promise<VocabularyJob> {
+  return pedir<VocabularyJob>(`/vocabularies/${encodeURIComponent(id)}`);
+}
+
+export function registerVocabulary(tabla: string, vocabulary: string): Promise<VocabularyInfo> {
+  if (USA_DATOS_FALSOS) soloConMotor();
+  return pedir<VocabularyInfo>(`/tables/${encodeURIComponent(tabla)}/vocabulary`, {
+    method: "PUT",
+    body: JSON.stringify({ vocabulary }),
+  });
+}
+
+export function loadMedia(
+  tabla: string,
+  peticion: { folder: string; vocabulary: string; recursive?: boolean; start_id?: number },
+): Promise<MediaJob> {
+  if (USA_DATOS_FALSOS) soloConMotor();
+  return pedir<MediaJob>(`/tables/${encodeURIComponent(tabla)}/load-media`, {
+    method: "POST",
+    body: JSON.stringify(peticion),
+  });
+}
+
+export function mediaJob(tabla: string, id: string): Promise<MediaJob> {
+  return pedir<MediaJob>(
+    `/tables/${encodeURIComponent(tabla)}/load-media/${encodeURIComponent(id)}`,
+  );
 }
