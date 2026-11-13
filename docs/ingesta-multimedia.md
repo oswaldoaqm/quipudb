@@ -50,6 +50,29 @@ duración de audio que la ingesta para describir los objetos de igual forma.
 El [manual de SIMILAR_TO](consultas-multimedia.md) explica cómo configurar el
 mismo vocabulario y crear los índices IVF/HNSW desde SQL después de cargar.
 
+## Desde el frontend (#289)
+
+En el panel de Archivos, una tabla con exactamente `id INT PRIMARY KEY`,
+`nombre VARCHAR`, `ruta VARCHAR` y `rasgos VECTOR(K)` muestra "Cargar carpeta".
+Se elige una carpeta del computador y el panel cuenta sus imágenes y audios,
+sin contar lo que no lee el pipeline (`Thumbs.db`, un `.txt`). Después se elige
+entrenar un vocabulario nuevo con esa carpeta, con la K de la columna, o uno ya
+guardado con la misma K. "Cargar" encadena los tres pasos de esta página: sube
+los archivos en tandas de 100 (#288), entrena el vocabulario o lo asocia a la
+tabla (#287) y carga la carpeta (`load-media`), mostrando cuántos archivos van
+en cada paso.
+
+La carga empieza en el id siguiente al mayor de la tabla, así una segunda
+carpeta no choca con las claves de la primera. Al terminar se ven los archivos
+que entraron, los que fallaron con su motivo y el vocabulario usado, y si la
+tabla tiene un índice HNSW o IVF, "Probar SIMILAR_TO" pone en el editor una
+consulta con el primer archivo cargado.
+
+![Carga de carpeta y SIMILAR_TO en el frontend](informe/capturas/frontend/carga-carpeta-similar.png)
+
+Con los datos falsos (`VITE_USE_MOCK=true`) el botón responde que la carga
+necesita el motor real: no hay archivos que describir.
+
 ## Subir archivos desde el navegador (#288)
 
 `load-media`, `POST /vocabularies` y `SIMILAR_TO` leen rutas del servidor. Si la

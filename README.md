@@ -681,7 +681,11 @@ preparación de una carpeta pequeña, parámetros, límites y pruebas.
 
 Cinco paneles en una sola pantalla:
 
-- **Archivos**: tablas con su organización, columnas, índices y botón para cargar CSV.
+- **Archivos**: tablas con su organización, columnas, índices y botones para cargar
+  un CSV o una carpeta de imágenes o audios. La carpeta se elige del computador,
+  se sube, se entrena su vocabulario (o se elige uno existente) y se carga, con
+  el avance de cada paso; al terminar, "Probar SIMILAR_TO" deja una consulta lista
+  en el editor.
 - **Consultas**: editor Monaco con resaltado SQL; `Ctrl+Enter` ejecuta y los errores
   se muestran con línea y columna.
 - **Resultados**: tabla virtualizada con el tipo de cada columna, filas y tiempo.
