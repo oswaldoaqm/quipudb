@@ -267,17 +267,12 @@ export async function cargarCarpeta(
 }
 
 /**
- * Una consulta SIMILAR_TO lista para el editor, con el primer indice
- * vectorial de la tabla. Sin IVF ni HNSW no hay consulta posible: el motor
- * exige `USING`.
+ * Una consulta SIMILAR_TO lista para el editor. El motor exige `USING`; se
+ * usa el indice vectorial que tenga la tabla y, si no tiene, HNSW, que en
+ * ese caso cae a la busqueda exacta (`docs/consultas-multimedia.md`).
  */
-export function consultaDeEjemplo(
-  tabla: string,
-  ruta: string,
-  estructuras: string[],
-): string | null {
-  const indice = estructuras.find((e) => e === "hnsw" || e === "ivf");
-  if (!indice) return null;
+export function consultaDeEjemplo(tabla: string, ruta: string, estructuras: string[]): string {
+  const indice = estructuras.find((e) => e === "hnsw" || e === "ivf") ?? "hnsw";
   const literal = ruta.replaceAll("'", "''");
   return (
     `SELECT id, nombre, SIMILARITY_SCORE() AS score FROM ${tabla}\n` +

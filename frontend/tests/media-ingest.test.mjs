@@ -140,12 +140,13 @@ test('si no se sube nada o un trabajo falla, termina con el motivo', async () =>
   );
 });
 
-test('la consulta de ejemplo usa el indice vectorial que exista', () => {
+test('la consulta de ejemplo usa el indice vectorial que exista, o HNSW', () => {
   assert.equal(
     consultaDeEjemplo('fotos', "subidas/x/o'brien.png", ['bplus_unclustered', 'ivf']),
     "SELECT id, nombre, SIMILARITY_SCORE() AS score FROM fotos\nWHERE SIMILAR_TO('subidas/x/o''brien.png', k=5)\nUSING IVF WITH METRIC=cosine\nORDER BY score DESC",
   );
-  assert.equal(consultaDeEjemplo('fotos', 'a.png', ['extendible_hash']), null);
+  // Sin indice vectorial tambien hay consulta: USING HNSW cae a la busqueda exacta.
+  assert.match(consultaDeEjemplo('fotos', 'a.png', ['extendible_hash']), /USING HNSW/);
 });
 
 test('solo admite tablas con el esquema de la carga multimedia', () => {
