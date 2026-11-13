@@ -566,6 +566,7 @@ creación de índices, configuración por tabla, parámetros y límites.
 | `POST /tables/{tabla}/load` | Carga un CSV en una tabla existente |
 | `POST /tables/{tabla}/load-media` | Inicia la ingesta de una carpeta del servidor y devuelve 202 con un identificador de trabajo |
 | `GET /tables/{tabla}/load-media/{job_id}` | Consulta progreso, archivos insertados/fallidos, errores y tiempo de la ingesta multimedia |
+| `POST /media/uploads` | Recibe imágenes o audios del navegador y los guarda en una carpeta nueva de la raíz multimedia; devuelve las rutas del servidor |
 | `POST /vocabularies` | Entrena el vocabulario de una carpeta del servidor en segundo plano y, si se indica, lo asocia a una tabla |
 | `GET /vocabularies/{job_id}` | Consulta el avance del entrenamiento |
 | `GET /vocabularies` | Lista los vocabularios guardados y las tablas que los usan |
