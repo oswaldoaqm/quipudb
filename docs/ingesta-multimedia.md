@@ -43,11 +43,76 @@ reutilizarse **sin cambiar centroides ni IDF** al cargar y consultar. No debe
 entrenarse un vocabulario por archivo ni por lote. Imágenes y audios usan
 vocabularios separados: sus descriptores tienen dimensión 128 y 13,
 respectivamente. `VECTOR(K)` guarda el histograma de K palabras, no la matriz
-de descriptores. No se entrena un vocabulario al llamar al endpoint.
+de descriptores. La carga no entrena un vocabulario: hay que entrenarlo antes,
+desde Python como arriba o por REST, como explica la sección siguiente.
 Las consultas deben usar también los mismos límites de puntos SIFT y
 duración de audio que la ingesta para describir los objetos de igual forma.
 El [manual de SIMILAR_TO](consultas-multimedia.md) explica cómo configurar el
 mismo vocabulario y crear los índices IVF/HNSW desde SQL después de cargar.
+
+## Entrenar el vocabulario por REST (#287)
+
+Con la API levantada, el vocabulario de una carpeta del servidor se entrena sin
+Python. Es un trabajo en segundo plano, como la carga:
+
+```bash
+curl -X POST http://localhost:8000/vocabularies \
+  -H 'Content-Type: application/json' \
+  -d '{"folder":"fotos_demo","k":8,"seed":187,"table":"fotos"}'
+```
+
+Devuelve 202 con un `job_id`; `GET /vocabularies/{job_id}` da el avance hasta
+que `status` sea `completed` o `failed`. El trabajo recorre la carpeta, describe
+cada archivo con SIFT o MFCC según su extensión, corre k-means y guarda el
+resultado en `vocabularios/<nombre>.npz` dentro de `QUIPUDB_MEDIA_ROOT`. Si ese
+nombre ya existe agrega `-2`, `-3`, y nunca pisa uno anterior.
+
+| Campo | Por omisión | Qué hace |
+|---|---|---|
+| `folder` | obligatorio | Carpeta dentro de `QUIPUDB_MEDIA_ROOT` |
+| `k` | 64 | Palabras del vocabulario; es la `K` de `VECTOR(K)` |
+| `seed` | 0 | Semilla de k-means; con la misma semilla sale el mismo vocabulario |
+| `name` | `<carpeta>-k<K>` | Nombre del archivo, solo letras, dígitos, `-` y `_` |
+| `table`, `column` | ninguno | Si vienen, al terminar el vocabulario queda asociado a esa tabla |
+| `max_files` | 500 | Con más archivos, toma esa cantidad espaciados en orden alfabético |
+| `max_descriptors` | 50 000 | Muestra de descriptores para k-means; el IDF se mide con todos |
+| `recursive`, `max_file_bytes`, `max_keypoints`, `max_audio_seconds` | como en la carga | Mismos límites que la ingesta |
+
+La respuesta cuenta los archivos encontrados (`discovered`), los que no son
+imagen ni audio (`skipped`), los elegidos (`selected`), los descritos
+(`described`) y los que fallaron, con su error. Al terminar trae la ruta del
+vocabulario, su huella (`codebook_id`), de cuántos objetos salió (`documents`) y
+la tabla a la que quedó asociado (`registered_for`).
+
+Antes de describir nada se rechaza, con 400 o 404, una carpeta fuera de la raíz,
+una tabla que no existe, una columna que no es VECTOR, una tabla con varias
+columnas VECTOR sin `column`, y una `k` distinta de la dimensión de la columna.
+El trabajo falla si la carpeta mezcla imágenes y audios, porque sus descriptores
+tienen 128 y 13 valores, o si salen menos descriptores que `k`. Hay un solo
+entrenamiento activo por proceso; otro mientras tanto responde 409. Describir y
+correr k-means no toma el lock del motor, así que las consultas siguen.
+
+El entrenamiento guarda en memoria los descriptores de los archivos elegidos:
+con `max_files=500` y 500 puntos SIFT por imagen son hasta 128 MB.
+
+### Asociar un vocabulario a una tabla
+
+`table` en el entrenamiento, o después:
+
+```bash
+curl -X PUT http://localhost:8000/tables/fotos/vocabulary \
+  -H 'Content-Type: application/json' \
+  -d '{"vocabulary":"vocabularios/fotos_demo-k8.npz"}'
+```
+
+Con `column` se asocia a una columna concreta, como la clave `tabla.columna` de
+`QUIPUDB_MEDIA_VOCABULARIES`. La asociación vale de inmediato para `SIMILAR_TO`,
+sin reiniciar la API, y se guarda en `vocabularios.json` dentro de la raíz, así
+sobrevive al reinicio. Las de `QUIPUDB_MEDIA_VOCABULARIES` siguen valiendo; si
+una tabla está en los dos lugares, gana la de `vocabularios.json`.
+
+`GET /vocabularies` lista los `.npz` de la raíz y de `vocabularios/` con su K,
+modalidad, cantidad de objetos y las tablas que los usan.
 
 ## Iniciar la API y crear la tabla
 
