@@ -250,6 +250,28 @@ class VocabularyRegisterRequest(BaseModel):
     column: str | None = Field(default=None, min_length=1, max_length=128)
 
 
+class UploadedFile(BaseModel):
+    """Un archivo guardado; ``path`` sirve tal cual en SIMILAR_TO o load-media."""
+
+    name: str
+    path: str
+    bytes: int
+
+
+class UploadRejected(BaseModel):
+    name: str
+    error: str
+
+
+class UploadResponse(BaseModel):
+    """Resultado de ``POST /media/uploads`` (#288); ``folder`` es relativa a la raíz."""
+
+    folder: str
+    saved: int
+    files: list[UploadedFile]
+    rejected: list[UploadRejected]
+
+
 __all__ = [
     "ColumnInfo",
     "ErrorKind",
@@ -266,6 +288,9 @@ __all__ = [
     "QueryResponse",
     "TableInfo",
     "TableStructure",
+    "UploadRejected",
+    "UploadResponse",
+    "UploadedFile",
     "VocabularyInfo",
     "VocabularyJobResponse",
     "VocabularyRegisterRequest",
