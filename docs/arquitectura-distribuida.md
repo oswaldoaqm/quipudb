@@ -1,7 +1,7 @@
 # Arquitectura distribuida de QuipuDB — Issue #275
 
 - Fecha: 2026-11-12.
-- Estado: metadatos #276, servicio local #277 y coordinador #278 implementados; enrutamiento #279 e integración #280 pendientes.
+- Estado: metadatos #276, servicio local #277, coordinador #278 y enrutamiento #279 implementados; integración #280 pendiente.
 - Contrato normativo: [protocolo interno v1](contrato-distribuido-v1.md).
 - Base: [arquitectura actual](arquitectura.md).
 
@@ -11,8 +11,9 @@ en [Fragmentación horizontal](fragmentacion-horizontal.md).
 El servicio local y los cuatro endpoints internos del #277 están documentados
 en [Operaciones sobre fragmentos](operaciones-fragmentos.md). El cliente de
 nodo y el coordinador del #278 están en
-[Coordinador y comunicación entre nodos](coordinador-distribuido.md). La
-combinación global de resultados es del #279.
+[Coordinador y comunicación entre nodos](coordinador-distribuido.md). El
+enrutamiento de `POST /query` y la combinación de resultados del #279 están en
+[Enrutamiento y combinación de resultados](enrutamiento-distribuido.md).
 
 ## 1. Objetivo y decisiones
 
