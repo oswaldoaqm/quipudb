@@ -64,9 +64,20 @@ en cada paso.
 
 La carga empieza en el id siguiente al mayor de la tabla, así una segunda
 carpeta no choca con las claves de la primera. Al terminar se ven los archivos
-que entraron, los que fallaron con su motivo y el vocabulario usado, y si la
-tabla tiene un índice HNSW o IVF, "Probar SIMILAR_TO" pone en el editor una
-consulta con el primer archivo cargado.
+que entraron, los que fallaron con su motivo y el vocabulario usado.
+"Probar SIMILAR_TO" pone en el editor una consulta con el primer archivo
+cargado, con el índice vectorial de la tabla o, si no tiene, `USING HNSW`, que
+cae a la búsqueda exacta.
+
+En el panel de Consultas, "Usar un archivo" sube una imagen o un audio del
+computador (#290) y pone su ruta en el editor donde está el cursor. Si el
+cursor está entre las comillas de `SIMILAR_TO('')`, la ruta entra sin comillas
+propias; si no, entra como literal entre comillas. Cada archivo va a su propia
+carpeta de `subidas/`, así dos consultas con el mismo nombre de archivo no
+chocan. Un archivo que no es imagen ni audio, o que el servidor rechaza, se
+informa junto al editor.
+
+![SIMILAR_TO con una foto elegida del computador](informe/capturas/frontend/similar-con-archivo-propio.png)
 
 ![Carga de carpeta y SIMILAR_TO en el frontend](informe/capturas/frontend/carga-carpeta-similar.png)
 
