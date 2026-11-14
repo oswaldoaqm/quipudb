@@ -13,6 +13,7 @@ from app.dataset.lfw import (
     leer,
     recolectar,
     sha256,
+    verificar,
 )
 
 
@@ -166,3 +167,40 @@ def test_leer_rechaza_una_fila_incompleta(tmp_path: Path) -> None:
 
     with pytest.raises(DatasetError, match=r":2 "):
         leer(ruta)
+
+
+def test_verificar_acepta_el_dataset_intacto(tmp_path: Path) -> None:
+    _poblar(tmp_path, {"Ana_Lopez": 2})
+    rostros = construir(tmp_path, minimo=1)
+
+    assert verificar(rostros, tmp_path) == []
+
+
+def test_verificar_avisa_de_un_archivo_que_falta(tmp_path: Path) -> None:
+    _poblar(tmp_path, {"Ana_Lopez": 2})
+    rostros = construir(tmp_path, minimo=1)
+    rostros[0].archivo(tmp_path).unlink()
+
+    assert verificar(rostros, tmp_path) == [(rostros[0].ruta, "no esta en disco")]
+
+
+def test_verificar_avisa_de_un_archivo_cambiado(tmp_path: Path) -> None:
+    """Es para lo que sirve el SHA-256: el dataset no se versiona, se comprueba."""
+
+    _poblar(tmp_path, {"Ana_Lopez": 2})
+    rostros = construir(tmp_path, minimo=1)
+    rostros[0].archivo(tmp_path).write_bytes(b"otra imagen")
+
+    assert verificar(rostros, tmp_path) == [(rostros[0].ruta, "el contenido cambio")]
+
+
+def test_verificar_los_junta_todos_en_vez_de_cortar_al_primero(tmp_path: Path) -> None:
+    _poblar(tmp_path, {"Ana_Lopez": 3})
+    rostros = construir(tmp_path, minimo=1)
+    rostros[0].archivo(tmp_path).unlink()
+    rostros[2].archivo(tmp_path).write_bytes(b"otra imagen")
+
+    assert verificar(rostros, tmp_path) == [
+        (rostros[0].ruta, "no esta en disco"),
+        (rostros[2].ruta, "el contenido cambio"),
+    ]

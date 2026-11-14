@@ -140,3 +140,20 @@ def leer(ruta: Path = MANIFIESTO) -> list[Rostro]:
                 raise DatasetError(f"{ruta}:{numero} tiene {len(campos)} columnas, se esperaban 4")
             rostros.append(Rostro(*campos))
     return rostros
+
+
+def verificar(rostros: Iterable[Rostro], datos: Path = DATOS) -> list[tuple[str, str]]:
+    """Compara el disco con el manifiesto. Devuelve (ruta, motivo) por problema.
+
+    Para esto sirve guardar el SHA-256: el dataset no se versiona, pero si se
+    puede comprobar que el de cada quien es el mismo.
+    """
+
+    problemas = []
+    for rostro in rostros:
+        archivo = rostro.archivo(datos)
+        if not archivo.is_file():
+            problemas.append((rostro.ruta, "no esta en disco"))
+        elif sha256(archivo) != rostro.sha256:
+            problemas.append((rostro.ruta, "el contenido cambio"))
+    return problemas
