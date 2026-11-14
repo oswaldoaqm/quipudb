@@ -1,6 +1,30 @@
-"""Literales SQL para el motor (#302)."""
+"""Cliente del API REST del motor (#302), sin motor.
 
-from app.motor import literal, literal_vector, usa_tls
+Las peticiones se atienden con `httpx.MockTransport`, igual que hace
+Quipucamayoc: las pruebas comprueban el SQL que se manda y como se leen las
+respuestas, sin levantar QuipuDB.
+"""
+
+import httpx
+import pytest
+
+from app.config import Settings
+from app.motor import (
+    ClienteMotor,
+    MotorError,
+    Resultado,
+    literal,
+    literal_vector,
+    usa_tls,
+)
+
+
+def _cliente(handler, **opciones) -> ClienteMotor:
+    settings = Settings(quipudb_api_url="http://127.0.0.1:8000", **opciones)
+    return ClienteMotor.desde(settings, transport=httpx.MockTransport(handler))
+
+
+# --- literales ----------------------------------------------------------------
 
 
 def test_literal_envuelve_en_comillas() -> None:
@@ -51,3 +75,59 @@ def test_literal_vector_conserva_la_precision_de_un_float32() -> None:
 def test_usa_tls_solo_con_https() -> None:
     assert usa_tls("https://ejemplo.test") is True
     assert usa_tls("http://127.0.0.1:8000") is False
+
+
+# --- el cliente ---------------------------------------------------------------
+
+
+def test_query_manda_el_sql_y_lee_las_filas() -> None:
+    vistas: list[str] = []
+
+    def handler(peticion: httpx.Request) -> httpx.Response:
+        vistas.append(peticion.read().decode())
+        assert peticion.url.path == "/query"
+        return httpx.Response(
+            200,
+            json={
+                "columns": ["id", "nombre"],
+                "column_types": ["INT", "VARCHAR"],
+                "rows": [[1, "Ana"], [2, "Beto"]],
+                "affected_rows": 0,
+            },
+        )
+
+    with _cliente(handler) as cliente:
+        resultado = cliente.query("SELECT id, nombre FROM personas")
+
+    assert '"sql"' in vistas[0]
+    assert resultado.rows == ((1, "Ana"), (2, "Beto"))
+    assert resultado.dicts() == [{"id": 1, "nombre": "Ana"}, {"id": 2, "nombre": "Beto"}]
+
+
+def test_query_lee_cuantas_filas_cambio() -> None:
+    def handler(_peticion: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"affected_rows": 3})
+
+    with _cliente(handler) as cliente:
+        assert cliente.query("INSERT INTO personas ...").affected_rows == 3
+
+
+def test_table_names_devuelve_los_nombres() -> None:
+    def handler(peticion: httpx.Request) -> httpx.Response:
+        assert peticion.url.path == "/tables"
+        return httpx.Response(200, json=[{"name": "personas"}, {"name": "rostros"}])
+
+    with _cliente(handler) as cliente:
+        assert cliente.table_names() == {"personas", "rostros"}
+
+
+def test_una_respuesta_que_no_es_json_no_revienta_el_cliente() -> None:
+    def handler(_peticion: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html>vaya</html>")
+
+    with _cliente(handler) as cliente, pytest.raises(MotorError, match="no es JSON"):
+        cliente.query("SELECT 1")
+
+
+def test_el_resultado_vacio_es_usable() -> None:
+    assert Resultado().dicts() == []
