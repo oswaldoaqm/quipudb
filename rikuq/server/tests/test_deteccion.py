@@ -1,8 +1,9 @@
-"""Deteccion de rostros (#304).
+"""Deteccion y alineado de rostros (#304).
 
 Las pruebas que no necesitan una cara usan un detector de mentira: asi
 comprueban como se interpreta y se ordena lo que YuNet devuelve sin depender
-de ninguna foto.
+de ninguna foto. La que si necesita una cara se salta cuando el dataset no
+esta bajado, porque LFW no se versiona (#301).
 """
 
 from pathlib import Path
@@ -10,14 +11,26 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from app.rostros.deteccion import UMBRAL_CONFIANZA, crear_detector, detectar
+from app.rostros.deteccion import (
+    LADO_ALINEADO,
+    UMBRAL_CONFIANZA,
+    RostroDetectado,
+    alinear,
+    crear_alineador,
+    crear_detector,
+    detectar,
+    rostros_de,
+)
 from app.rostros.errores import EmptyObjectError
-from app.rostros.modelos import MODELOS, YUNET
+from app.rostros.modelos import MODELOS, SFACE, YUNET
+
+LFW = Path(__file__).resolve().parents[2] / "datos" / "lfw"
 
 sin_modelos = pytest.mark.skipif(
-    not YUNET.ruta().is_file(),
-    reason="falta el modelo de deteccion",
+    not (YUNET.ruta().is_file() and SFACE.ruta().is_file()),
+    reason="faltan los modelos ONNX: corre `python -m app.rostros.modelos`",
 )
+sin_dataset = pytest.mark.skipif(not LFW.is_dir(), reason="LFW no esta bajado (#301)")
 
 
 def _fila(x=10, y=20, w=30, h=40, confianza=0.99) -> np.ndarray:
@@ -91,8 +104,46 @@ def test_el_umbral_por_omision_es_estricto() -> None:
 
 
 @sin_modelos
+def test_alinear_devuelve_un_recorte_del_tamano_que_espera_sface() -> None:
+    imagen = np.random.default_rng(0).integers(0, 256, (200, 200, 3), dtype=np.uint8)
+    rostro = RostroDetectado((50, 50, 60, 60), 0.99, ((0, 0),) * 5, _fila(50, 50, 60, 60))
+
+    recorte = alinear(imagen, rostro, crear_alineador())
+
+    assert recorte.shape == (LADO_ALINEADO, LADO_ALINEADO, 3)
+    assert recorte.dtype == np.uint8
+
+
+@sin_modelos
 def test_el_detector_se_crea_con_el_umbral_que_se_le_pide() -> None:
     assert crear_detector(umbral=0.5) is not None
+
+
+@sin_modelos
+@sin_dataset
+def test_una_foto_de_verdad_da_un_rostro_alineado() -> None:
+    """La unica prueba que mira una cara real; se salta si no esta LFW."""
+
+    fotos = sorted(LFW.glob("*/*.jpg"))
+    assert fotos, "LFW esta pero vacio"
+
+    recortes = rostros_de(fotos[0], crear_detector(), crear_alineador())
+
+    assert len(recortes) >= 1
+    assert recortes[0].shape == (LADO_ALINEADO, LADO_ALINEADO, 3)
+
+
+@sin_modelos
+@sin_dataset
+def test_un_paisaje_de_verdad_lanza_el_error_de_imagen_vacia(tmp_path: Path) -> None:
+    import cv2
+
+    paisaje = tmp_path / "paisaje.png"
+    degradado = np.tile(np.arange(200, dtype=np.uint8), (200, 1))
+    paisaje.write_bytes(cv2.imencode(".png", cv2.cvtColor(degradado, cv2.COLOR_GRAY2BGR))[1])
+
+    with pytest.raises(EmptyObjectError):
+        rostros_de(paisaje, crear_detector(), crear_alineador())
 
 
 def test_los_modelos_viven_fuera_del_repositorio() -> None:
