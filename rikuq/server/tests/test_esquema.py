@@ -1,15 +1,19 @@
 """El esquema de Rikuq y su presupuesto de bytes (#302)."""
 
+import re
+
 from app.carga.esquema import (
     BYTES_INT,
     BYTES_POR_COMPONENTE,
     COLUMNAS,
+    INDICES,
     MAX_BYTES_HEAP,
     PERSONAS,
     ROSTROS,
     Columna,
     bytes_por_registro,
     crear_tabla,
+    sentencias,
 )
 from app.rostros.embedding import DIMENSIONES
 
@@ -81,3 +85,43 @@ def test_crear_tabla_declara_la_dimension_del_vector() -> None:
 
 def test_crear_tabla_marca_la_clave_primaria() -> None:
     assert "id INT PRIMARY KEY" in crear_tabla(PERSONAS)
+
+
+def test_el_indice_del_embedding_es_hnsw_con_coseno() -> None:
+    """HNSW se crea vacio; IVF necesitaria datos para entrenar sus centroides."""
+
+    hnsw = [sql for sql in INDICES if "HNSW" in sql]
+
+    assert len(hnsw) == 1
+    assert "embedding" in hnsw[0]
+    assert "METRIC=cosine" in hnsw[0]
+
+
+def test_hay_un_indice_para_traer_los_rostros_de_una_persona() -> None:
+    assert any("persona_id" in sql and "HASH" in sql for sql in INDICES)
+
+
+def test_las_tablas_se_crean_antes_que_sus_indices() -> None:
+    """Un CREATE INDEX sobre una tabla que no existe falla."""
+
+    orden = sentencias()
+    tablas = [i for i, sql in enumerate(orden) if sql.startswith("CREATE TABLE")]
+    indices = [i for i, sql in enumerate(orden) if sql.startswith("CREATE INDEX")]
+
+    assert max(tablas) < min(indices)
+
+
+def test_ninguna_sentencia_termina_en_punto_y_coma() -> None:
+    """Se unen con ';' al mandarlas en lote; uno de mas rompe el lote."""
+
+    for sql in sentencias():
+        assert not sql.rstrip().endswith(";")
+
+
+def test_los_nombres_de_tabla_e_indice_son_identificadores_validos() -> None:
+    """El motor limita los identificadores a 64 caracteres."""
+
+    for sql in sentencias():
+        for nombre in re.findall(r"CREATE (?:TABLE|INDEX) (\w+)", sql):
+            assert len(nombre) <= 64
+            assert re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", nombre)

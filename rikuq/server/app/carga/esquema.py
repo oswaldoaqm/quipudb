@@ -90,14 +90,45 @@ def crear_tabla(tabla: str) -> str:
     return f"CREATE TABLE {tabla} (\n  {cuerpo}\n) USING HEAP"
 
 
+# El indice que hace a esta aplicacion lo que es: buscar el rostro mas
+# parecido sin recorrer las 4324 filas.
+#
+# Por que HNSW y no IVF: IVF necesita datos para entrenar sus centroides, asi
+# que no se puede crear antes de cargar; HNSW se crea vacio y acepta las filas
+# a medida que entran. Ademas el enunciado pide consultar en menos de 100 ms y
+# HNSW responde en 0,69 ms sobre 100 000 vectores contra 11,92 ms de IVF
+# (benchmarks de la Parte 4). El precio es construirlo mas lento y ocupar mas,
+# que para 4324 rostros no se siente.
+#
+# Por que METRIC=cosine: los vectores de #305 salen normalizados, asi que el
+# coseno y el producto punto dan lo mismo; el coseno es el que la literatura
+# de reconocimiento facial usa y el que hace comparables nuestros numeros con
+# los de SFace.
+INDICES: tuple[str, ...] = (
+    f"CREATE INDEX rostros_por_embedding ON {ROSTROS} (embedding) USING HNSW WITH METRIC=cosine",
+    # Contar los rostros de una persona y traer los suyos sin recorrer la tabla.
+    f"CREATE INDEX rostros_por_persona ON {ROSTROS} (persona_id) USING HASH",
+    # Buscar a alguien por nombre desde la interfaz.
+    f"CREATE INDEX personas_por_nombre ON {PERSONAS} (nombre) USING HASH",
+)
+
+
+def sentencias() -> tuple[str, ...]:
+    """Las tablas y despues sus indices, en el orden en que hay que correrlas."""
+
+    return (crear_tabla(PERSONAS), crear_tabla(ROSTROS), *INDICES)
+
+
 __all__ = [
     "BYTES_INT",
     "BYTES_POR_COMPONENTE",
     "COLUMNAS",
+    "INDICES",
     "MAX_BYTES_HEAP",
     "PERSONAS",
     "ROSTROS",
     "Columna",
     "bytes_por_registro",
     "crear_tabla",
+    "sentencias",
 ]
