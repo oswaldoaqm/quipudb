@@ -10,11 +10,19 @@ que subirlos.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 RIKUQ = Path(__file__).resolve().parents[3]
 DATOS = RIKUQ / "datos"
+
+# Carpetas dentro de DATOS. El origen tambien es la primera parte de la ruta en
+# el manifiesto, asi que leerlo no necesita adivinar de donde salio cada imagen.
+LFW = "lfw"
+EQUIPO = "equipo"
+
+EXTENSIONES = (".jpg", ".jpeg", ".png")
 
 # Un trozo grande calcula el SHA-256 sin cargar el archivo entero en memoria.
 TROZO = 1 << 20
@@ -45,3 +53,25 @@ def sha256(ruta: Path) -> str:
         while trozo := archivo.read(TROZO):
             digest.update(trozo)
     return digest.hexdigest()
+
+
+def recolectar(raiz: Path, origen: str) -> Iterator[Rostro]:
+    """Recorre ``raiz/<persona>/<imagen>`` y devuelve un Rostro por imagen.
+
+    El nombre de la carpeta es el nombre de la persona, que es como vienen
+    tanto LFW como las fotos del equipo. Una carpeta que no existe no es un
+    error: el equipo puede no haber puesto sus fotos todavia.
+    """
+
+    if not raiz.is_dir():
+        return
+    for carpeta in sorted(p for p in raiz.iterdir() if p.is_dir()):
+        for imagen in sorted(carpeta.iterdir()):
+            if imagen.suffix.lower() not in EXTENSIONES:
+                continue
+            yield Rostro(
+                persona=carpeta.name,
+                ruta=f"{origen}/{carpeta.name}/{imagen.name}",
+                sha256=sha256(imagen),
+                origen=origen,
+            )
