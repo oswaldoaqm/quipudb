@@ -18,6 +18,9 @@ Dos cosas medidas sobre el modelo real, porque ninguna estaba garantizada:
 Con vectores unitarios el producto punto vale lo mismo que el coseno, que es
 la equivalencia en la que se apoya #181.
 
+Para ver el vector de una foto, desde ``rikuq/server``::
+
+    python -m app.rostros.embedding foto.jpg
 """
 
 from __future__ import annotations
@@ -27,8 +30,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from app.rostros.deteccion import crear_alineador
+from app.rostros.deteccion import crear_alineador, detectar
 from app.rostros.errores import EmptyObjectError
+from app.rostros.lectura import leer_color
 from app.rostros.modelos import MODELOS
 
 DIMENSIONES = 128
@@ -77,9 +81,25 @@ def distancia(uno: np.ndarray, otro: np.ndarray) -> float:
     return 1.0 - float(np.dot(uno, otro))
 
 
+def vectores_de(
+    ruta: str | Path,
+    detector: cv2.FaceDetectorYN,
+    descriptor: cv2.FaceRecognizerSF,
+) -> tuple[np.ndarray, ...]:
+    """Lee la imagen y devuelve un vector por cada rostro que haya."""
+
+    archivo = Path(ruta)
+    imagen = leer_color(archivo)
+    return tuple(
+        describir(descriptor.alignCrop(imagen, rostro.fila), descriptor)
+        for rostro in detectar(imagen, detector, ruta=archivo)
+    )
+
+
 __all__ = [
     "DIMENSIONES",
     "crear_descriptor",
     "describir",
     "distancia",
+    "vectores_de",
 ]

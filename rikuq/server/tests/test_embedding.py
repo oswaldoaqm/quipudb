@@ -9,12 +9,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from app.rostros.deteccion import crear_alineador
+from app.rostros.deteccion import crear_alineador, crear_detector
 from app.rostros.embedding import (
     DIMENSIONES,
     crear_descriptor,
     describir,
     distancia,
+    vectores_de,
 )
 from app.rostros.errores import EmptyObjectError
 from app.rostros.modelos import SFACE, YUNET
@@ -108,3 +109,28 @@ def test_el_descriptor_y_el_alineador_son_el_mismo_sface() -> None:
     """SFace hace las dos cosas; crear dos cargaria 37 MB dos veces."""
 
     assert type(crear_descriptor()) is type(crear_alineador())
+
+
+@sin_modelos
+@sin_dataset
+def test_sface_devuelve_de_verdad_128_numeros() -> None:
+    foto = min(LFW.glob("*/*.jpg"))
+
+    vectores = vectores_de(foto, crear_detector(), crear_descriptor())
+
+    assert len(vectores) == 1
+    assert vectores[0].shape == (DIMENSIONES,)
+    assert vectores[0].dtype == np.float32
+    assert float(np.linalg.norm(vectores[0])) == pytest.approx(1.0, abs=1e-5)
+
+
+@sin_modelos
+@sin_dataset
+def test_la_misma_foto_da_siempre_el_mismo_vector() -> None:
+    foto = min(LFW.glob("*/*.jpg"))
+    detector, descriptor = crear_detector(), crear_descriptor()
+
+    primera = vectores_de(foto, detector, descriptor)[0]
+    segunda = vectores_de(foto, detector, descriptor)[0]
+
+    assert np.array_equal(primera, segunda)
