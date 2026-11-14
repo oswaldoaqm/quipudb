@@ -7,16 +7,23 @@ pero si se versiona su SHA-256, que es lo que permite afirmar que todos
 corremos el mismo modelo. Un modelo distinto da vectores distintos, y los
 umbrales de #303 dejarian de significar lo que midio #306.
 
-Salen del zoo oficial de OpenCV y quedan en ``rikuq/datos/modelos/``.
+Se bajan del zoo oficial de OpenCV y quedan en ``rikuq/datos/modelos/``.
 """
 
 from __future__ import annotations
 
+import hashlib
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import httpx
+
 RIKUQ = Path(__file__).resolve().parents[3]
 MODELOS = RIKUQ / "datos" / "modelos"
+
+USER_AGENT = "rikuq/0.1 (proyecto academico, UTEC)"
+TROZO = 1 << 20
 
 ZOO = "https://github.com/opencv/opencv_zoo/raw/main/models"
 
@@ -51,4 +58,73 @@ SFACE = Modelo(
 )
 
 
-__all__ = ["MODELOS", "SFACE", "YUNET", "Modelo", "ModeloError"]
+def _sha256(ruta: Path) -> str:
+    """SHA-256 del archivo, por trozos.
+
+    Se calcula aqui en vez de importarlo de ``app.dataset.lfw`` para no atar
+    el cache de modelos al modulo del dataset: son dos cosas independientes y
+    la cuenta son cuatro lineas.
+    """
+
+    digest = hashlib.sha256()
+    with ruta.open("rb") as archivo:
+        while trozo := archivo.read(TROZO):
+            digest.update(trozo)
+    return digest.hexdigest()
+
+
+def traer(
+    modelo: Modelo,
+    carpeta: Path = MODELOS,
+    log: Callable[[str], None] = lambda _: None,
+) -> Path:
+    """Devuelve la ruta del modelo, bajandolo la primera vez.
+
+    Si el archivo ya esta y su SHA-256 coincide, no se toca la red. Si esta
+    pero no coincide, se vuelve a bajar: lo mas probable es una descarga vieja
+    o cortada. Si el archivo recien bajado tampoco coincide, es un error: vale
+    mas quedarse sin modelo que correr con uno que no es el medido.
+    """
+
+    destino = modelo.ruta(carpeta)
+    if destino.is_file():
+        if _sha256(destino) == modelo.sha256:
+            return destino
+        log(f"{destino.name} no coincide con su sha-256, se vuelve a bajar")
+        destino.unlink()
+
+    carpeta.mkdir(parents=True, exist_ok=True)
+    log(f"bajando {modelo.url}")
+    # Se escribe al lado y se renombra despues de comprobar la huella: un
+    # archivo a medias nunca llega a ocupar el nombre bueno.
+    temporal = destino.with_suffix(".part")
+    try:
+        with httpx.stream(
+            "GET",
+            modelo.url,
+            follow_redirects=True,
+            timeout=120.0,
+            headers={"User-Agent": USER_AGENT},
+        ) as respuesta:
+            respuesta.raise_for_status()
+            with temporal.open("wb") as salida:
+                for trozo in respuesta.iter_bytes(TROZO):
+                    salida.write(trozo)
+    except httpx.HTTPError as error:
+        temporal.unlink(missing_ok=True)
+        raise ModeloError(f"no se pudo bajar {modelo.archivo}: {error}") from error
+
+    huella = _sha256(temporal)
+    if huella != modelo.sha256:
+        temporal.unlink(missing_ok=True)
+        raise ModeloError(
+            f"{modelo.archivo} no es el modelo esperado: su sha-256 es {huella} "
+            f"y deberia ser {modelo.sha256}"
+        )
+
+    temporal.replace(destino)
+    log(f"{destino.name} listo")
+    return destino
+
+
+__all__ = ["MODELOS", "SFACE", "YUNET", "Modelo", "ModeloError", "traer"]
