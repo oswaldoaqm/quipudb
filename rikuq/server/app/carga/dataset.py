@@ -9,17 +9,22 @@ alguna donde YuNet no encuentra nada, y perder la carga entera por una sola
 obligaria a empezar de cero. Se anota, se sigue, y al final se dice cuantas
 entraron y cuantas no.
 
+Uso, desde ``rikuq/server``::
+
+    python -m app.carga.dataset --limite 200
 """
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.carga.esquema import PERSONAS, ROSTROS, sentencias
-from app.dataset.lfw import DATOS, Rostro
-from app.motor import ClienteMotor, literal, literal_vector
+from app.config import Settings
+from app.dataset.lfw import DATOS, MANIFIESTO, Rostro, leer
+from app.motor import ClienteMotor, MotorError, literal, literal_vector
 from app.rostros.deteccion import crear_detector
 from app.rostros.embedding import crear_descriptor, vectores_de
 from app.rostros.errores import FeatureExtractionError
@@ -150,6 +155,44 @@ def cargar(
     )
 
 
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
+    parser.add_argument("--manifiesto", type=Path, default=MANIFIESTO)
+    parser.add_argument("--datos", type=Path, default=DATOS)
+    parser.add_argument(
+        "--limite",
+        type=int,
+        help="carga solo las primeras N imagenes del manifiesto, para probar",
+    )
+    parser.add_argument(
+        "--rehacer",
+        action="store_true",
+        help="borra las tablas antes de crearlas",
+    )
+    args = parser.parse_args(argv)
+
+    rostros = leer(args.manifiesto)
+    if args.limite:
+        rostros = rostros[: args.limite]
+
+    with ClienteMotor.desde(Settings.del_entorno()) as cliente:
+        try:
+            if args.rehacer:
+                for tabla in (ROSTROS, PERSONAS):
+                    cliente.query(f"DROP TABLE {tabla}")
+            if not esquema_existe(cliente):
+                crear_esquema(cliente)
+            informe = cargar(cliente, rostros, datos=args.datos, log=print)
+        except MotorError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 1
+
+    print(informe.resumen())
+    return 0
+
+
 __all__ = [
     "LOTE",
     "Informe",
@@ -158,5 +201,10 @@ __all__ = [
     "esquema_existe",
     "insertar_persona",
     "insertar_rostro",
+    "main",
     "por_persona",
 ]
+
+
+if __name__ == "__main__":
+    sys.exit(main())
