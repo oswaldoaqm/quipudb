@@ -66,8 +66,20 @@ def describir(recorte: np.ndarray, descriptor: cv2.FaceRecognizerSF) -> np.ndarr
     return bruto / norma
 
 
+def distancia(uno: np.ndarray, otro: np.ndarray) -> float:
+    """Distancia coseno entre dos vectores unitarios: 0 identicos, 2 opuestos.
+
+    Menor es mas parecido, que es la convencion de ``vector_distance`` del
+    motor: asi el umbral de #303 se lee como "a lo sumo esta lejos" y no hay
+    que recordar si una metrica va al reves que las otras.
+    """
+
+    return 1.0 - float(np.dot(uno, otro))
+
+
 __all__ = [
     "DIMENSIONES",
     "crear_descriptor",
     "describir",
+    "distancia",
 ]

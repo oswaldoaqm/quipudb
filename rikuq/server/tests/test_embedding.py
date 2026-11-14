@@ -9,9 +9,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from app.rostros.deteccion import crear_alineador
 from app.rostros.embedding import (
     DIMENSIONES,
+    crear_descriptor,
     describir,
+    distancia,
 )
 from app.rostros.errores import EmptyObjectError
 from app.rostros.modelos import SFACE, YUNET
@@ -72,3 +75,36 @@ def test_un_vector_nulo_no_describe_nada() -> None:
 
     with pytest.raises(EmptyObjectError, match="nulo"):
         describir(_recorte(), _DescriptorFalso(crudo))
+
+
+def test_la_distancia_de_un_vector_consigo_mismo_es_cero() -> None:
+    uno = np.zeros(DIMENSIONES, dtype=np.float32)
+    uno[0] = 1.0
+
+    assert distancia(uno, uno) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_la_distancia_crece_cuando_los_vectores_se_separan() -> None:
+    """Menor es mas parecido, como `vector_distance` del motor."""
+
+    uno = np.zeros(DIMENSIONES, dtype=np.float32)
+    uno[0] = 1.0
+    perpendicular = np.zeros(DIMENSIONES, dtype=np.float32)
+    perpendicular[1] = 1.0
+
+    assert distancia(uno, perpendicular) == pytest.approx(1.0, abs=1e-6)
+    assert distancia(uno, -uno) == pytest.approx(2.0, abs=1e-6)
+
+
+def test_la_dimension_medida_es_128() -> None:
+    assert DIMENSIONES == 128
+
+
+# --- con los modelos y las caras de verdad ------------------------------------
+
+
+@sin_modelos
+def test_el_descriptor_y_el_alineador_son_el_mismo_sface() -> None:
+    """SFace hace las dos cosas; crear dos cargaria 37 MB dos veces."""
+
+    assert type(crear_descriptor()) is type(crear_alineador())
