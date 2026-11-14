@@ -134,3 +134,40 @@ def test_la_misma_foto_da_siempre_el_mismo_vector() -> None:
     segunda = vectores_de(foto, detector, descriptor)[0]
 
     assert np.array_equal(primera, segunda)
+
+
+def _tres_identidades(minimo: int = 2) -> list[Path]:
+    """Carpetas de LFW con al menos `minimo` fotos, las tres primeras."""
+
+    elegidas = []
+    for carpeta in sorted(p for p in LFW.iterdir() if p.is_dir()):
+        if len(list(carpeta.glob("*.jpg"))) >= minimo:
+            elegidas.append(carpeta)
+        if len(elegidas) == 3:
+            break
+    return elegidas
+
+
+@sin_modelos
+@sin_dataset
+def test_la_misma_persona_queda_mas_cerca_que_otra() -> None:
+    """Es la prueba que decide si todo el pipeline sirve para algo."""
+
+    carpetas = _tres_identidades()
+    assert len(carpetas) == 3, "LFW no trajo tres identidades con dos fotos"
+
+    detector, descriptor = crear_detector(), crear_descriptor()
+    por_persona = {}
+    for carpeta in carpetas:
+        fotos = sorted(carpeta.glob("*.jpg"))[:2]
+        por_persona[carpeta.name] = [vectores_de(foto, detector, descriptor)[0] for foto in fotos]
+
+    for nombre, (una, otra) in por_persona.items():
+        propia = distancia(una, otra)
+        ajenas = [
+            distancia(una, ajeno)
+            for otro, vectores in por_persona.items()
+            if otro != nombre
+            for ajeno in vectores
+        ]
+        assert propia < min(ajenas), f"{nombre}: {propia:.3f} no es menor que {min(ajenas):.3f}"
