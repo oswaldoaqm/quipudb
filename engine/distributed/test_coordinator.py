@@ -258,3 +258,67 @@ def test_coordinador_con_dos_nodos_reales(node_catalog, node_services):
     # Cada nodo guardó solo lo suyo.
     (local,) = node_services["n1"].describe(envelope()).fragments
     assert local.table_info.record_count == 2
+
+
+# -- GET /fragments (#295) ------------------------------------------------------
+
+
+def test_fragments_muestra_rangos_nodos_y_conteos(node_catalog):
+    nodes = fakes(node_catalog)
+    nodes["n1"].counts = {"items_f0": 4}
+    nodes["n2"].counts = {"items_f1": 3}
+    with TestClient(create_coordinator_app(coordinator_with(node_catalog, nodes))) as client:
+        response = client.get("/fragments")
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "table": "items",
+            "mode": "range",
+            "primary_key": "id",
+            "fragments": [
+                {
+                    "fragment_id": "items_f0",
+                    "node_id": "n1",
+                    "lower": None,
+                    "upper": 10000,
+                    "available": True,
+                    "record_count": 4,
+                    "reason": None,
+                },
+                {
+                    "fragment_id": "items_f1",
+                    "node_id": "n2",
+                    "lower": 10000,
+                    "upper": None,
+                    "available": True,
+                    "record_count": 3,
+                    "reason": None,
+                },
+            ],
+        }
+    ]
+
+
+def test_fragments_con_un_nodo_caido_sigue_respondiendo(node_catalog):
+    nodes = fakes(node_catalog, n2=down)
+    nodes["n1"].counts = {"items_f0": 4}
+    fragments = run(using(coordinator_with(node_catalog, nodes), lambda c: c.fragments()))
+    f0, f1 = fragments[0].fragments
+    assert (f0.available, f0.record_count) == (True, 4)
+    assert (f1.available, f1.record_count) == (False, None)
+    assert f1.reason.startswith("[NODE_UNAVAILABLE] nodo n2")
+
+
+def test_fragments_no_cuenta_un_nodo_con_otro_esquema(node_catalog):
+    def otro_indice(request, body):
+        if request.url.path.endswith("/catalog"):
+            data = FakeNode(node_catalog, "n1").handle(request).json()
+            data["fragments"][0]["table_info"]["indexes"] = []
+            return httpx.Response(200, json=data)
+        return None
+
+    nodes = fakes(node_catalog, n1=otro_indice)
+    fragments = run(using(coordinator_with(node_catalog, nodes), lambda c: c.fragments()))
+    f0 = fragments[0].fragments[0]
+    assert (f0.available, f0.record_count) == (False, None)
+    assert f0.reason.startswith("[SCHEMA_MISMATCH] nodo n1:")
