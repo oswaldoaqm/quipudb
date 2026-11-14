@@ -15,6 +15,7 @@ from app.rostros.embedding import (
     crear_descriptor,
     describir,
     distancia,
+    main,
     vectores_de,
 )
 from app.rostros.errores import EmptyObjectError
@@ -171,3 +172,24 @@ def test_la_misma_persona_queda_mas_cerca_que_otra() -> None:
             for ajeno in vectores
         ]
         assert propia < min(ajenas), f"{nombre}: {propia:.3f} no es menor que {min(ajenas):.3f}"
+
+
+@sin_modelos
+@sin_dataset
+def test_main_imprime_el_vector_y_la_distancia(capsys) -> None:
+    fotos = sorted(_tres_identidades()[0].glob("*.jpg"))[:2]
+
+    assert main([str(f) for f in fotos]) == 0
+
+    salida = capsys.readouterr().out
+    assert "norma=1.0000" in salida
+    assert "distancia" in salida
+
+
+@sin_modelos
+def test_main_anota_la_imagen_rota_y_sigue(tmp_path: Path, capsys) -> None:
+    rota = tmp_path / "rota.jpg"
+    rota.write_bytes(b"esto no es una imagen")
+
+    assert main([str(rota)]) == 1
+    assert "no es una imagen" in capsys.readouterr().err

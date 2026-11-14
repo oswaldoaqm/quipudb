@@ -25,12 +25,13 @@ Para ver el vector de una foto, desde ``rikuq/server``::
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-from app.rostros.deteccion import crear_alineador, detectar
+from app.rostros.deteccion import crear_alineador, crear_detector, detectar
 from app.rostros.errores import EmptyObjectError
 from app.rostros.lectura import leer_color
 from app.rostros.modelos import MODELOS
@@ -96,10 +97,56 @@ def vectores_de(
     )
 
 
+def main(argv: list[str] | None = None) -> int:
+    """Imprime el vector de cada rostro, y la distancia entre los dos primeros."""
+
+    import argparse
+
+    from app.rostros.errores import FeatureExtractionError
+
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
+    parser.add_argument("imagenes", nargs="+", type=Path)
+    parser.add_argument("--completo", action="store_true", help="imprime los 128 numeros")
+    args = parser.parse_args(argv)
+
+    detector = crear_detector()
+    descriptor = crear_descriptor()
+
+    vistos: list[tuple[Path, np.ndarray]] = []
+    problemas = 0
+    for ruta in args.imagenes:
+        try:
+            vectores = vectores_de(ruta, detector, descriptor)
+        except FeatureExtractionError as error:
+            print(f"  {error}", file=sys.stderr)
+            problemas += 1
+            continue
+        for numero, vector in enumerate(vectores, start=1):
+            vistos.append((ruta, vector))
+            if args.completo:
+                print(f"{ruta.name} #{numero}: {np.array2string(vector, precision=4)}")
+            else:
+                cabeza = np.array2string(vector[:4], precision=4)
+                print(
+                    f"{ruta.name} #{numero}: {cabeza[:-1]} ...] norma={np.linalg.norm(vector):.4f}"
+                )
+
+    if len(vistos) >= 2:
+        (una, primera), (otra, segunda) = vistos[0], vistos[1]
+        print(f"distancia {una.name} <-> {otra.name}: {distancia(primera, segunda):.4f}")
+
+    return 1 if problemas else 0
+
+
 __all__ = [
     "DIMENSIONES",
     "crear_descriptor",
     "describir",
     "distancia",
+    "main",
     "vectores_de",
 ]
+
+
+if __name__ == "__main__":
+    sys.exit(main())
