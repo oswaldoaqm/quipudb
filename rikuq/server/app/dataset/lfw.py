@@ -33,8 +33,12 @@ from pathlib import Path
 
 import httpx
 
-# La pagina oficial de LFW, en la Universidad de Massachusetts.
-URL_LFW = "http://vis-www.cs.umass.edu/lfw/lfw.tgz"
+# El sitio oficial de LFW es <http://vis-www.cs.umass.edu/lfw/>, pero su host
+# dejo de resolver (getaddrinfo falla, no es que responda un error). Se baja
+# del espejo de figshare, que es el mismo que usa `fetch_lfw_people` de
+# scikit-learn. Si UMass vuelve, su URL sirve igual con `--url`.
+URL_LFW = "https://ndownloader.figshare.com/files/5976018"
+URL_LFW_OFICIAL = "http://vis-www.cs.umass.edu/lfw/lfw.tgz"
 USER_AGENT = "rikuq/0.1 (proyecto academico, UTEC)"
 
 RIKUQ = Path(__file__).resolve().parents[3]

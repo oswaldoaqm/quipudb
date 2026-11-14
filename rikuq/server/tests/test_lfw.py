@@ -267,6 +267,16 @@ def test_descargar_avisa_si_el_comprimido_no_trae_lfw(tmp_path: Path) -> None:
         descargar(destino=datos)
 
 
+def test_lfw_se_baja_de_un_espejo_porque_umass_no_resuelve() -> None:
+    """El host oficial dejo de resolver; figshare es el espejo de scikit-learn."""
+
+    from app.dataset.lfw import URL_LFW, URL_LFW_OFICIAL
+
+    assert URL_LFW.startswith("https://")
+    assert "umass" not in URL_LFW
+    assert "umass" in URL_LFW_OFICIAL
+
+
 def test_descargar_no_deja_un_comprimido_a_medias(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
