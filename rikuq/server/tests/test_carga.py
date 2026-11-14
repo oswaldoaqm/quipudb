@@ -1,8 +1,37 @@
-"""Las sentencias que meten el dataset en QuipuDB (#302)."""
+"""Carga del dataset en QuipuDB (#302), sin motor y sin modelos.
 
-from app.carga.dataset import insertar_persona, insertar_rostro, por_persona
-from app.carga.esquema import PERSONAS, ROSTROS
+El motor se atiende con `httpx.MockTransport` y el pipeline de rostros se
+reemplaza por uno falso que devuelve vectores inventados. Asi las pruebas
+comprueban el SQL que se manda y que una imagen sin rostro no corta la carga,
+sin levantar QuipuDB ni cargar 37 MB de ONNX.
+"""
+
+import httpx
+
+from app.carga.dataset import (
+    crear_esquema,
+    esquema_existe,
+    insertar_persona,
+    insertar_rostro,
+    por_persona,
+)
+from app.carga.esquema import PERSONAS, ROSTROS, sentencias
+from app.config import Settings
 from app.dataset.lfw import Rostro
+from app.motor import ClienteMotor
+
+
+def _motor(recibidas: list[str], tablas: list[str] | None = None) -> ClienteMotor:
+    def handler(peticion: httpx.Request) -> httpx.Response:
+        if peticion.url.path == "/tables":
+            return httpx.Response(200, json=[{"name": t} for t in (tablas or [])])
+        import json
+
+        recibidas.append(json.loads(peticion.read())["sql"])
+        return httpx.Response(200, json={"affected_rows": 1})
+
+    settings = Settings(quipudb_api_url="http://127.0.0.1:8000")
+    return ClienteMotor.desde(settings, transport=httpx.MockTransport(handler))
 
 
 def _rostro(persona: str, numero: int, origen: str = "lfw") -> Rostro:
@@ -30,3 +59,22 @@ def test_por_persona_agrupa_conservando_el_orden() -> None:
 
     assert list(agrupado) == ["Ana", "Beto"]
     assert len(agrupado["Ana"]) == 2
+
+
+# --- el esquema contra el motor -----------------------------------------------
+
+
+def test_crear_esquema_manda_las_tablas_y_los_indices() -> None:
+    recibidas: list[str] = []
+
+    with _motor(recibidas) as cliente:
+        crear_esquema(cliente)
+
+    assert recibidas == list(sentencias())
+
+
+def test_esquema_existe_mira_las_tablas_del_motor() -> None:
+    with _motor([], tablas=[PERSONAS, ROSTROS, "otra"]) as cliente:
+        assert esquema_existe(cliente) is True
+    with _motor([], tablas=[PERSONAS]) as cliente:
+        assert esquema_existe(cliente) is False
