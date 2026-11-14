@@ -119,6 +119,19 @@ distribuida devuelve `plan: null`.
 Un ORDER BY por otra columna se rechaza en el coordinador y el editor subraya la
 parte no admitida, con la misma posición que mandaría la API local.
 
+### Estado de los nodos (#294)
+
+Contra el coordinador, la etiqueta de la esquina superior derecha dice
+"coordinador · 2 de 2 nodos listos" en vez de "motor conectado". Al pasar el
+cursor muestra cada nodo con su dirección y sus fragmentos, o el motivo si no
+está listo. Sale de `GET /health` del coordinador, se vuelve a pedir al abrir y
+después de cada consulta, también cuando la consulta falla: si n2 se cae, la
+siguiente consulta que lo necesita responde `[NODE_UNAVAILABLE]` y la etiqueta
+pasa a "1 de 2 nodos listos", en ámbar. Contra la API local, que no tiene
+`/health`, la etiqueta queda como siempre.
+
+![Etiqueta con n2 caído](informe/capturas/distribuido/frontend-estado-nodos.png)
+
 ### Ver la fragmentación (#295)
 
 Con el frontend conectado al coordinador, el panel de Archivos muestra debajo

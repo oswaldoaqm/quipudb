@@ -322,3 +322,22 @@ export interface TableFragments {
   primary_key: string;
   fragments: FragmentStatus[];
 }
+
+/**
+ * Lo que responde `GET /health` del coordinador distribuido (#294): 200 si
+ * todos los nodos estan listos, 503 si no, con el mismo cuerpo. La API local
+ * no tiene esa ruta. Espejo de `NodeStatus` en `engine/distributed/coordinator.py`.
+ */
+export interface NodeHealth {
+  node_id: string;
+  base_url: string;
+  ready: boolean;
+  reason: string | null;
+  fragment_ids: string[];
+}
+
+export interface ClusterHealth {
+  status: "ready" | "degraded";
+  catalog_version: number;
+  nodes: NodeHealth[];
+}

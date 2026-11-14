@@ -9,6 +9,7 @@
 import { MotorError } from "@/api/errors";
 import { mockExecuteQuery, mockListTables, mockLoadCsv } from "@/api/mock";
 import type {
+  ClusterHealth,
   LoadResult,
   MediaJob,
   QueryError,
@@ -189,6 +190,23 @@ export async function listFragments(): Promise<TableFragments[] | null> {
     if (respuesta.status === 404) return null;
     if (!respuesta.ok) return null;
     return (await respuesta.json()) as TableFragments[];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * El estado de los nodos, si el frontend habla con el coordinador (#294).
+ * El coordinador responde 503 cuando falta un nodo, con el mismo cuerpo, asi
+ * que se lee igual. Contra la API local, o si no responde, devuelve null.
+ */
+export async function clusterHealth(): Promise<ClusterHealth | null> {
+  if (USA_DATOS_FALSOS) return null;
+  try {
+    const respuesta = await fetch(`${URL_API}/health`);
+    if (respuesta.status !== 200 && respuesta.status !== 503) return null;
+    const cuerpo = (await respuesta.json()) as Partial<ClusterHealth>;
+    return Array.isArray(cuerpo.nodes) ? (cuerpo as ClusterHealth) : null;
   } catch {
     return null;
   }
