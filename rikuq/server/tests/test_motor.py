@@ -12,6 +12,7 @@ from app.config import Settings
 from app.motor import (
     ClienteMotor,
     MotorError,
+    MotorNoDisponible,
     Resultado,
     literal,
     literal_vector,
@@ -119,6 +120,38 @@ def test_table_names_devuelve_los_nombres() -> None:
 
     with _cliente(handler) as cliente:
         assert cliente.table_names() == {"personas", "rostros"}
+
+
+def test_un_sql_invalido_llega_con_el_mensaje_del_motor() -> None:
+    def handler(_peticion: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"detail": "la columna 'x' no existe"})
+
+    with _cliente(handler) as cliente, pytest.raises(MotorError) as error:
+        cliente.query("SELECT x FROM personas")
+
+    assert "la columna 'x' no existe" in str(error.value)
+    assert error.value.status == 400
+    assert error.value.sql == "SELECT x FROM personas"
+
+
+def test_el_motor_apagado_se_distingue_de_un_sql_malo() -> None:
+    """Ante esto hay que levantar el servidor, no corregir la consulta."""
+
+    def handler(_peticion: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("conexion rechazada")
+
+    with _cliente(handler) as cliente, pytest.raises(MotorNoDisponible) as error:
+        cliente.query("SELECT 1")
+
+    assert "revisa que este levantado" in str(error.value)
+
+
+def test_un_timeout_tambien_es_motor_no_disponible() -> None:
+    def handler(_peticion: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("tardo demasiado")
+
+    with _cliente(handler) as cliente, pytest.raises(MotorNoDisponible, match="a tiempo"):
+        cliente.query("SELECT 1")
 
 
 def test_una_respuesta_que_no_es_json_no_revienta_el_cliente() -> None:

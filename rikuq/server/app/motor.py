@@ -28,6 +28,16 @@ class MotorError(RuntimeError):
         self.status = status
 
 
+class MotorNoDisponible(MotorError):
+    """No se pudo llegar al motor: no esta levantado, o tardo demasiado.
+
+    Se distingue de ``MotorError`` porque la salida es distinta: ante un SQL
+    mal escrito hay que corregir la consulta, y ante esto hay que levantar el
+    servidor. Mezclarlos manda a leer el SQL cuando el problema es que nadie
+    atiende en el puerto.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class Resultado:
     """Lo que devuelve una sentencia."""
@@ -113,11 +123,11 @@ class ClienteMotor:
         try:
             respuesta = self._cliente.request(metodo, ruta, **kwargs)
         except httpx.TimeoutException as error:
-            raise MotorError(
+            raise MotorNoDisponible(
                 f"el motor no respondio a tiempo en {self.url}: {error}", sql=sql
             ) from error
         except httpx.HTTPError as error:
-            raise MotorError(
+            raise MotorNoDisponible(
                 f"no se pudo llegar al motor en {self.url}: {error}; revisa que este levantado",
                 sql=sql,
             ) from error
@@ -171,6 +181,7 @@ def _detalle(respuesta: httpx.Response) -> str:
 __all__ = [
     "ClienteMotor",
     "MotorError",
+    "MotorNoDisponible",
     "Resultado",
     "literal",
     "literal_vector",
