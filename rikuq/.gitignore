@@ -1,0 +1,5 @@
+# Imagenes del dataset: LFW se vuelve a bajar con `python -m app.dataset.lfw
+# descargar` y las fotos del equipo son datos biometricos que no se suben
+# (#301). El manifiesto `dataset/rostros.tsv` si se versiona: con el se
+# comprueba que todos tenemos los mismos archivos.
+datos/
