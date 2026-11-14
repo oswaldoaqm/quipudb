@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 from app.carga.dataset import (
+    Informe,
     cargar,
     crear_esquema,
     esquema_existe,
@@ -147,11 +148,71 @@ def test_cada_rostro_apunta_a_su_persona(pipeline) -> None:
     assert "VALUES (2, 2, 'lfw/Beto/Beto_0001.jpg'" in enviado
 
 
-def test_la_persona_dice_cuantas_fotos_suyas_entraron(pipeline) -> None:
-    pipeline()
+def test_la_cuenta_de_fotos_es_la_de_los_rostros_que_entraron(pipeline) -> None:
+    """Si una foto no dio vector, la persona no debe decir que tiene esa foto."""
+
+    pipeline(sin_rostro={"Ana_0002.jpg"})
     recibidas: list[str] = []
 
     with _motor(recibidas) as cliente:
-        cargar(cliente, [_rostro("Ana", 1), _rostro("Ana", 2)], detector=1, descriptor=1)
+        informe = cargar(
+            cliente,
+            [_rostro("Ana", 1), _rostro("Ana", 2), _rostro("Ana", 3)],
+            detector=1,
+            descriptor=1,
+        )
 
     assert "'lfw', 2)" in "\n".join(recibidas)
+    assert informe.rostros == 2
+
+
+# --- las imagenes que fallan --------------------------------------------------
+
+
+def test_una_imagen_sin_rostro_no_corta_la_carga(pipeline) -> None:
+    """De 4324 fotos siempre hay alguna donde YuNet no encuentra nada."""
+
+    pipeline(sin_rostro={"Ana_0001.jpg"})
+    recibidas: list[str] = []
+
+    with _motor(recibidas) as cliente:
+        informe = cargar(cliente, [_rostro("Ana", 1), _rostro("Beto", 1)], detector=1, descriptor=1)
+
+    assert informe.personas == 1
+    assert informe.rostros == 1
+    assert informe.fallidas == 1
+    assert informe.sin_rostro[0][0] == "lfw/Ana/Ana_0001.jpg"
+
+
+def test_una_persona_sin_ningun_rostro_utilizable_no_se_inserta(pipeline) -> None:
+    """Una fila en personas sin un solo rostro no sirve para reconocer a nadie."""
+
+    pipeline(sin_rostro={"Ana_0001.jpg"})
+    recibidas: list[str] = []
+
+    with _motor(recibidas) as cliente:
+        informe = cargar(cliente, [_rostro("Ana", 1)], detector=1, descriptor=1)
+
+    assert informe.personas == 0
+    assert recibidas == []
+
+
+def test_el_informe_dice_cuantas_entraron_y_cuantas_no() -> None:
+    informe = Informe(personas=2, rostros=5, sin_rostro=(("a.jpg", "sin rostro"),))
+
+    texto = informe.resumen()
+
+    assert "2 personas y 5 rostros" in texto
+    assert "1 imagenes sin rostro" in texto
+    assert "a.jpg" in texto
+
+
+def test_el_informe_no_vuelca_cientos_de_fallos() -> None:
+    """Con 4324 imagenes, listarlas todas tapa el resumen."""
+
+    informe = Informe(sin_rostro=tuple((f"{i}.jpg", "sin rostro") for i in range(25)))
+
+    texto = informe.resumen()
+
+    assert "y 15 mas" in texto
+    assert texto.count(".jpg") == 10

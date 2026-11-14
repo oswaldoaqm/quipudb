@@ -1,13 +1,20 @@
 """Cargar el dataset de rostros en QuipuDB (#302).
 
-Lee el manifiesto de #301 y arma las sentencias que meten cada persona y cada
-rostro en el motor. No importa ``engine``: todo va por HTTP.
+Lee el manifiesto de #301, saca el vector de cada imagen con el pipeline de
+#304 y #305, y lo inserta por el API REST del motor. No importa ``engine``:
+todo va por HTTP.
+
+Una imagen sin rostro no corta la carga. De 4324 fotos de prensa siempre hay
+alguna donde YuNet no encuentra nada, y perder la carga entera por una sola
+obligaria a empezar de cero. Se anota, se sigue, y al final se dice cuantas
+entraron y cuantas no.
+
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.carga.esquema import PERSONAS, ROSTROS, sentencias
@@ -15,6 +22,31 @@ from app.dataset.lfw import DATOS, Rostro
 from app.motor import ClienteMotor, literal, literal_vector
 from app.rostros.deteccion import crear_detector
 from app.rostros.embedding import crear_descriptor, vectores_de
+from app.rostros.errores import FeatureExtractionError
+
+
+@dataclass(frozen=True, slots=True)
+class Informe:
+    """Que entro y que no."""
+
+    personas: int = 0
+    rostros: int = 0
+    sin_rostro: tuple[tuple[str, str], ...] = field(default=())
+    """``(ruta, motivo)`` de las imagenes que no aportaron ningun vector."""
+
+    @property
+    def fallidas(self) -> int:
+        return len(self.sin_rostro)
+
+    def resumen(self) -> str:
+        lineas = [
+            f"{self.personas} personas y {self.rostros} rostros cargados",
+            f"{self.fallidas} imagenes sin rostro utilizable",
+        ]
+        lineas.extend(f"  {ruta}: {motivo}" for ruta, motivo in self.sin_rostro[:10])
+        if self.fallidas > 10:
+            lineas.append(f"  ... y {self.fallidas - 10} mas")
+        return "\n".join(lineas)
 
 
 def crear_esquema(cliente: ClienteMotor) -> None:
@@ -51,14 +83,6 @@ def por_persona(rostros: Iterable[Rostro]) -> dict[str, list[Rostro]]:
     return agrupado
 
 
-@dataclass(frozen=True, slots=True)
-class Informe:
-    """Que entro."""
-
-    personas: int = 0
-    rostros: int = 0
-
-
 def cargar(
     cliente: ClienteMotor,
     rostros: Iterable[Rostro],
@@ -68,7 +92,7 @@ def cargar(
     descriptor=None,
     log: Callable[[str], None] = lambda _: None,
 ) -> Informe:
-    """Inserta las personas del manifiesto y el vector de cada una de sus fotos."""
+    """Inserta las personas y sus rostros. Devuelve que entro y que no."""
 
     if detector is None:
         detector = crear_detector()
@@ -76,26 +100,43 @@ def cargar(
         descriptor = crear_descriptor()
 
     agrupado = por_persona(rostros)
+    sin_rostro: list[tuple[str, str]] = []
+    pendientes: list[str] = []
     personas = rostros_cargados = 0
     siguiente_rostro = 1
 
     for persona_id, (nombre, suyos) in enumerate(agrupado.items(), start=1):
-        vectores = []
+        vectores: list[tuple[str, list[float]]] = []
         for rostro in suyos:
+            try:
+                sacados = vectores_de(rostro.archivo(datos), detector, descriptor)
+            except FeatureExtractionError as error:
+                sin_rostro.append((rostro.ruta, str(error)))
+                continue
             # Una foto con dos caras no dice cual es la persona del manifiesto;
             # se toma la mas confiable, que `detectar` deja primera.
-            sacados = vectores_de(rostro.archivo(datos), detector, descriptor)
             vectores.append((rostro.ruta, list(sacados[0])))
 
-        cliente.query(insertar_persona(persona_id, nombre, suyos[0].origen, len(vectores)))
+        if not vectores:
+            log(f"{nombre}: sin ningun rostro utilizable, no se carga")
+            continue
+
+        pendientes.append(insertar_persona(persona_id, nombre, suyos[0].origen, len(vectores)))
         for ruta, vector in vectores:
-            cliente.query(insertar_rostro(siguiente_rostro, persona_id, ruta, vector))
+            pendientes.append(insertar_rostro(siguiente_rostro, persona_id, ruta, vector))
             siguiente_rostro += 1
         personas += 1
         rostros_cargados += len(vectores)
         log(f"{nombre}: {len(vectores)} rostros")
 
-    return Informe(personas=personas, rostros=rostros_cargados)
+    for sentencia in pendientes:
+        cliente.query(sentencia)
+
+    return Informe(
+        personas=personas,
+        rostros=rostros_cargados,
+        sin_rostro=tuple(sin_rostro),
+    )
 
 
 __all__ = [
