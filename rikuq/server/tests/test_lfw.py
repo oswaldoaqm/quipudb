@@ -3,7 +3,9 @@
 import hashlib
 from pathlib import Path
 
-from app.dataset.lfw import Rostro, recolectar, sha256
+import pytest
+
+from app.dataset.lfw import DatasetError, Rostro, construir, recolectar, sha256
 
 
 def _imagen(carpeta: Path, nombre: str, contenido: bytes = b"\xff\xd8\xff falsa") -> Path:
@@ -78,3 +80,35 @@ def test_recolectar_una_carpeta_que_no_existe_no_es_error(tmp_path: Path) -> Non
     """El equipo puede no haber puesto sus fotos todavia."""
 
     assert list(recolectar(tmp_path / "equipo", "equipo")) == []
+
+
+def test_construir_descarta_las_identidades_con_pocas_fotos(tmp_path: Path) -> None:
+    """Con una sola foto no queda ninguna para preguntar que no se haya cargado."""
+
+    _poblar(tmp_path, {"Con_Muchas": 3, "Con_Una": 1, "Con_Dos": 2})
+
+    rostros = construir(tmp_path, minimo=2)
+
+    assert {r.persona for r in rostros} == {"Con_Muchas", "Con_Dos"}
+    assert len(rostros) == 5
+
+
+def test_construir_siempre_incluye_al_equipo(tmp_path: Path) -> None:
+    """Son pocas fotos y son las que la demostracion tiene que reconocer."""
+
+    _poblar(tmp_path, {"Con_Muchas": 10})
+    _poblar(tmp_path, {"Danna": 1}, origen="equipo")
+
+    rostros = construir(tmp_path, minimo=10)
+
+    assert ("equipo", "Danna") in {(r.origen, r.persona) for r in rostros}
+
+
+def test_construir_sin_imagenes_explica_que_hacer(tmp_path: Path) -> None:
+    with pytest.raises(DatasetError, match="descargar"):
+        construir(tmp_path, minimo=1)
+
+
+def test_construir_rechaza_un_minimo_invalido(tmp_path: Path) -> None:
+    with pytest.raises(DatasetError, match="al menos 1"):
+        construir(tmp_path, minimo=0)
