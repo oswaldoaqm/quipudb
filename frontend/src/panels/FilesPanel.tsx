@@ -17,8 +17,11 @@ type Multimedia = Omit<CargaCarpetaProps, "tabla">;
 interface FilesPanelProps extends Multimedia {
   tablas: TableInfo[];
   cargando: boolean;
-  /** Sube el CSV y devuelve el informe del motor. Lo resuelve `App`. */
-  onCargarCsv: (tabla: string, archivo: File) => Promise<LoadResult>;
+  /**
+   * Sube el CSV y devuelve el informe del motor. Lo resuelve `App`. Con
+   * `atomic`, si una fila falla no queda ninguna (#291).
+   */
+  onCargarCsv: (tabla: string, archivo: File, atomic: boolean) => Promise<LoadResult>;
 }
 
 /** VARCHAR es el unico que declara tamano; el resto lo tiene fijo por tipo. */
@@ -148,6 +151,7 @@ function Cargar({
   const [cargando, setCargando] = useState(false);
   const [informe, setInforme] = useState<LoadResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [atomico, setAtomico] = useState(false);
 
   const elegir = async (evento: React.ChangeEvent<HTMLInputElement>) => {
     const archivo = evento.target.files?.[0];
@@ -160,7 +164,7 @@ function Cargar({
     setInforme(null);
     setError(null);
     try {
-      setInforme(await onCargarCsv(tabla.name, archivo));
+      setInforme(await onCargarCsv(tabla.name, archivo, atomico));
     } catch (fallo) {
       setError(fallo instanceof Error ? fallo.message : String(fallo));
     } finally {
@@ -189,6 +193,16 @@ function Cargar({
       <span className="ml-2 text-[10px] text-muted-foreground">
         hacia <span className="font-mono">{tabla.name}</span>
       </span>
+      <label className="mt-1 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+        <input
+          type="checkbox"
+          checked={atomico}
+          disabled={cargando}
+          onChange={(evento) => setAtomico(evento.target.checked)}
+          className="size-3 accent-primary"
+        />
+        si una fila falla, no cargar ninguna
+      </label>
 
       {error !== null && (
         <p className="mt-2 rounded border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[11px]">
