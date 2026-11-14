@@ -613,7 +613,8 @@ curl -F "file=@alumnos.csv" http://localhost:8000/tables/alumnos/load
   listan las primeras 100; `errors_truncated` avisa si hubo más.
 - **Con `?atomic=true`** la primera fila que falla deshace todas las anteriores
   y se responde 400 con su línea. Usa la misma bitácora de deshacer que
-  `BEGIN TRANSACTION`, que guarda una entrada por fila cargada.
+  `BEGIN TRANSACTION`, que guarda una entrada por fila cargada. En el frontend
+  es la casilla "si una fila falla, no cargar ninguna", debajo de "Cargar CSV".
 - **Codificación: UTF-8 (con o sin BOM) o cp1252**, que es lo que escribe
   "Guardar como CSV" en un Excel de Windows en español. `encoding` en la
   respuesta dice cuál se usó. Un archivo con tildes en UTF-8 y algún byte roto
