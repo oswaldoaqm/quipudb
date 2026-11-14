@@ -12,7 +12,15 @@ from pydantic import BaseModel, Field
 
 from app.biblioteca import Agregado, Listado
 from app.rag.generacion import Respuesta
-from app.rag.recuperacion import RANKINGS, ConsultaSql, Evidencia, Ranking, Recuperacion
+from app.rag.recuperacion import (
+    RANKINGS,
+    ConsultaSql,
+    Evidencia,
+    Modo,
+    Origen,
+    Ranking,
+    Recuperacion,
+)
 
 
 class AskRequest(BaseModel):
@@ -21,6 +29,13 @@ class AskRequest(BaseModel):
     ranking: Ranking = Field(default="BM25", description=f"uno de {', '.join(RANKINGS)}")
     reescribir: bool = Field(
         default=True, description="reescribir la pregunta como palabras clave en ingles"
+    )
+    modo: Modo = Field(
+        default="texto",
+        description=(
+            "texto: BM25/TF-IDF; vectores: HNSW con el embedding de la pregunta;"
+            " hibrido: los dos fusionados con Reciprocal Rank Fusion (#252)"
+        ),
     )
 
 
@@ -42,6 +57,9 @@ class FuenteOut(BaseModel):
     pagina: int
     texto: str
     relevancia: float
+    """BM25/TF-IDF en modo texto, coseno en vectores, puntaje RRF en hibrido."""
+    origen: list[Origen]
+    """Que busqueda encontro el chunk: ``texto``, ``vectores`` o las dos."""
     citada: bool
     paper: PaperOut
 
@@ -58,6 +76,8 @@ class SqlOut(BaseModel):
 
 class TiemposOut(BaseModel):
     reescritura_ms: float
+    embedding_ms: float
+    """El embedding de la pregunta; 0 en modo texto."""
     recuperacion_ms: float
     generacion_ms: float
     total_ms: float
@@ -72,6 +92,7 @@ class AskResponse(BaseModel):
     modelo: str | None
     """El modelo de Gemini que respondio; ``None`` si no hizo falta llamarlo."""
     ranking: Ranking
+    modo: Modo
     citas: list[int]
     citas_descartadas: list[int]
     fuentes: list[FuenteOut]
@@ -126,6 +147,7 @@ def fuentes(evidencias: tuple[Evidencia, ...], citadas: set[int] = frozenset()) 
             pagina=e.fragmento.pagina,
             texto=e.fragmento.texto,
             relevancia=e.fragmento.relevancia,
+            origen=list(e.fragmento.origen),
             citada=numero in citadas,
             paper=_paper(e),
         )
@@ -154,12 +176,14 @@ def a_respuesta(r: Respuesta, total_ms: float) -> AskResponse:
         respuesta=r.texto,
         modelo=r.modelo,
         ranking=r.recuperacion.ranking,
+        modo=r.recuperacion.modo,
         citas=[c.numero for c in r.citas],
         citas_descartadas=list(r.citas_descartadas),
         fuentes=fuentes(r.evidencias, citadas),
         sql=sqls(r.recuperacion.consultas),
         tiempos=TiemposOut(
             reescritura_ms=r.tiempos.reescritura_ms,
+            embedding_ms=r.tiempos.embedding_ms,
             recuperacion_ms=r.tiempos.recuperacion_ms,
             generacion_ms=r.tiempos.generacion_ms,
             total_ms=total_ms,
@@ -205,6 +229,9 @@ class TiemposCargaOut(BaseModel):
 class AgregadoOut(BaseModel):
     arxiv_id: str
     chunks: int
+    vectores: int
+    """Chunks con embedding (#252); 0 sin busqueda vectorial."""
+    aviso: str | None
     tiempos: TiemposCargaOut
 
 
@@ -224,6 +251,8 @@ def a_agregado(agregado: Agregado) -> AgregadoOut:
     return AgregadoOut(
         arxiv_id=agregado.arxiv_id,
         chunks=agregado.reporte.chunks,
+        vectores=agregado.vectores,
+        aviso=agregado.aviso,
         tiempos=TiemposCargaOut(
             extraccion_s=t.extraccion_s, chunking_s=t.chunking_s, carga_s=t.carga_s, indice_s=t.indice_s
         ),

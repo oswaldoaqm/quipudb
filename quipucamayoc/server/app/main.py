@@ -44,6 +44,7 @@ from app.corpus.arxiv import DATOS
 from app.corpus.carga import CORPUS
 from app.corpus.esquema import Tablas
 from app.motor import ClienteMotor, MotorError, MotorNoDisponible, usa_tls
+from app.rag.embeddings import Embedder, GeminiEmbedder
 from app.rag.generacion import responder
 from app.rag.llm import LLM, GeminiLLM, LLMError, LLMNoConfigurado
 
@@ -52,6 +53,8 @@ class EngineHealth(BaseModel):
     url: str
     reachable: bool
     tables: int | None = None
+    vector_search: bool = False
+    """Si existe la tabla de embeddings: habilita los modos vectores e hibrido."""
     error: str | None = None
 
 
@@ -68,7 +71,11 @@ class HealthResponse(BaseModel):
     llm: LlmHealth
 
 
-def check_engine(settings: Settings, transport: httpx.BaseTransport | None = None) -> EngineHealth:
+def check_engine(
+    settings: Settings,
+    transport: httpx.BaseTransport | None = None,
+    tablas: Tablas = CORPUS,
+) -> EngineHealth:
     """Pregunta al motor por sus tablas: si responde, esta vivo y es QuipuDB."""
 
     try:
@@ -80,10 +87,14 @@ def check_engine(settings: Settings, transport: httpx.BaseTransport | None = Non
         ) as cliente:
             respuesta = cliente.get("/tables")
             respuesta.raise_for_status()
+            nombres = {tabla["name"] for tabla in respuesta.json()}
             return EngineHealth(
-                url=settings.quipudb_api_url, reachable=True, tables=len(respuesta.json())
+                url=settings.quipudb_api_url,
+                reachable=True,
+                tables=len(nombres),
+                vector_search=tablas.vectores in nombres,
             )
-    except (httpx.HTTPError, ValueError) as error:
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
         return EngineHealth(
             url=settings.quipudb_api_url,
             reachable=False,
@@ -92,6 +103,10 @@ def check_engine(settings: Settings, transport: httpx.BaseTransport | None = Non
 
 
 MAX_PDF = 50 * 1024 * 1024
+
+
+class SinVectores(Exception):
+    """Se pidio el modo vectores o hibrido y no hay tabla de embeddings."""
 
 
 def _error(status: int, origen: str, mensaje: str) -> JSONResponse:
@@ -105,6 +120,7 @@ def create_app(
     motor: ClienteMotor | None = None,
     llm: LLM | None = None,
     llm_reescritura: LLM | None = None,
+    embedder: Embedder | None = None,
     tablas: Tablas = CORPUS,
     carpeta_subidos: Path = DATOS / "subidos",
 ) -> FastAPI:
@@ -122,6 +138,7 @@ def create_app(
     if llm is not None:
         modelos["respuesta"] = llm
         modelos["reescritura"] = llm_reescritura or llm
+    embedders: dict[str, Embedder] = {"consulta": embedder} if embedder is not None else {}
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(settings.cors_origins),
@@ -131,17 +148,26 @@ def create_app(
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
-        engine = check_engine(settings, engine_transport)
+        engine = check_engine(settings, engine_transport, tablas)
         return HealthResponse(
             status="ok" if engine.reachable else "degraded",
             engine=engine,
             llm=LlmHealth(model=settings.gemini_model, configured=settings.llm_configured),
         )
 
-    def preparar_modelos() -> None:
+    def preparar_modelos(peticion: AskRequest) -> None:
         if not modelos:
             modelos["respuesta"] = GeminiLLM.desde(settings)
             modelos["reescritura"] = GeminiLLM.para_reescritura(settings)
+        if peticion.modo == "texto":
+            return
+        if tablas.vectores not in motor.table_names():
+            raise SinVectores(
+                f"el modo {peticion.modo} necesita los embeddings de los chunks: corre "
+                "python -m app.corpus.vectores embeber y despues cargar"
+            )
+        if not embedders:
+            embedders["consulta"] = GeminiEmbedder.desde(settings)
 
     def preguntar(peticion: AskRequest, avance=None):
         return responder(
@@ -154,18 +180,22 @@ def create_app(
             llm_reescritura=modelos["reescritura"],
             tablas=tablas,
             avance=avance,
+            modo=peticion.modo,
+            embedder=embedders.get("consulta"),
         )
 
     @app.post(
         "/ask",
         response_model=AskResponse,
-        responses={502: {"model": AskError}, 503: {"model": AskError}},
+        responses={409: {"model": AskError}, 502: {"model": AskError}, 503: {"model": AskError}},
     )
     def ask(peticion: AskRequest) -> AskResponse | JSONResponse:
         inicio = time.perf_counter()
         try:
-            preparar_modelos()
+            preparar_modelos(peticion)
             respuesta = preguntar(peticion)
+        except SinVectores as error:
+            return _error(409, "motor", str(error))
         except MotorNoDisponible as error:
             return _error(503, "motor", str(error))
         except MotorError as error:
@@ -193,9 +223,13 @@ def create_app(
         """
 
         try:
-            preparar_modelos()
+            preparar_modelos(peticion)
         except LLMNoConfigurado as error:
             return _error(503, "llm", str(error))
+        except SinVectores as error:
+            return _error(409, "motor", str(error))
+        except MotorError as error:
+            return _error(503, "motor", str(error))
 
         def etapas() -> Iterator[str]:
             cola: queue.Queue[BaseModel | None] = queue.Queue()
@@ -257,6 +291,10 @@ def create_app(
         contenido = archivo.file.read(MAX_PDF + 1)
         if len(contenido) > MAX_PDF:
             return JSONResponse(status_code=400, content={"error": "el PDF pasa de 50 MB"})
+        # Solo con busqueda vectorial: sin la tabla de embeddings no hay
+        # donde guardar los vectores del PDF.
+        if not embedders and settings.llm_configured and tablas.vectores in motor.table_names():
+            embedders["consulta"] = GeminiEmbedder.desde(settings)
         try:
             agregado = agregar(
                 motor,
@@ -267,6 +305,7 @@ def create_app(
                 autores=autores.split(","),
                 anio=anio,
                 abstract=abstract,
+                embedder=embedders.get("consulta"),
             )
         except ValueError as error:
             return JSONResponse(status_code=400, content={"error": str(error)})

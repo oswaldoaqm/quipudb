@@ -84,6 +84,8 @@ function Subir({ alAgregar }: { alAgregar: () => void }) {
           ✓ Cargado como <code>{resultado.arxiv_id}</code>: {resultado.chunks} chunks. Extracción{" "}
           {resultado.tiempos.extraccion_s.toFixed(1)} s, carga {resultado.tiempos.carga_s.toFixed(2)} s, índice reconstruido en{" "}
           {resultado.tiempos.indice_s.toFixed(1)} s.
+          {resultado.vectores > 0 && ` ${resultado.vectores} embeddings: la búsqueda por significado también lo encuentra.`}
+          {resultado.aviso && <span className="block text-amber-800">{resultado.aviso}</span>}
         </p>
       )}
       {estado === "error" && (

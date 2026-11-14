@@ -7,7 +7,7 @@
 import { useRef, useState } from "react";
 
 import { preguntar, ServidorError } from "@/api/client";
-import type { AskResponse, Fuente, Origen, Ranking, Sql } from "@/api/types";
+import type { AskResponse, Fuente, Modo, Origen, Ranking, Sql } from "@/api/types";
 import { BarraTiempos } from "@/components/BarraTiempos";
 import { Fuentes } from "@/components/Fuentes";
 import { ListaSql } from "@/components/ListaSql";
@@ -19,6 +19,7 @@ interface Turno {
   id: number;
   pregunta: string;
   ranking: Ranking;
+  modo: Modo;
   etapa: Etapa;
   consulta?: string;
   fuentes: Fuente[];
@@ -28,7 +29,7 @@ interface Turno {
 }
 
 const MENSAJES_ETAPA: Record<Exclude<Etapa, "lista" | "error">, string> = {
-  reescribiendo: "Gemini está pasando la pregunta a palabras clave en inglés…",
+  reescribiendo: "Gemini está preparando la pregunta para buscarla…",
   buscando: "Buscando en QuipuDB con el índice invertido…",
   generando: "Gemini está escribiendo la respuesta con estas fuentes…",
 };
@@ -61,9 +62,18 @@ function Cargando({ etapa }: { etapa: Exclude<Etapa, "lista" | "error"> }) {
   );
 }
 
-export function Preguntar() {
+const MODOS: { modo: Modo; nombre: string; ayuda: string }[] = [
+  { modo: "texto", nombre: "Palabras", ayuda: "BM25 o TF-IDF sobre el índice invertido (Parte 3)" },
+  { modo: "vectores", nombre: "Significado", ayuda: "HNSW con el embedding de la pregunta (Parte 4)" },
+  { modo: "hibrido", nombre: "Híbrido", ayuda: "Los dos, fusionados con Reciprocal Rank Fusion" },
+];
+
+export function Preguntar({ busquedaVectorial }: { busquedaVectorial: boolean }) {
   const [texto, setTexto] = useState("");
   const [ranking, setRanking] = useState<Ranking>("BM25");
+  // Sin elegir, el hibrido si hay embeddings cargados; si no, solo palabras.
+  const [modoElegido, setModo] = useState<Modo | null>(null);
+  const modo: Modo = busquedaVectorial ? (modoElegido ?? "hibrido") : "texto";
   const [k, setK] = useState(8);
   const [reescribir, setReescribir] = useState(true);
   const [turnos, setTurnos] = useState<Turno[]>([]);
@@ -82,7 +92,15 @@ export function Preguntar() {
     if (!pregunta || ocupado) return;
     const id = Date.now();
     setTurnos((ts) => [
-      { id, pregunta, ranking, etapa: reescribir ? "reescribiendo" : "buscando", fuentes: [], sql: [] },
+      {
+        id,
+        pregunta,
+        ranking,
+        modo,
+        etapa: modo !== "texto" || reescribir ? "reescribiendo" : "buscando",
+        fuentes: [],
+        sql: [],
+      },
       ...ts,
     ]);
     setActualId(id);
@@ -91,7 +109,7 @@ export function Preguntar() {
     cancelar.current = new AbortController();
     try {
       await preguntar(
-        { pregunta, k, ranking, reescribir },
+        { pregunta, k, ranking, reescribir, modo },
         (evento) => {
           if (evento.etapa === "consulta") actualizar(id, { etapa: "buscando", consulta: evento.consulta });
           else if (evento.etapa === "recuperacion")
@@ -153,7 +171,7 @@ export function Preguntar() {
                 >
                   <span className="line-clamp-2">{t.pregunta}</span>
                   <span className="text-xs text-stone-500">
-                    {t.etapa === "error" ? "error" : t.etapa === "lista" ? `${t.respuesta?.citas.length ?? 0} citas · ${t.ranking}` : "en curso…"}
+                    {t.etapa === "error" ? "error" : t.etapa === "lista" ? `${t.respuesta?.citas.length ?? 0} citas · ${MODOS.find((m) => m.modo === t.modo)?.nombre}` : "en curso…"}
                   </span>
                 </button>
               </li>
@@ -186,13 +204,37 @@ export function Preguntar() {
             className="w-full resize-none rounded-md border border-stone-300 px-3 py-2 text-stone-900 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
           />
           <div className="flex flex-wrap items-center gap-3 text-sm">
-            <div className="inline-flex rounded-md border border-stone-300 p-0.5" role="radiogroup" aria-label="Ranking">
+            <div className="inline-flex rounded-md border border-stone-300 p-0.5" role="radiogroup" aria-label="Buscar por">
+              {MODOS.map((m) => {
+                const deshabilitado = m.modo !== "texto" && !busquedaVectorial;
+                return (
+                  <button
+                    key={m.modo}
+                    type="button"
+                    role="radio"
+                    aria-checked={modo === m.modo}
+                    disabled={deshabilitado}
+                    onClick={() => setModo(m.modo)}
+                    title={deshabilitado ? "Faltan los embeddings: python -m app.corpus.vectores embeber y cargar" : m.ayuda}
+                    className={`rounded px-2.5 py-1 disabled:cursor-not-allowed disabled:text-stone-300 ${modo === m.modo ? "bg-sky-700 text-white" : "text-stone-700 hover:bg-stone-100"}`}
+                  >
+                    {m.nombre}
+                  </button>
+                );
+              })}
+            </div>
+            <div
+              className={`inline-flex rounded-md border border-stone-300 p-0.5 ${modo === "vectores" ? "opacity-40" : ""}`}
+              role="radiogroup"
+              aria-label="Ranking"
+            >
               {(["BM25", "TF_IDF"] as Ranking[]).map((r) => (
                 <button
                   key={r}
                   type="button"
                   role="radio"
                   aria-checked={ranking === r}
+                  disabled={modo === "vectores"}
                   onClick={() => setRanking(r)}
                   className={`rounded px-2.5 py-1 ${ranking === r ? "bg-stone-900 text-white" : "text-stone-700 hover:bg-stone-100"}`}
                 >
@@ -215,7 +257,12 @@ export function Preguntar() {
               </select>
             </label>
             <label className="flex items-center gap-1.5 text-stone-700" title="Gemini pasa la pregunta a palabras clave en inglés, el idioma de los papers">
-              <input type="checkbox" checked={reescribir} onChange={(e) => setReescribir(e.target.checked)} />
+              <input
+                type="checkbox"
+                checked={reescribir && modo !== "vectores"}
+                disabled={modo === "vectores"}
+                onChange={(e) => setReescribir(e.target.checked)}
+              />
               reescribir en inglés
             </label>
             <div className="ml-auto flex gap-2">
@@ -263,9 +310,16 @@ export function Preguntar() {
               <h2 className="text-lg font-semibold text-stone-900">{actual.pregunta}</h2>
               {actual.consulta && (
                 <p className="text-sm text-stone-600">
-                  Buscado en QuipuDB como{" "}
-                  <code className="rounded bg-stone-100 px-1.5 py-0.5 font-mono text-xs text-stone-800">{actual.consulta}</code>{" "}
-                  con {actual.ranking === "TF_IDF" ? "TF-IDF" : "BM25"}
+                  {actual.modo === "vectores" ? (
+                    "Buscado en QuipuDB por significado: HNSW con el embedding de la pregunta"
+                  ) : (
+                    <>
+                      Buscado en QuipuDB como{" "}
+                      <code className="rounded bg-stone-100 px-1.5 py-0.5 font-mono text-xs text-stone-800">{actual.consulta}</code>{" "}
+                      con {actual.ranking === "TF_IDF" ? "TF-IDF" : "BM25"}
+                      {actual.modo === "hibrido" && " y por significado con HNSW, fusionados con RRF"}
+                    </>
+                  )}
                 </p>
               )}
             </header>

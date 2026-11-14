@@ -129,3 +129,52 @@ def test_hnsw_con_metrica_fija(metric):
 def test_indices_vectoriales_rechazan_escalar(kind):
     with pytest.raises(SQLSemanticError, match="VECTOR"):
         bind_create_index(parse_sql(f"CREATE INDEX vecinos ON fotos (ruta) USING {kind}"), SCHEMA)
+
+
+# ---------------------------------------------------------------------------
+# VECTOR literal en lugar de un archivo (#251)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT id FROM fotos WHERE SIMILAR_TO(rasgos, VECTOR(0.5, -0.25, 1), k=2) USING HNSW",
+        "SELECT id FROM fotos WHERE SIMILAR_TO(VECTOR(0.5, -0.25, 1), 2) USING IVF",
+    ],
+)
+def test_vector_literal_se_enlaza_sin_archivo(sql):
+    where = bind_select(parse_sql(sql), SCHEMA).where
+
+    assert where.column.index == 2
+    assert where.query == ""
+    assert where.vector == (0.5, -0.25, 1.0)
+    assert where.k == 2
+
+
+def test_vector_literal_de_otra_dimension_senala_la_componente_que_sobra():
+    sql = "SELECT id FROM fotos WHERE SIMILAR_TO(rasgos, VECTOR(1, 2, 3, 4), k=1) USING HNSW"
+
+    with pytest.raises(SQLSemanticError, match=r"tiene 4 componentes y la columna declara VECTOR\(3\)") as e:
+        bind_select(parse_sql(sql), SCHEMA)
+
+    assert sql[e.value.span.start : e.value.span.end] == "4"
+
+
+def test_vector_literal_corto_senala_el_literal_entero():
+    sql = "SELECT id FROM fotos WHERE SIMILAR_TO(VECTOR(1, 2), k=1) USING HNSW"
+
+    with pytest.raises(SQLSemanticError, match="tiene 2 componentes") as e:
+        bind_select(parse_sql(sql), SCHEMA)
+
+    assert sql[e.value.span.start : e.value.span.end] == "VECTOR(1, 2)"
+
+
+def test_vector_literal_mal_formado_es_error_de_parseo():
+    with pytest.raises(SQLParseError, match="componente 2 de VECTOR"):
+        parse_sql("SELECT id FROM fotos WHERE SIMILAR_TO(VECTOR(1, 'x', 3), k=1) USING HNSW")
+
+
+def test_sin_archivo_ni_vector_el_error_dice_las_dos_formas():
+    with pytest.raises(SQLParseError, match="archivo entre comillas o un VECTOR"):
+        parse_sql("SELECT id FROM fotos WHERE SIMILAR_TO(rasgos, 42, k=1) USING HNSW")

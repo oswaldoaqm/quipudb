@@ -717,11 +717,18 @@ class _Parser:
     def _similar_condition(self, start: Token) -> SimilarCondition:
         self._expect(TokenKind.LPAREN, "se esperaba '(' despues de SIMILAR_TO")
         column = None
-        if self._peek().kind is not TokenKind.STRING:
+        if self._peek().kind not in {TokenKind.STRING, TokenKind.VECTOR}:
             column = self._column_reference("se esperaba la columna VECTOR o el archivo")
             self._expect(TokenKind.COMMA, "se esperaba ',' despues de la columna")
-        token = self._expect(TokenKind.STRING, "SIMILAR_TO requiere un archivo entre comillas")
-        query = StringLiteral(str(token.value), token.span)
+        query: StringLiteral | VectorLiteral
+        if self._match(TokenKind.VECTOR):
+            # Un vector calculado fuera del motor (#251): no hay archivo que extraer.
+            query = self._vector_literal(self._previous())
+        else:
+            token = self._expect(
+                TokenKind.STRING, "SIMILAR_TO requiere un archivo entre comillas o un VECTOR(...)"
+            )
+            query = StringLiteral(str(token.value), token.span)
         self._expect(TokenKind.COMMA, "se esperaba ',' antes de k")
         if self._peek().kind is TokenKind.IDENTIFIER:
             name = self._advance()

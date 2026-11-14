@@ -29,3 +29,39 @@ class LLMFalso:
 
 
 __all__ = ["LLMError", "LLMFalso"]
+
+
+class EmbedderFalso:
+    """Embeddings de mentira pero con sentido: cada palabra suma en una casilla
+    elegida por un hash estable. Dos textos con palabras en comun quedan
+    cerca en coseno, que es lo que las pruebas necesitan."""
+
+    modelo = "embedding-falso"
+
+    def __init__(self, sinonimos: dict[str, str] | None = None) -> None:
+        # Para simular que el embedding cruza idiomas: "grafo" cuenta como "graph".
+        self.sinonimos = sinonimos or {}
+        self.llamadas: list[tuple[str, int]] = []
+
+    def _vector(self, texto: str) -> list[float]:
+        import hashlib
+        import re
+
+        from app.rag.embeddings import DIMENSION, normalizar
+
+        vector = [0.0] * DIMENSION
+        for palabra in re.findall(r"[a-záéíóúñ]+", texto.lower()):
+            palabra = self.sinonimos.get(palabra, palabra)
+            casilla = int.from_bytes(hashlib.md5(palabra.encode()).digest()[:4], "little")
+            vector[casilla % DIMENSION] += 1.0
+        if not any(vector):
+            vector[0] = 1.0
+        return normalizar(vector)
+
+    def documentos(self, textos):
+        self.llamadas.append(("documentos", len(textos)))
+        return [self._vector(t) for t in textos]
+
+    def consulta(self, texto):
+        self.llamadas.append(("consulta", 1))
+        return self._vector(texto)

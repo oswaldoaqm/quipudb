@@ -6,6 +6,7 @@ import { ETIQUETA_ERROR, type MotorError } from "@/api/errors";
 import { Panel } from "@/components/Panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { EXTENSIONES_AUDIO, EXTENSIONES_IMAGEN, insertarRuta } from "@/lib/media-ingest";
 import "@/lib/monaco";
 
 interface QueryPanelProps {
@@ -14,7 +15,11 @@ interface QueryPanelProps {
   onEjecutar: () => void;
   ejecutando: boolean;
   error: MotorError | null;
+  /** Sube un archivo para SIMILAR_TO y devuelve su ruta en el servidor (#290). */
+  onSubirArchivo: (archivo: File) => Promise<string>;
 }
+
+const ACEPTA = [...EXTENSIONES_IMAGEN, ...EXTENSIONES_AUDIO].join(",");
 
 const OPCIONES: Monaco.editor.IStandaloneEditorConstructionOptions = {
   minimap: { enabled: false },
@@ -37,7 +42,11 @@ export function QueryPanel({
   onEjecutar,
   ejecutando,
   error,
+  onSubirArchivo,
 }: QueryPanelProps) {
+  const archivoRef = useRef<HTMLInputElement>(null);
+  const [subiendo, setSubiendo] = useState(false);
+  const [errorArchivo, setErrorArchivo] = useState<string | null>(null);
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   // Monaco tarda mas en montar que el mock en responder, asi que un error puede
@@ -86,6 +95,43 @@ export function QueryPanel({
     monaco.editor.setModelMarkers(model, "quipudb", marcadores);
   }, [error, editorListo]);
 
+  /**
+   * La ruta entra donde esta el cursor, o reemplaza lo seleccionado. Va por
+   * `executeEdits` y no por `onSqlChange` para que Ctrl+Z la deshaga.
+   */
+  const ponerRuta = (ruta: string) => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    const seleccion = editor?.getSelection();
+    if (!editor || !model || !seleccion) {
+      onSqlChange(insertarRuta(sql, sql.length, sql.length, ruta).texto);
+      return;
+    }
+    const inicio = model.getOffsetAt(seleccion.getStartPosition());
+    const fin = model.getOffsetAt(seleccion.getEndPosition());
+    const { texto, cursor } = insertarRuta(model.getValue(), inicio, fin, ruta);
+    editor.executeEdits("quipudb-archivo", [
+      { range: seleccion, text: texto.slice(inicio, cursor), forceMoveMarkers: true },
+    ]);
+    editor.setPosition(model.getPositionAt(cursor));
+    editor.focus();
+  };
+
+  const elegirArchivo = async (evento: React.ChangeEvent<HTMLInputElement>) => {
+    const archivo = evento.target.files?.[0];
+    evento.target.value = "";
+    if (!archivo) return;
+    setSubiendo(true);
+    setErrorArchivo(null);
+    try {
+      ponerRuta(await onSubirArchivo(archivo));
+    } catch (fallo) {
+      setErrorArchivo(fallo instanceof Error ? fallo.message : String(fallo));
+    } finally {
+      setSubiendo(false);
+    }
+  };
+
   return (
     <Panel titulo="Consultas" nota="Ctrl+Enter para ejecutar">
       <div className="flex h-full min-h-0 flex-col">
@@ -124,8 +170,34 @@ export function QueryPanel({
           </div>
         )}
 
-        <div className="flex shrink-0 justify-end border-t px-3 py-2">
+        {errorArchivo && (
+          <div className="flex shrink-0 items-baseline gap-2 border-t border-destructive/30 bg-destructive/5 px-3 py-1.5">
+            <span className="min-w-0 flex-1 text-xs text-destructive">{errorArchivo}</span>
+          </div>
+        )}
+
+        <div className="flex shrink-0 items-center gap-2 border-t px-3 py-2">
+          <input
+            ref={archivoRef}
+            type="file"
+            accept={ACEPTA}
+            onChange={(evento) => void elegirArchivo(evento)}
+            className="hidden"
+          />
           <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={subiendo}
+            onClick={() => archivoRef.current?.click()}
+          >
+            {subiendo ? "Subiendo..." : "Usar un archivo"}
+          </Button>
+          <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+            imagen o audio de tu computador para SIMILAR_TO
+          </span>
+          <Button
+            className="ml-auto"
             size="sm"
             onClick={onEjecutar}
             disabled={ejecutando || sql.trim() === ""}

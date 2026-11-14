@@ -267,10 +267,15 @@ class MatchCondition:
 
 @dataclass(frozen=True, slots=True)
 class SimilarCondition:
-    """Top-k multimedia; sin columna explicita se exige un unico VECTOR."""
+    """Top-k multimedia; sin columna explicita se exige un unico VECTOR.
+
+    ``query`` es un archivo, que pasa por ExtractFeatures (#188), o un
+    ``VECTOR(...)`` calculado fuera del motor, como el embedding de una
+    pregunta (#251), que se busca tal cual.
+    """
 
     column: ColumnReference | None
-    query: StringLiteral
+    query: StringLiteral | VectorLiteral
     k: IntegerLiteral
     kind: IndexKind
     metric: VectorMetric

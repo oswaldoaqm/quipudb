@@ -10,12 +10,18 @@ import type {
   TableInfo,
 } from "@/api/types";
 import { cn } from "@/lib/utils";
+import { CargaCarpeta, type CargaCarpetaProps } from "@/panels/CargaCarpeta";
 
-interface FilesPanelProps {
+type Multimedia = Omit<CargaCarpetaProps, "tabla">;
+
+interface FilesPanelProps extends Multimedia {
   tablas: TableInfo[];
   cargando: boolean;
-  /** Sube el CSV y devuelve el informe del motor. Lo resuelve `App`. */
-  onCargarCsv: (tabla: string, archivo: File) => Promise<LoadResult>;
+  /**
+   * Sube el CSV y devuelve el informe del motor. Lo resuelve `App`. Con
+   * `atomic`, si una fila falla no queda ninguna (#291).
+   */
+  onCargarCsv: (tabla: string, archivo: File, atomic: boolean) => Promise<LoadResult>;
 }
 
 /** VARCHAR es el unico que declara tamano; el resto lo tiene fijo por tipo. */
@@ -145,6 +151,7 @@ function Cargar({
   const [cargando, setCargando] = useState(false);
   const [informe, setInforme] = useState<LoadResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [atomico, setAtomico] = useState(false);
 
   const elegir = async (evento: React.ChangeEvent<HTMLInputElement>) => {
     const archivo = evento.target.files?.[0];
@@ -157,7 +164,7 @@ function Cargar({
     setInforme(null);
     setError(null);
     try {
-      setInforme(await onCargarCsv(tabla.name, archivo));
+      setInforme(await onCargarCsv(tabla.name, archivo, atomico));
     } catch (fallo) {
       setError(fallo instanceof Error ? fallo.message : String(fallo));
     } finally {
@@ -186,6 +193,16 @@ function Cargar({
       <span className="ml-2 text-[10px] text-muted-foreground">
         hacia <span className="font-mono">{tabla.name}</span>
       </span>
+      <label className="mt-1 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+        <input
+          type="checkbox"
+          checked={atomico}
+          disabled={cargando}
+          onChange={(evento) => setAtomico(evento.target.checked)}
+          className="size-3 accent-primary"
+        />
+        si una fila falla, no cargar ninguna
+      </label>
 
       {error !== null && (
         <p className="mt-2 rounded border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[11px]">
@@ -200,9 +217,11 @@ function Cargar({
 function Detalle({
   tabla,
   onCargarCsv,
+  multimedia,
 }: {
   tabla: TableInfo;
   onCargarCsv: FilesPanelProps["onCargarCsv"];
+  multimedia: Multimedia;
 }) {
   return (
     <div className="pb-2">
@@ -223,6 +242,7 @@ function Detalle({
       {/* La clave remonta el componente cuando cambia la tabla: el informe de
           una carga no debe quedar colgando bajo otra tabla. */}
       <Cargar key={tabla.name} tabla={tabla} onCargarCsv={onCargarCsv} />
+      <CargaCarpeta key={`carpeta-${tabla.name}`} tabla={tabla} {...multimedia} />
 
       <h3 className="px-3 pt-1 pb-0.5 text-[10px] tracking-wide text-muted-foreground uppercase">
         Columnas
@@ -256,6 +276,7 @@ export function FilesPanel({
   tablas,
   cargando,
   onCargarCsv,
+  ...multimedia
 }: FilesPanelProps) {
   const [elegida, setElegida] = useState<string | null>(null);
 
@@ -297,7 +318,7 @@ export function FilesPanel({
           </ul>
 
           <div className="min-h-0 flex-1 overflow-auto">
-            <Detalle tabla={tabla} onCargarCsv={onCargarCsv} />
+            <Detalle tabla={tabla} onCargarCsv={onCargarCsv} multimedia={multimedia} />
           </div>
         </div>
       )}

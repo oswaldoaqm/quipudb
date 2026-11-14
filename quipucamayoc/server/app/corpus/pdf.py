@@ -7,6 +7,8 @@ termina citando, asi que se limpia lo que estorba a BM25 y al lector:
 - cabeceras y pies que se repiten en las paginas (titulo de la revista,
   numero de pagina, el sello lateral de arXiv),
 - ligaduras tipograficas (``ﬁ`` -> ``fi``) y caracteres de control,
+- el codigo de las formulas que algunas figuras guardan como texto
+  (``<latexit sha1_base64="...">AAADG3ic...</latexit>``, #265),
 - nombres de glifo que pypdf escribe cuando no sabe que letras son
   (``shi/f_ted`` -> ``shifted``),
 - la seccion de referencias, opcionalmente: sus nombres y titulos atraen
@@ -42,6 +44,15 @@ _CORTE_CON_GUION = re.compile(r"(\w)-\n\s*([a-z])")
 # esto, "shifted" queda como "shi/f_ted" y BM25 nunca lo encuentra.
 _GLIFO_LIGADURA = re.compile(r"/((?:[A-Za-z]_)+[A-Za-z])")
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+# Las figuras hechas con LaTeXiT guardan cada formula como base64 en la capa
+# de texto, y pypdf la extrae como si fuera prosa: en el paper de UpLIF eran
+# dos tercios del texto (#265). Se quita el bloque completo y, si quedo sin
+# cerrar, la etiqueta con la cadena base64 pegada a ella, sin tocar las
+# palabras que siguen.
+# Sin cruzar otra apertura: un bloque sin cerrar no se lleva el texto que hay
+# hasta el cierre del siguiente.
+_LATEXIT = re.compile(r"<latexit\b[^>]*>(?:(?!<latexit\b).)*?</latexit>", re.DOTALL)
+_LATEXIT_SUELTO = re.compile(r"<latexit\b[^>]*>[A-Za-z0-9+/=]*|</latexit>")
 
 
 class PdfError(ValueError):
@@ -107,6 +118,7 @@ def _normalizar(texto: str) -> str:
     # NFKC separa las ligaduras (ﬁ, ﬂ) y unifica espacios raros.
     texto = unicodedata.normalize("NFKC", texto).replace("\r\n", "\n").replace("\r", "\n")
     texto = _GLIFO_LIGADURA.sub(lambda m: m.group(1).replace("_", ""), texto)
+    texto = _LATEXIT_SUELTO.sub("\n", _LATEXIT.sub("\n", texto))
     return _CONTROL.sub(" ", texto)
 
 

@@ -1,0 +1,28 @@
+{
+  "protocol_version": 1,
+  "catalog_version": 1,
+  "nodes": [
+    {"node_id": "n1", "base_url": "http://n1:8000"},
+    {"node_id": "n2", "base_url": "http://n2:8000"}
+  ],
+  "tables": [
+    {
+      "name": "items",
+      "mode": "range",
+      "storage": "heap",
+      "primary_key": "id",
+      "columns": [
+        {"name": "id", "type": "INT", "size": null},
+        {"name": "nombre", "type": "VARCHAR", "size": 80}
+      ],
+      "indexes": [
+        {"name": "por_id", "column": "id", "structure": "bplus_unclustered", "supports_range": true},
+        {"name": "por_nombre", "column": "nombre", "structure": "extendible_hash", "supports_range": false}
+      ],
+      "fragments": [
+        {"fragment_id": "items_f0", "node_id": "n1", "lower": null, "upper": 10000},
+        {"fragment_id": "items_f1", "node_id": "n2", "lower": 10000, "upper": null}
+      ]
+    }
+  ]
+}

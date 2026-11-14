@@ -8,22 +8,31 @@
 
 import type { ReactNode } from "react";
 
-import { bloques, partes } from "@/lib/markdown";
+import { arbol, bloques, type Nodo } from "@/lib/markdown";
+
+function dibujar(nodos: Nodo[], cita: (numero: number) => ReactNode): ReactNode[] {
+  return nodos.map((nodo, i) => {
+    switch (nodo.tipo) {
+      case "texto":
+        return <span key={i}>{nodo.texto}</span>;
+      case "cita":
+        return <span key={i}>{cita(nodo.numero)}</span>;
+      case "codigo":
+        return (
+          <code key={i} className="rounded bg-stone-100 px-1 py-0.5 font-mono text-[0.85em] text-stone-800">
+            {nodo.texto}
+          </code>
+        );
+      case "negrita":
+        return <strong key={i}>{dibujar(nodo.hijos, cita)}</strong>;
+      case "cursiva":
+        return <em key={i}>{dibujar(nodo.hijos, cita)}</em>;
+    }
+  });
+}
 
 export function enLinea(texto: string, cita: (numero: number) => ReactNode): ReactNode[] {
-  return partes(texto).map(({ texto: parte, marca }, i) => {
-    if (!marca) return <span key={i}>{parte}</span>;
-    if (parte.startsWith("**") && parte.endsWith("**")) return <strong key={i}>{enLinea(parte.slice(2, -2), cita)}</strong>;
-    if (/^\[\d+\]$/.test(parte)) return <span key={i}>{cita(Number(parte.slice(1, -1)))}</span>;
-    if (parte.startsWith("`") || parte.startsWith("$")) {
-      return (
-        <code key={i} className="rounded bg-stone-100 px-1 py-0.5 font-mono text-[0.85em] text-stone-800">
-          {parte.slice(1, -1)}
-        </code>
-      );
-    }
-    return <em key={i}>{parte.slice(1, -1)}</em>;
-  });
+  return dibujar(arbol(texto), cita);
 }
 
 export function Markdown({ texto, cita }: { texto: string; cita: (numero: number) => ReactNode }) {

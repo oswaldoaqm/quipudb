@@ -9,6 +9,8 @@ export interface Health {
     url: string;
     reachable: boolean;
     tables: number | null;
+    /** Si hay embeddings cargados: habilita los modos vectores e hibrido (#252). */
+    vector_search: boolean;
     error: string | null;
   };
   llm: {
@@ -20,11 +22,18 @@ export interface Health {
 
 export type Ranking = "BM25" | "TF_IDF";
 
+/** texto: BM25/TF-IDF; vectores: HNSW con el embedding; hibrido: los dos con RRF. */
+export type Modo = "texto" | "vectores" | "hibrido";
+
+/** Que busqueda encontro un chunk: por palabras, por significado o las dos. */
+export type OrigenFuente = "texto" | "vectores";
+
 export interface AskRequest {
   pregunta: string;
   k: number;
   ranking: Ranking;
   reescribir: boolean;
+  modo: Modo;
 }
 
 export interface Paper {
@@ -42,7 +51,9 @@ export interface Fuente {
   orden: number;
   pagina: number;
   texto: string;
+  /** BM25/TF-IDF en modo texto, coseno en vectores, puntaje RRF en hibrido. */
   relevancia: number;
+  origen: OrigenFuente[];
   citada: boolean;
   paper: Paper;
 }
@@ -82,6 +93,7 @@ export interface Sql {
 
 export interface Tiempos {
   reescritura_ms: number;
+  embedding_ms: number;
   recuperacion_ms: number;
   generacion_ms: number;
   total_ms: number;
@@ -93,6 +105,7 @@ export interface AskResponse {
   respuesta: string;
   modelo: string | null;
   ranking: Ranking;
+  modo: Modo;
   citas: number[];
   citas_descartadas: number[];
   fuentes: Fuente[];
@@ -143,6 +156,9 @@ export interface NuevoPaper {
 export interface Agregado {
   arxiv_id: string;
   chunks: number;
+  /** Chunks con embedding; 0 sin busqueda vectorial. */
+  vectores: number;
+  aviso: string | null;
   tiempos: {
     extraccion_s: number;
     chunking_s: number;

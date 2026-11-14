@@ -202,3 +202,56 @@ def test_el_stream_sin_clave_responde_503_antes_de_empezar() -> None:
 
     assert respuesta.status_code == 503
     assert respuesta.json()["origen"] == "llm"
+
+
+# ---------------------------------------------------------------------------
+# Modos vectores e hibrido (#252)
+# ---------------------------------------------------------------------------
+
+
+def test_ask_hibrido_usa_el_embedding_de_la_pregunta_original(corpus_vectorial) -> None:
+    from tests.llm_falso import EmbedderFalso
+
+    motor, tablas = corpus_vectorial
+    embedder = EmbedderFalso(sinonimos={"grafos": "graph", "capas": "layers"})
+    llm = LLMFalso(reescritura="graph greedy routing", respuesta="Baja por capas [1].")
+    cliente = TestClient(
+        create_app(Settings(gemini_api_key="clave"), motor=motor, llm=llm, embedder=embedder, tablas=tablas)
+    )
+
+    cuerpo = cliente.post("/ask", json={"pregunta": "¿grafos por capas?", "modo": "hibrido"}).json()
+
+    assert cuerpo["modo"] == "hibrido"
+    assert embedder.llamadas == [("consulta", 1)]
+    assert cuerpo["fuentes"][0]["paper"]["arxiv_id"] == "2401.00001v1"
+    assert all(f["origen"] for f in cuerpo["fuentes"])
+    assert cuerpo["tiempos"]["embedding_ms"] > 0
+    propositos = [s["proposito"] for s in cuerpo["sql"]]
+    assert any("significado" in p for p in propositos) and any("palabras" in p for p in propositos)
+
+
+def test_ask_vectores_no_reescribe(corpus_vectorial) -> None:
+    from tests.llm_falso import EmbedderFalso
+
+    motor, tablas = corpus_vectorial
+    llm = LLMFalso(reescritura=AssertionError("no debia reescribir"))
+    cliente = TestClient(
+        create_app(Settings(gemini_api_key="clave"), motor=motor, llm=llm, embedder=EmbedderFalso(), tablas=tablas)
+    )
+
+    cuerpo = cliente.post("/ask", json={"pregunta": "histograms selectivity", "modo": "vectores"}).json()
+
+    assert (cuerpo["consulta"], cuerpo["modo"]) == ("histograms selectivity", "vectores")
+    assert cuerpo["tiempos"]["reescritura_ms"] < 5
+    assert all(f["origen"] == ["vectores"] for f in cuerpo["fuentes"])
+
+
+def test_sin_embeddings_cargados_los_modos_vectoriales_son_409(corpus) -> None:
+    motor, tablas = corpus
+    cliente = TestClient(create_app(Settings(gemini_api_key="clave"), motor=motor, llm=LLMFalso(), tablas=tablas))
+
+    for ruta in ("/ask", "/ask/stream"):
+        respuesta = cliente.post(ruta, json={"pregunta": "x", "modo": "hibrido"})
+        assert respuesta.status_code == 409
+        assert respuesta.json()["origen"] == "motor"
+        assert "app.corpus.vectores" in respuesta.json()["error"]

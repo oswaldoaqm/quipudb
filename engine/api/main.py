@@ -27,6 +27,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile as StarletteUploadFile
+from starlette.exceptions import HTTPException
 
 from engine.api.media_load import MediaJobs, MediaLoadConflict
 from engine.api.schemas import (
@@ -37,11 +39,34 @@ from engine.api.schemas import (
     QueryRequest,
     QueryResponse,
     TableInfo,
+    UploadedFile,
+    UploadRejected,
+    UploadResponse,
+    VocabularyInfo,
+    VocabularyJobResponse,
+    VocabularyRegisterRequest,
+    VocabularyTrainRequest,
 )
 from engine.api.service import describe_catalog, to_error, to_load_response, to_response
+from engine.api.uploads import (
+    MAX_FILES_PER_REQUEST,
+    UploadError,
+    existing_upload_folder,
+    new_upload_folder,
+    remove_if_empty,
+    save_files,
+)
+from engine.api.vocabularies import (
+    VocabularyConflict,
+    VocabularyJobs,
+    VocabularyRegistry,
+    list_vocabularies,
+    registry_key,
+    vector_column,
+)
 from engine.executor import QueryProcessor
 from engine.executor.bulk_load import CsvLoadError, detect_encoding
-from engine.executor.media_load import MediaLoadError
+from engine.executor.media_load import MediaLoadError, media_path
 from engine.executor.native import load_native
 from engine.parser.errors import SQLError
 from engine.transactions import TransactionError
@@ -69,7 +94,9 @@ class Motor:
         database: Any = None,
         native: Any = None,
         media_root: Path | None = None,
+        registry: VocabularyRegistry | None = None,
     ) -> None:
+        self._registry = registry
         self._catalog = catalog
         self._processor = processor
         self._database = database
@@ -93,6 +120,9 @@ class Motor:
                     for key, value in vocabularies.items()
                 ):
                     raise ValueError("QUIPUDB_MEDIA_VOCABULARIES debe ser un objeto JSON de rutas")
+                if self._registry is not None:
+                    # Las asociadas desde la API (#287) se suman a las del entorno.
+                    vocabularies = self._registry.add_initial(vocabularies)
                 self._processor = QueryProcessor(
                     self._database,
                     media_root=self._media_root or os.environ.get(
@@ -101,6 +131,19 @@ class Motor:
                     media_vocabularies=vocabularies,
                 )
             yield self._processor, self._database, self._native
+
+    def flush(self) -> None:
+        """Vacia a disco tablas e indices abiertos, si el motor llego a abrirse.
+
+        El grafo de un HNSW vive en memoria y solo baja a disco con
+        ``Database.flush()`` o con el destructor del core, y al apagar uvicorn
+        los destructores no corren: sin esto, reiniciar la API dejaba cada HNSW
+        vacio mientras las tablas, IVF y los indices de texto sobrevivian.
+        """
+
+        with self._lock:
+            if self._database is not None:
+                self._database.flush()
 
 
 def _sin_ubicacion(error: Exception) -> JSONResponse:
@@ -124,17 +167,31 @@ def create_app(
     root = media_root if media_root is not None else Path(
         os.environ.get("QUIPUDB_MEDIA_ROOT", "datos/multimedia")
     )
+    registry = VocabularyRegistry(root)
+    if processor is not None:
+        for key, path in registry.saved().items():
+            processor.register_vocabulary(key, path)
     motor = Motor(
-        catalog=catalog, processor=processor, database=database, native=native, media_root=root,
+        catalog=catalog,
+        processor=processor,
+        database=database,
+        native=native,
+        media_root=root,
+        registry=registry,
     )
     media_jobs = MediaJobs(motor, root)
+    vocabulary_jobs = VocabularyJobs(motor, root, registry)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         try:
             yield
         finally:
+            # Primero las cargas: un trabajo multimedia puede seguir
+            # insertando en los indices hasta que termine su lote.
             await run_in_threadpool(media_jobs.close)
+            await run_in_threadpool(vocabulary_jobs.close)
+            await run_in_threadpool(motor.flush)
 
     app = FastAPI(
         title="QuipuDB",
@@ -144,7 +201,8 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(ORIGENES),
-        allow_methods=["GET", "POST"],
+        # PUT: asociar un vocabulario a una tabla desde el frontend (#289).
+        allow_methods=["GET", "POST", "PUT"],
         allow_headers=["Content-Type"],
     )
     app.state.motor = motor
@@ -224,6 +282,149 @@ def create_app(
                 status_code=404,
                 content=QueryErrorResponse(error="el trabajo multimedia no existe").model_dump(),
             )
+
+    @app.post(
+        "/vocabularies",
+        response_model=VocabularyJobResponse,
+        status_code=202,
+        responses={
+            400: {"model": QueryErrorResponse},
+            404: {"model": QueryErrorResponse},
+            409: {"model": QueryErrorResponse},
+        },
+    )
+    def entrenar_vocabulario(
+        peticion: VocabularyTrainRequest,
+    ) -> VocabularyJobResponse | JSONResponse:
+        """Entrena un vocabulario con una carpeta del servidor, en segundo plano (#287)."""
+
+        try:
+            return vocabulary_jobs.start(peticion)
+        except KeyError:
+            return JSONResponse(
+                status_code=404,
+                content=QueryErrorResponse(
+                    error=f"la tabla {peticion.table!r} no existe"
+                ).model_dump(),
+            )
+
+    @app.get("/vocabularies", response_model=list[VocabularyInfo])
+    def listar_vocabularios() -> list[VocabularyInfo]:
+        return list_vocabularies(root, registry)
+
+    @app.get("/vocabularies/{job_id}", response_model=VocabularyJobResponse)
+    def progreso_vocabulario(job_id: str) -> VocabularyJobResponse | JSONResponse:
+        try:
+            return vocabulary_jobs.get(job_id)
+        except KeyError:
+            return JSONResponse(
+                status_code=404,
+                content=QueryErrorResponse(error="el entrenamiento no existe").model_dump(),
+            )
+
+    @app.put(
+        "/tables/{tabla}/vocabulary",
+        response_model=VocabularyInfo,
+        responses={400: {"model": QueryErrorResponse}, 404: {"model": QueryErrorResponse}},
+    )
+    def asociar_vocabulario(
+        tabla: str, peticion: VocabularyRegisterRequest
+    ) -> VocabularyInfo | JSONResponse:
+        """Asocia un vocabulario ya entrenado a la tabla, sin reiniciar la API."""
+
+        from engine.multimedia.features import Vocabulary, VocabularyError
+
+        path = media_path(root.resolve(), peticion.vocabulary, directory=False)
+        try:
+            vocabulary = Vocabulary.load(path)
+        except VocabularyError as error:
+            raise MediaLoadError(str(error)) from None
+        relative = path.relative_to(root.resolve()).as_posix()
+        with motor.en_uso() as (processor_, catalogo, modulo):
+            try:
+                column, dimension = vector_column(catalogo, modulo, tabla, peticion.column)
+            except KeyError:
+                return JSONResponse(
+                    status_code=404,
+                    content=QueryErrorResponse(error=f"la tabla {tabla!r} no existe").model_dump(),
+                )
+            if dimension != vocabulary.k:
+                raise MediaLoadError(
+                    f"la columna {column!r} es VECTOR({dimension}) y el vocabulario tiene "
+                    f"{vocabulary.k} palabras"
+                )
+            registry.register(registry_key(tabla, peticion.column), relative, processor_)
+        return next(v for v in list_vocabularies(root, registry) if v.path == relative)
+
+    @app.post(
+        "/media/uploads",
+        response_model=UploadResponse,
+        responses={400: {"model": QueryErrorResponse}},
+    )
+    async def subir_multimedia(
+        request: Request,
+        max_file_bytes: Annotated[
+            int, Query(ge=1, le=64 * 1024**2, description="Límite por archivo")
+        ] = 32 * 1024**2,
+    ) -> UploadResponse | JSONResponse:
+        """Guarda imágenes o audios del navegador dentro de la raíz multimedia (#288).
+
+        Campos multipart: ``files`` (uno o varios; el nombre puede traer
+        subcarpetas), ``name`` para la carpeta nueva y ``folder`` para agregar
+        a una carpeta de ``subidas/`` devuelta por una petición anterior.
+        """
+
+        try:
+            form = await request.form(max_files=MAX_FILES_PER_REQUEST, max_fields=8)
+        except HTTPException as error:
+            mensaje = str(error.detail)
+            if "Too many files" in mensaje:
+                mensaje = (
+                    f"se admiten hasta {MAX_FILES_PER_REQUEST} archivos por petición; "
+                    "sube el resto en otra petición con el mismo folder"
+                )
+            return JSONResponse(
+                status_code=400,
+                content=QueryErrorResponse(error=f"peticion invalida: {mensaje}").model_dump(),
+            )
+        uploads = [f for f in form.getlist("files") if isinstance(f, StarletteUploadFile)]
+        if not uploads:
+            raise UploadError("la petición no trae archivos en el campo files")
+        folder_value = form.get("folder")
+        name_value = form.get("name")
+        resolved_root = root.resolve()
+        try:
+            if isinstance(folder_value, str) and folder_value:
+                folder = existing_upload_folder(resolved_root, folder_value)
+                created = False
+            else:
+                folder = new_upload_folder(
+                    resolved_root, name_value if isinstance(name_value, str) else None
+                )
+                created = True
+            report = await run_in_threadpool(
+                save_files,
+                resolved_root,
+                folder,
+                [(u.filename or "", u.file) for u in uploads],
+                max_file_bytes=max_file_bytes,
+            )
+            if created and not report.saved:
+                remove_if_empty(folder)
+        finally:
+            await form.close()
+        return UploadResponse(
+            folder=report.folder,
+            saved=len(report.saved),
+            files=[UploadedFile(name=n, path=p, bytes=b) for n, p, b in report.saved],
+            rejected=[UploadRejected(name=n, error=e) for n, e in report.rejected],
+        )
+
+    @app.exception_handler(VocabularyConflict)
+    async def _vocabulary_conflict(_: Request, error: VocabularyConflict) -> JSONResponse:
+        return JSONResponse(
+            status_code=409, content=QueryErrorResponse(error=str(error)).model_dump()
+        )
 
     @app.exception_handler(MediaLoadConflict)
     async def _media_conflict(_: Request, error: MediaLoadConflict) -> JSONResponse:

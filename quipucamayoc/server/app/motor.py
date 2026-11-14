@@ -90,6 +90,16 @@ def literal(texto: str) -> str:
     return "'" + texto.replace("\x00", "").replace("'", "''") + "'"
 
 
+def literal_vector(vector: Sequence[float]) -> str:
+    """``VECTOR(...)`` en decimal fijo: el lexer no lee notacion cientifica.
+
+    Los embeddings estan normalizados (cada componente entre -1 y 1), asi que
+    7 decimales conservan la precision de un float32.
+    """
+
+    return "VECTOR(" + ", ".join(f"{x:.7f}" for x in vector) + ")"
+
+
 class ClienteMotor:
     def __init__(
         self,

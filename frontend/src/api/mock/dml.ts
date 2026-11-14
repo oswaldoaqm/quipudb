@@ -131,7 +131,41 @@ function tipoDelLiteral(texto: string): string {
   if (/^-?\d+$/.test(texto)) return "INT";
   if (/^-?\d*\.\d+$/.test(texto)) return "DOUBLE";
   if (/^POINT\s*\(/i.test(texto)) return "POINT";
+  // `_literal_type` no tiene rama para el VECTOR y cae en el nombre de la
+  // clase del AST; el mock repite ese texto en vez de inventar uno mejor.
+  if (/^VECTOR\s*\(/i.test(texto)) return "VectorLiteral";
   return "desconocido";
+}
+
+/** `VECTOR(c1, c2, ...)` contra la dimension de la columna (`_bind_vector`). */
+function convertirVector(
+  texto: string,
+  columna: ColumnInfo,
+  falla: (mensaje: string) => never,
+  sql: string,
+  posicion: number,
+): number[] {
+  const cuerpo = /^VECTOR\s*\(([\s\S]*)\)$/i.exec(texto);
+  const partes = (cuerpo?.[1] ?? "").split(",").map((p) => p.trim());
+  partes.forEach((parte, i) => {
+    if (!/^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(parte)) {
+      throw new MotorError({
+        error: `se esperaba un numero en la componente ${i + 1} de VECTOR`,
+        kind: "parse",
+        ...ubicarEn(sql, posicion, texto.length),
+      });
+    }
+  });
+  const componentes = partes.map(Number);
+  if (componentes.length !== columna.size) {
+    falla(
+      `el vector tiene ${componentes.length} componentes y la columna declara VECTOR(${columna.size})`,
+    );
+  }
+  // float32: lo que no cabe ahi no es finito para el motor.
+  const fuera = componentes.findIndex((c) => !Number.isFinite(c) || Math.abs(c) > 3.4028234663852886e38);
+  if (fuera >= 0) falla(`la componente ${fuera + 1} del vector no es finita`);
+  return componentes;
 }
 
 function convertir(
@@ -150,6 +184,11 @@ function convertir(
 
   const recibido = tipoDelLiteral(texto);
   const esperado = columna.type;
+
+  if (esperado === "VECTOR") {
+    if (recibido !== "VectorLiteral") falla(`se esperaba VECTOR y se recibio ${recibido}`);
+    return convertirVector(texto, columna, falla, sql, posicion);
+  }
 
   if (esperado === "VARCHAR") {
     if (recibido !== "VARCHAR") {

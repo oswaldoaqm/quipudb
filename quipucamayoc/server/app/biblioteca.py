@@ -21,7 +21,10 @@ from pathlib import Path
 from app.corpus.arxiv import Paper
 from app.corpus.carga import Reporte, cargar
 from app.corpus.esquema import Tablas
-from app.motor import ClienteMotor
+from app.corpus.vectores import insertar
+from app.motor import ClienteMotor, literal
+from app.rag.embeddings import Embedder
+from app.rag.llm import LLMError
 from app.rag.recuperacion import ConsultaSql
 
 PREFIJO_LOCAL = "local-"
@@ -100,6 +103,9 @@ def listar(
 class Agregado:
     arxiv_id: str
     reporte: Reporte
+    vectores: int = 0
+    """Chunks del PDF con embedding: 0 si no hay busqueda vectorial."""
+    aviso: str | None = None
 
 
 def agregar(
@@ -112,12 +118,17 @@ def agregar(
     autores: list[str],
     anio: int,
     abstract: str = "",
+    embedder: Embedder | None = None,
 ) -> Agregado:
     """Guarda el PDF y lo carga como cualquier paper del corpus.
 
     La carga es atomica por lote: si el PDF no se puede leer, no queda nada
     en las tablas. Al final la carga reconstruye el indice de texto, asi que
     la siguiente pregunta ya lo encuentra sin pagar esa espera.
+
+    Con ``embedder`` y la tabla de embeddings creada (#252), tambien embebe sus
+    chunks: si no, la busqueda por significado nunca lo encontraria. Si Gemini
+    falla, el paper queda cargado igual y ``aviso`` lo dice.
     """
 
     if not pdf.startswith(b"%PDF-"):
@@ -133,4 +144,27 @@ def agregar(
     )
     carpeta.mkdir(parents=True, exist_ok=True)
     (carpeta / paper.archivo).write_bytes(pdf)
-    return Agregado(arxiv_id, cargar(motor, [paper], carpeta, tablas=tablas))
+    reporte = cargar(motor, [paper], carpeta, tablas=tablas)
+    if embedder is None or reporte.fallidos or tablas.vectores not in motor.table_names():
+        return Agregado(arxiv_id, reporte)
+    paper_id = int(
+        motor.query(f"SELECT id FROM {tablas.papers} WHERE arxiv_id = {literal(arxiv_id)}").rows[0][0]
+    )
+    # Por el hash sobre chunks.paper_id: no recorre la tabla.
+    chunks = motor.query(
+        f"SELECT id, texto FROM {tablas.chunks} WHERE paper_id = {paper_id}"
+    ).rows
+    try:
+        vectores = [
+            v
+            for desde in range(0, len(chunks), 10)
+            for v in embedder.documentos([str(t) for _, t in chunks[desde : desde + 10]])
+        ]
+    except LLMError as error:
+        return Agregado(
+            arxiv_id, reporte, aviso=f"sin embeddings: la busqueda por significado no lo vera ({error})"
+        )
+    insertados = insertar(
+        motor, tablas, [(int(c), paper_id, v) for (c, _), v in zip(chunks, vectores, strict=True)]
+    )
+    return Agregado(arxiv_id, reporte, vectores=insertados)

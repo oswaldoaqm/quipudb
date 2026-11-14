@@ -31,7 +31,7 @@ e indexación anterior en siglos al disco duro.
 | 2 | Base de datos espacial: R-Tree, consultas por radio, k-NN y polígono, métricas euclidiana y Haversine, mapa, SQL espacial y comparación contra PostGIS | **Completa** |
 | 3 | Búsqueda de texto: SPIMI, TF-IDF + coseno, BM25, `MATCH` y `SCORE()` en SQL y comparación contra GIN | **Completa** |
 | 4 | Búsqueda vectorial multimedia: SIFT/MFCC, bolsa de palabras, IVF, HNSW, `SIMILAR_TO` en SQL y experimentos | **Completa** |
-| 5 | [Quipucamayoc](quipucamayoc/README.md): RAG sobre 187 papers de arXiv (opción A), con QuipuDB y Gemini | **Completa** (los embeddings opcionales, #251 y #252, pendientes) |
+| 5 | [Quipucamayoc](quipucamayoc/README.md): RAG sobre 187 papers de arXiv (opción A), con QuipuDB y Gemini | **Completa**, con la búsqueda opcional por significado e híbrida (#251, #252) |
 
 ## Arquitectura del sistema
 
@@ -238,6 +238,26 @@ uvicorn engine.api.main:app --reload --port 8000
 
 La documentación interactiva queda en `http://localhost:8000/docs`. La API
 acepta CORS desde el servidor de desarrollo del frontend (`localhost:5173`).
+
+#### Alternativa: la API en Docker
+
+Las Partes 3 y 4 necesitan numpy, OpenCV (SIFT) y soundfile en el **mismo**
+Python que carga `quipudb_native`. Donde eso no se puede —por ejemplo, el Python
+de MSYS2 en Windows—, la imagen compila el core y los bindings en Linux, igual
+que el job `bindings` del CI:
+
+```bash
+docker compose up -d --build                                  # API en http://localhost:8000
+docker compose exec motor python scripts/sembrar_demo.py      # tablas de demostración
+```
+
+`sembrar_demo.py` carga, todo a través de la API: `articulos` (español) y
+`documentos` (Quora, si existe `benchmarks/datasets/documentos_1000.csv`) con
+índice FULLTEXT; `imagenes` (48 PNG, `VECTOR(32)`, HNSW coseno e IVF) y
+`canciones` (36 WAV, `VECTOR(24)`, IVF y HNSW euclidiano), con sus vocabularios
+entrenados. Deja `foto_consulta.jpg` y `audio_query.wav` en la raíz multimedia
+para consultar con `SIMILAR_TO('foto_consulta.jpg', k=10) USING HNSW`. Los datos
+viven en el volumen `quipudb-datos`; `--rehacer` recrea las tablas.
 
 ### 7. Levantar la interfaz
 
@@ -546,6 +566,11 @@ creación de índices, configuración por tabla, parámetros y límites.
 | `POST /tables/{tabla}/load` | Carga un CSV en una tabla existente |
 | `POST /tables/{tabla}/load-media` | Inicia la ingesta de una carpeta del servidor y devuelve 202 con un identificador de trabajo |
 | `GET /tables/{tabla}/load-media/{job_id}` | Consulta progreso, archivos insertados/fallidos, errores y tiempo de la ingesta multimedia |
+| `POST /media/uploads` | Recibe imágenes o audios del navegador y los guarda en una carpeta nueva de la raíz multimedia; devuelve las rutas del servidor |
+| `POST /vocabularies` | Entrena el vocabulario de una carpeta del servidor en segundo plano y, si se indica, lo asocia a una tabla |
+| `GET /vocabularies/{job_id}` | Consulta el avance del entrenamiento |
+| `GET /vocabularies` | Lista los vocabularios guardados y las tablas que los usan |
+| `PUT /tables/{tabla}/vocabulary` | Asocia un vocabulario ya entrenado a la tabla para `SIMILAR_TO`, sin reiniciar la API |
 
 #### Carga masiva desde CSV
 
@@ -588,7 +613,8 @@ curl -F "file=@alumnos.csv" http://localhost:8000/tables/alumnos/load
   listan las primeras 100; `errors_truncated` avisa si hubo más.
 - **Con `?atomic=true`** la primera fila que falla deshace todas las anteriores
   y se responde 400 con su línea. Usa la misma bitácora de deshacer que
-  `BEGIN TRANSACTION`, que guarda una entrada por fila cargada.
+  `BEGIN TRANSACTION`, que guarda una entrada por fila cargada. En el frontend
+  es la casilla "si una fila falla, no cargar ninguna", debajo de "Cargar CSV".
 - **Codificación: UTF-8 (con o sin BOM) o cp1252**, que es lo que escribe
   "Guardar como CSV" en un Excel de Windows en español. `encoding` en la
   respuesta dice cuál se usó. Un archivo con tildes en UTF-8 y algún byte roto
@@ -622,14 +648,23 @@ CREATE TABLE fotos (
 ) USING HEAP;
 ```
 
-Con `QUIPUDB_MEDIA_ROOT=datos/multimedia` (valor por defecto), una carpeta
-`datos/multimedia/fotos_demo` y un vocabulario de **8 palabras** en
-`datos/multimedia/fotos_demo.npz`:
+Con `QUIPUDB_MEDIA_ROOT=datos/multimedia` (valor por defecto) y una carpeta
+`datos/multimedia/fotos_demo`, primero se entrena su vocabulario de **8
+palabras** y se asocia a la tabla:
+
+```bash
+curl -X POST http://localhost:8000/vocabularies \
+  -H 'Content-Type: application/json' \
+  -d '{"folder":"fotos_demo","k":8,"name":"fotos_demo","table":"fotos"}'
+```
+
+Cuando `GET /vocabularies/{job_id}` diga `completed`, se carga la carpeta con
+`vocabularios/fotos_demo.npz`:
 
 ```bash
 curl -X POST http://localhost:8000/tables/fotos/load-media \
   -H 'Content-Type: application/json' \
-  -d '{"folder":"fotos_demo","vocabulary":"fotos_demo.npz","batch_size":32}'
+  -d '{"folder":"fotos_demo","vocabulary":"vocabularios/fotos_demo.npz","batch_size":32}'
 ```
 
 La respuesta incluye `job_id`. Consúltalo en
@@ -647,9 +682,14 @@ preparación de una carpeta pequeña, parámetros, límites y pruebas.
 
 Cinco paneles en una sola pantalla:
 
-- **Archivos**: tablas con su organización, columnas, índices y botón para cargar CSV.
+- **Archivos**: tablas con su organización, columnas, índices y botones para cargar
+  un CSV o una carpeta de imágenes o audios. La carpeta se elige del computador,
+  se sube, se entrena su vocabulario (o se elige uno existente) y se carga, con
+  el avance de cada paso; al terminar, "Probar SIMILAR_TO" deja una consulta lista
+  en el editor.
 - **Consultas**: editor Monaco con resaltado SQL; `Ctrl+Enter` ejecuta y los errores
-  se muestran con línea y columna.
+  se muestran con línea y columna. "Usar un archivo" sube una imagen o un audio
+  del computador y pone su ruta en el cursor, para buscar con `SIMILAR_TO`.
 - **Resultados**: tabla virtualizada con el tipo de cada columna, filas y tiempo.
 - **Mapa**: Leaflet sobre OpenStreetMap. Resultados en azul, resto de la tabla en
   gris, punto de referencia en ámbar y la región de búsqueda: el círculo de un
@@ -668,6 +708,21 @@ Cuatro hilos incrementan cinco veces la misma fila con
 `BEGIN → SELECT → DELETE → INSERT → END`. Sin un `LockManager` compartido el
 contador termina por debajo de 20; con él, siempre en 20, y los interbloqueos de
 upgrade compartido→exclusivo se resuelven por timeout y reintento.
+
+### Modo distribuido
+
+Dos nodos de datos con la tabla `items` partida por rango de `id` (n1 hasta
+9999, n2 desde 10000) y un coordinador en el puerto 8000 que enruta cada
+consulta y combina los resultados. El frontend se conecta al coordinador sin
+cambios.
+
+```bash
+python -m scripts.demo_distribuida --root /tmp/quipudb-demo                  # local
+docker compose -f docker-compose.distribuido.yml up -d --build               # en Docker
+```
+
+Arquitectura, pruebas y evidencias en
+[`docs/integracion-distribuida.md`](docs/integracion-distribuida.md).
 
 ## Comparación experimental
 
@@ -715,10 +770,12 @@ protocolos completos de cada suite.
 ## Aplicación: Quipucamayoc
 
 Un chatbot que responde preguntas sobre papers académicos citando de dónde
-sale cada afirmación (Parte 5, opción A). La pregunta se busca en QuipuDB con el
-índice invertido de la Parte 3 (`MATCH ... USING BM25`), los metadatos de cada
-paper salen de una tabla relacional por su hash, y Gemini redacta la respuesta
-con esos fragmentos. La interfaz muestra, junto a la respuesta, cada SQL que se
+sale cada afirmación (Parte 5, opción A). La pregunta se busca en QuipuDB por
+palabras, con el índice invertido de la Parte 3 (`MATCH ... USING BM25`); por
+significado, con el HNSW de la Parte 4 sobre los embeddings de los chunks
+(`SIMILAR_TO`); o con las dos, fusionadas. Los metadatos de cada paper salen de
+una tabla relacional por su hash, y Gemini redacta la respuesta con esos
+fragmentos. La interfaz muestra, junto a la respuesta, cada SQL que se
 ejecutó en el motor con su plan.
 
 Detalles: [`quipucamayoc/README.md`](quipucamayoc/README.md), el
@@ -736,6 +793,7 @@ Detalles: [`quipucamayoc/README.md`](quipucamayoc/README.md), el
 | [`benchmarks/README.md`](benchmarks/README.md) | Datasets, protocolos y reproducción de las corridas |
 | [`docs/ingesta-multimedia.md`](docs/ingesta-multimedia.md) | Ingesta de carpetas de imágenes/audio, trabajos REST y ejemplo reproducible |
 | [`docs/consultas-multimedia.md`](docs/consultas-multimedia.md) | SIMILAR_TO, creación SQL de IVF/HNSW, métricas y vocabularios |
+| [`docs/integracion-distribuida.md`](docs/integracion-distribuida.md) | Modo distribuido: arquitectura, cómo levantarlo, pruebas integradas y evidencias |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Ramas, commits y pull requests |
 
 ## Equipo

@@ -43,11 +43,150 @@ reutilizarse **sin cambiar centroides ni IDF** al cargar y consultar. No debe
 entrenarse un vocabulario por archivo ni por lote. Imágenes y audios usan
 vocabularios separados: sus descriptores tienen dimensión 128 y 13,
 respectivamente. `VECTOR(K)` guarda el histograma de K palabras, no la matriz
-de descriptores. No se entrena un vocabulario al llamar al endpoint.
+de descriptores. La carga no entrena un vocabulario: hay que entrenarlo antes,
+desde Python como arriba o por REST, como explica la sección siguiente.
 Las consultas deben usar también los mismos límites de puntos SIFT y
 duración de audio que la ingesta para describir los objetos de igual forma.
 El [manual de SIMILAR_TO](consultas-multimedia.md) explica cómo configurar el
 mismo vocabulario y crear los índices IVF/HNSW desde SQL después de cargar.
+
+## Desde el frontend (#289)
+
+En el panel de Archivos, una tabla con exactamente `id INT PRIMARY KEY`,
+`nombre VARCHAR`, `ruta VARCHAR` y `rasgos VECTOR(K)` muestra "Cargar carpeta".
+Se elige una carpeta del computador y el panel cuenta sus imágenes y audios,
+sin contar lo que no lee el pipeline (`Thumbs.db`, un `.txt`). Después se elige
+entrenar un vocabulario nuevo con esa carpeta, con la K de la columna, o uno ya
+guardado con la misma K. "Cargar" encadena los tres pasos de esta página: sube
+los archivos en tandas de 100 (#288), entrena el vocabulario o lo asocia a la
+tabla (#287) y carga la carpeta (`load-media`), mostrando cuántos archivos van
+en cada paso.
+
+La carga empieza en el id siguiente al mayor de la tabla, así una segunda
+carpeta no choca con las claves de la primera. Al terminar se ven los archivos
+que entraron, los que fallaron con su motivo y el vocabulario usado.
+"Probar SIMILAR_TO" pone en el editor una consulta con el primer archivo
+cargado, con el índice vectorial de la tabla o, si no tiene, `USING HNSW`, que
+cae a la búsqueda exacta.
+
+En el panel de Consultas, "Usar un archivo" sube una imagen o un audio del
+computador (#290) y pone su ruta en el editor donde está el cursor. Si el
+cursor está entre las comillas de `SIMILAR_TO('')`, la ruta entra sin comillas
+propias; si no, entra como literal entre comillas. Cada archivo va a su propia
+carpeta de `subidas/`, así dos consultas con el mismo nombre de archivo no
+chocan. Un archivo que no es imagen ni audio, o que el servidor rechaza, se
+informa junto al editor.
+
+![SIMILAR_TO con una foto elegida del computador](informe/capturas/frontend/similar-con-archivo-propio.png)
+
+![Carga de carpeta y SIMILAR_TO en el frontend](informe/capturas/frontend/carga-carpeta-similar.png)
+
+Con los datos falsos (`VITE_USE_MOCK=true`) el botón responde que la carga
+necesita el motor real: no hay archivos que describir.
+
+## Subir archivos desde el navegador (#288)
+
+`load-media`, `POST /vocabularies` y `SIMILAR_TO` leen rutas del servidor. Si la
+API corre en Docker o en otra máquina, el servidor no ve el disco del usuario,
+así que primero se suben los archivos:
+
+```bash
+curl -F "files=@engine/multimedia/datos/ejemplo.png;filename=viaje/dia1/a.png" \
+     -F "files=@engine/multimedia/datos/ejemplo.png;filename=../x.png" \
+     -F "name=viaje" http://localhost:8000/media/uploads
+```
+
+```json
+{"folder": "subidas/viaje-838fe851", "saved": 1,
+ "files": [{"name": "viaje/dia1/a.png", "path": "subidas/viaje-838fe851/viaje/dia1/a.png", "bytes": 512}],
+ "rejected": [{"name": "../x.png", "error": "el nombre no puede tener '..', '.' ni partes vacías"}]}
+```
+
+Cada subida crea una carpeta nueva `subidas/<name>-<id>` dentro de
+`QUIPUDB_MEDIA_ROOT`; `folder` es la ruta que después se pasa a
+`POST /vocabularies` o a `load-media`, y cada `path` sirve tal cual en
+`SIMILAR_TO('...')`. El nombre de cada archivo puede traer subcarpetas, como
+las manda el navegador al subir una carpeta.
+
+Se aceptan hasta 500 archivos por petición. Una carpeta más grande se sube en
+tandas: las siguientes peticiones mandan `folder` con la carpeta que devolvió la
+primera. Solo se puede agregar a carpetas de `subidas/`, nunca a otra parte de
+la raíz.
+
+Cada archivo se revisa por separado y, si no pasa, va a `rejected` con su motivo
+mientras los demás se guardan: rutas absolutas o con `..`, caracteres no
+válidos, extensiones que no son imagen ni audio, un nombre que ya existe en la
+carpeta y archivos por encima de `max_file_bytes` (32 MiB por omisión, hasta
+64 MiB, como parámetro de la URL). Un archivo que se pasa del límite no deja
+restos, y una subida nueva en la que no se guardó nada no deja carpeta.
+
+Starlette guarda en un temporal cada archivo de la petición antes de que la API
+lo revise, así que el límite por archivo no acota lo que ocupa una petición
+mientras llega; para eso está el máximo de 500 archivos.
+
+## Entrenar el vocabulario por REST (#287)
+
+Con la API levantada, el vocabulario de una carpeta del servidor se entrena sin
+Python. Es un trabajo en segundo plano, como la carga:
+
+```bash
+curl -X POST http://localhost:8000/vocabularies \
+  -H 'Content-Type: application/json' \
+  -d '{"folder":"fotos_demo","k":8,"seed":187,"table":"fotos"}'
+```
+
+Devuelve 202 con un `job_id`; `GET /vocabularies/{job_id}` da el avance hasta
+que `status` sea `completed` o `failed`. El trabajo recorre la carpeta, describe
+cada archivo con SIFT o MFCC según su extensión, corre k-means y guarda el
+resultado en `vocabularios/<nombre>.npz` dentro de `QUIPUDB_MEDIA_ROOT`. Si ese
+nombre ya existe agrega `-2`, `-3`, y nunca pisa uno anterior.
+
+| Campo | Por omisión | Qué hace |
+|---|---|---|
+| `folder` | obligatorio | Carpeta dentro de `QUIPUDB_MEDIA_ROOT` |
+| `k` | 64 | Palabras del vocabulario; es la `K` de `VECTOR(K)` |
+| `seed` | 0 | Semilla de k-means; con la misma semilla sale el mismo vocabulario |
+| `name` | `<carpeta>-k<K>` | Nombre del archivo, solo letras, dígitos, `-` y `_` |
+| `table`, `column` | ninguno | Si vienen, al terminar el vocabulario queda asociado a esa tabla |
+| `max_files` | 500 | Con más archivos, toma esa cantidad espaciados en orden alfabético |
+| `max_descriptors` | 50 000 | Muestra de descriptores para k-means; el IDF se mide con todos |
+| `recursive`, `max_file_bytes`, `max_keypoints`, `max_audio_seconds` | como en la carga | Mismos límites que la ingesta |
+
+La respuesta cuenta los archivos encontrados (`discovered`), los que no son
+imagen ni audio (`skipped`), los elegidos (`selected`), los descritos
+(`described`) y los que fallaron, con su error. Al terminar trae la ruta del
+vocabulario, su huella (`codebook_id`), de cuántos objetos salió (`documents`) y
+la tabla a la que quedó asociado (`registered_for`).
+
+Antes de describir nada se rechaza, con 400 o 404, una carpeta fuera de la raíz,
+una tabla que no existe, una columna que no es VECTOR, una tabla con varias
+columnas VECTOR sin `column`, y una `k` distinta de la dimensión de la columna.
+El trabajo falla si la carpeta mezcla imágenes y audios, porque sus descriptores
+tienen 128 y 13 valores, o si salen menos descriptores que `k`. Hay un solo
+entrenamiento activo por proceso; otro mientras tanto responde 409. Describir y
+correr k-means no toma el lock del motor, así que las consultas siguen.
+
+El entrenamiento guarda en memoria los descriptores de los archivos elegidos:
+con `max_files=500` y 500 puntos SIFT por imagen son hasta 128 MB.
+
+### Asociar un vocabulario a una tabla
+
+`table` en el entrenamiento, o después:
+
+```bash
+curl -X PUT http://localhost:8000/tables/fotos/vocabulary \
+  -H 'Content-Type: application/json' \
+  -d '{"vocabulary":"vocabularios/fotos_demo-k8.npz"}'
+```
+
+Con `column` se asocia a una columna concreta, como la clave `tabla.columna` de
+`QUIPUDB_MEDIA_VOCABULARIES`. La asociación vale de inmediato para `SIMILAR_TO`,
+sin reiniciar la API, y se guarda en `vocabularios.json` dentro de la raíz, así
+sobrevive al reinicio. Las de `QUIPUDB_MEDIA_VOCABULARIES` siguen valiendo; si
+una tabla está en los dos lugares, gana la de `vocabularios.json`.
+
+`GET /vocabularies` lista los `.npz` de la raíz y de `vocabularios/` con su K,
+modalidad, cantidad de objetos y las tablas que los usan.
 
 ## Iniciar la API y crear la tabla
 

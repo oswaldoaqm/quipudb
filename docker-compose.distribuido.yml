@@ -1,0 +1,64 @@
+# QuipuDB distribuido en Docker: dos nodos y el coordinador (#280).
+# Desde la raiz del repo:
+#
+#   docker compose -f docker-compose.distribuido.yml up -d --build
+#   curl http://localhost:8000/health
+#
+# El coordinador queda en http://localhost:8000, el mismo puerto de la API
+# local, asi que el frontend se conecta sin cambiar su configuracion. Por eso
+# no se puede levantar junto con docker-compose.yml: los dos usan el 8000.
+#
+# El catalogo es docs/ejemplos/catalogo-distribuido-v1.json: items con id < 10000
+# en n1 e id >= 10000 en n2. Dentro de la red de Docker los nodos se llaman n1 y
+# n2 y escuchan en el 8000, que es lo que dice ese catalogo.
+
+x-quipudb: &quipudb
+  build: .
+  image: quipudb:local
+  volumes:
+    - ./docs/ejemplos/catalogo-distribuido-v1.json:/app/catalogo.json:ro
+
+services:
+  n1:
+    <<: *quipudb
+    # Prepara el directorio la primera vez; despues solo arranca el nodo.
+    command: >
+      sh -c "python -m scripts.preparar_nodo --catalog catalogo.json --catalog-version 1
+      --node-id n1 --data-dir /app/datos/n1
+      && exec python -m engine.distributed.node_server --catalog catalogo.json
+      --catalog-version 1 --node-id n1 --data-dir /app/datos/n1 --host 0.0.0.0 --port 8000"
+    volumes:
+      - ./docs/ejemplos/catalogo-distribuido-v1.json:/app/catalogo.json:ro
+      - n1-datos:/app/datos
+    # Solo para mirar un nodo por dentro durante la demo; el frontend no lo usa.
+    ports:
+      - "8001:8000"
+
+  n2:
+    <<: *quipudb
+    command: >
+      sh -c "python -m scripts.preparar_nodo --catalog catalogo.json --catalog-version 1
+      --node-id n2 --data-dir /app/datos/n2
+      && exec python -m engine.distributed.node_server --catalog catalogo.json
+      --catalog-version 1 --node-id n2 --data-dir /app/datos/n2 --host 0.0.0.0 --port 8000"
+    volumes:
+      - ./docs/ejemplos/catalogo-distribuido-v1.json:/app/catalogo.json:ro
+      - n2-datos:/app/datos
+    ports:
+      - "8002:8000"
+
+  coordinador:
+    <<: *quipudb
+    command: >
+      python -m engine.distributed.coordinator --catalog catalogo.json
+      --catalog-version 1 --host 0.0.0.0 --port 8000
+    depends_on:
+      - n1
+      - n2
+    ports:
+      - "8000:8000"
+
+volumes:
+  # Un volumen por nodo: cada uno guarda solo sus fragmentos.
+  n1-datos:
+  n2-datos:

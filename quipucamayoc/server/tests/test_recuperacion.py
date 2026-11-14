@@ -98,3 +98,69 @@ def test_una_pregunta_hostil_no_rompe_nada(corpus) -> None:
     recuperar(motor, "'; DROP TABLE papers; -- graph", tablas=tablas)
 
     assert {tablas.papers, tablas.chunks} <= motor.table_names()
+
+
+# ---------------------------------------------------------------------------
+# Vectores e hibrido (#252)
+# ---------------------------------------------------------------------------
+
+
+def test_rrf_premia_estar_en_las_dos_listas() -> None:
+    from app.rag.recuperacion import RRF_K, fusionar
+
+    fusion = fusionar([[1, 2, 3], [3, 4]])
+
+    assert [c for c, _ in fusion] == [3, 1, 2, 4]
+    assert dict(fusion)[3] == pytest.approx(1 / (RRF_K + 3) + 1 / (RRF_K + 1))
+
+
+def test_rrf_desempata_por_la_mejor_posicion_y_el_id() -> None:
+    from app.rag.recuperacion import fusionar
+
+    assert [c for c, _ in fusionar([[7, 9], [9, 7]])] == [7, 9]
+    assert [c for c, _ in fusionar([[], [5]])] == [5]
+
+
+def test_sin_vector_los_modos_vectoriales_son_error() -> None:
+    with pytest.raises(ValueError, match="embedding"):
+        recuperar(None, "x", modo="hibrido")  # type: ignore[arg-type]
+
+
+def test_modo_vectores_busca_por_significado_con_hnsw(corpus_vectorial) -> None:
+    from tests.llm_falso import EmbedderFalso
+
+    motor, tablas = corpus_vectorial
+    vector = EmbedderFalso().consulta("centroids k-means nprobe lists")
+
+    r = recuperar(motor, "", modo="vectores", vector=vector, tablas=tablas)
+
+    assert r.modo == "vectores"
+    assert r.evidencias[0].paper.arxiv_id == "2401.00002v1"
+    assert r.evidencias[0].fragmento.origen == ("vectores",)
+    assert "centroids" in r.evidencias[0].fragmento.texto  # el texto vino por el hash
+    similar, *resto = r.consultas
+    assert "SIMILAR_TO(embedding, VECTOR(" in similar.sql
+    knn = _pasos(similar.plan["root"], "knn_search")[0]
+    assert knn["structure"] == "hnsw"
+    assert "consulta VECTOR literal de 768 componentes" in knn["detail"]
+    textos = [c for c in resto if c.proposito.startswith("texto del chunk")]
+    assert textos and all(_pasos(c.plan["root"], "index_search") for c in textos)
+
+
+def test_modo_hibrido_fusiona_y_dice_de_donde_salio_cada_chunk(corpus_vectorial) -> None:
+    from tests.llm_falso import EmbedderFalso
+
+    motor, tablas = corpus_vectorial
+    # BM25 encuentra "histograms"; el embedding falso, "join orders".
+    vector = EmbedderFalso().consulta("join orders cardinality")
+
+    r = recuperar(motor, "histograms selectivity", modo="hibrido", vector=vector, tablas=tablas)
+
+    origenes = {f.origen for f in (e.fragmento for e in r.evidencias)}
+    assert ("texto", "vectores") in origenes or {("texto",), ("vectores",)} <= origenes
+    assert r.evidencias[0].paper.arxiv_id == "2401.00003v1"
+    relevancias = [e.fragmento.relevancia for e in r.evidencias]
+    assert relevancias == sorted(relevancias, reverse=True)
+    assert [c.proposito.split(" (")[0] for c in r.consultas[:2]] == [
+        "chunks por palabras", "chunks por significado",
+    ]
