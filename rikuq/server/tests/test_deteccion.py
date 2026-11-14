@@ -148,3 +148,24 @@ def test_un_paisaje_de_verdad_lanza_el_error_de_imagen_vacia(tmp_path: Path) -> 
 
 def test_los_modelos_viven_fuera_del_repositorio() -> None:
     assert MODELOS.parent.name == "datos"
+
+
+@sin_modelos
+def test_main_anota_la_imagen_sin_rostros_y_sigue_con_las_demas(tmp_path, capsys) -> None:
+    """Igual que hara la carga del dataset en #302: no corta al primer problema."""
+
+    import cv2
+
+    from app.rostros.deteccion import main
+
+    plana = tmp_path / "plana.png"
+    plana.write_bytes(cv2.imencode(".png", np.zeros((120, 120, 3), dtype=np.uint8))[1])
+    rota = tmp_path / "rota.jpg"
+    rota.write_bytes(b"esto no es una imagen")
+
+    codigo = main([str(plana), str(rota)])
+
+    assert codigo == 1
+    salida = capsys.readouterr()
+    assert "no hay ningun rostro en plana.png" in salida.err
+    assert "no es una imagen" in salida.err

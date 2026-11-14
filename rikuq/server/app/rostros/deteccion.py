@@ -11,10 +11,16 @@ tamano siempre, que es lo que la lamina llama *Normalized, Frontal Face*.
 Alinear importa porque el descriptor de #305 no es invariante a la pose ni a
 la escala: si no se normaliza, la misma persona de perfil y de frente cae en
 puntos distintos del espacio y el umbral de #303 no puede separar nada.
+
+Para mirar que encuentra en una foto, desde ``rikuq/server``::
+
+    python -m app.rostros.deteccion foto.jpg
+    python -m app.rostros.deteccion foto.jpg --guardar recortes/
 """
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -131,6 +137,51 @@ def rostros_de(
     )
 
 
+def main(argv: list[str] | None = None) -> int:
+    """Dice cuantos rostros hay en cada imagen y, si se pide, guarda los recortes.
+
+    Una imagen sin rostros se anota y no detiene a las demas, igual que hara
+    la carga del dataset en #302: devuelve 1 al final para que se note, pero
+    recorre todo.
+    """
+
+    import argparse
+
+    from app.rostros.errores import FeatureExtractionError
+
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
+    parser.add_argument("imagenes", nargs="+", type=Path)
+    parser.add_argument("--umbral", type=float, default=UMBRAL_CONFIANZA)
+    parser.add_argument("--guardar", type=Path, help="carpeta donde dejar los recortes alineados")
+    args = parser.parse_args(argv)
+
+    detector = crear_detector(args.umbral)
+    alineador = crear_alineador()
+    if args.guardar is not None:
+        args.guardar.mkdir(parents=True, exist_ok=True)
+
+    problemas = 0
+    for ruta in args.imagenes:
+        try:
+            imagen = leer_color(ruta)
+            rostros = detectar(imagen, detector, ruta=ruta)
+        except FeatureExtractionError as error:
+            print(f"  {error}", file=sys.stderr)
+            problemas += 1
+            continue
+
+        confianzas = ", ".join(f"{r.confianza:.2f}" for r in rostros)
+        print(f"{ruta.name}: {len(rostros)} rostro(s) [{confianzas}]")
+        if args.guardar is None:
+            continue
+        for numero, rostro in enumerate(rostros, start=1):
+            destino = args.guardar / f"{ruta.stem}_{numero:02d}.png"
+            destino.write_bytes(cv2.imencode(".png", alinear(imagen, rostro, alineador))[1])
+            print(f"  -> {destino}")
+
+    return 1 if problemas else 0
+
+
 __all__ = [
     "LADO_ALINEADO",
     "UMBRAL_CONFIANZA",
@@ -139,5 +190,10 @@ __all__ = [
     "crear_alineador",
     "crear_detector",
     "detectar",
+    "main",
     "rostros_de",
 ]
+
+
+if __name__ == "__main__":
+    sys.exit(main())
