@@ -1,5 +1,6 @@
 """La carga desde la linea de comandos (#302), con el motor simulado."""
 
+import ast
 import json
 from pathlib import Path
 
@@ -12,6 +13,32 @@ from app.carga.esquema import PERSONAS, ROSTROS
 from app.dataset.lfw import escribir
 from app.motor import ClienteMotor
 from app.rostros.embedding import DIMENSIONES
+
+SERVIDOR = Path(__file__).resolve().parents[1]
+
+
+# --- el aislamiento que exige el enunciado ------------------------------------
+
+
+def test_ningun_modulo_de_rikuq_importa_el_motor() -> None:
+    """El enunciado de la Parte 5 pide consumir el API REST, no el paquete."""
+
+    prohibidos = {"engine", "quipudb_native"}
+    culpables = []
+
+    for archivo in (SERVIDOR / "app").rglob("*.py"):
+        arbol = ast.parse(archivo.read_text(encoding="utf-8"), filename=str(archivo))
+        for nodo in ast.walk(arbol):
+            if isinstance(nodo, ast.Import):
+                nombres = [alias.name for alias in nodo.names]
+            elif isinstance(nodo, ast.ImportFrom):
+                nombres = [nodo.module or ""]
+            else:
+                continue
+            if any(n.split(".")[0] in prohibidos for n in nombres):
+                culpables.append(f"{archivo.name}:{nodo.lineno}")
+
+    assert culpables == [], f"importan el motor: {culpables}"
 
 
 def _manifiesto(tmp_path: Path, cuantas: int = 3) -> Path:
