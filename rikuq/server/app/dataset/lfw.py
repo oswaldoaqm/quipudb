@@ -10,10 +10,17 @@ que subirlos.
 from __future__ import annotations
 
 import hashlib
+import tarfile
 from collections import Counter
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+
+import httpx
+
+# La pagina oficial de LFW, en la Universidad de Massachusetts.
+URL_LFW = "http://vis-www.cs.umass.edu/lfw/lfw.tgz"
+USER_AGENT = "rikuq/0.1 (proyecto academico, UTEC)"
 
 RIKUQ = Path(__file__).resolve().parents[3]
 DATOS = RIKUQ / "datos"
@@ -27,7 +34,8 @@ EQUIPO = "equipo"
 EXTENSIONES = (".jpg", ".jpeg", ".png")
 MINIMO_POR_DEFECTO = 10
 
-# Un trozo grande calcula el SHA-256 sin cargar el archivo entero en memoria.
+# Un trozo grande calcula el SHA-256 y baja el comprimido sin cargarlos
+# enteros en memoria: LFW pesa unos 173 MB.
 TROZO = 1 << 20
 
 
@@ -56,6 +64,64 @@ def sha256(ruta: Path) -> str:
         while trozo := archivo.read(TROZO):
             digest.update(trozo)
     return digest.hexdigest()
+
+
+def descargar(
+    url: str = URL_LFW,
+    destino: Path = DATOS,
+    log: Callable[[str], None] = lambda _: None,
+) -> Path:
+    """Baja ``lfw.tgz`` a ``destino`` y lo extrae; salta lo que ya esta.
+
+    Devuelve la carpeta extraida. El SHA-256 del comprimido queda en
+    ``lfw.tgz.sha256`` para poder confirmar despues que es el mismo archivo.
+    """
+
+    destino.mkdir(parents=True, exist_ok=True)
+    raiz = destino / LFW
+    if raiz.is_dir() and any(raiz.iterdir()):
+        log(f"{raiz} ya existe, no se vuelve a bajar")
+        return raiz
+
+    comprimido = destino / "lfw.tgz"
+    if not comprimido.is_file():
+        log(f"bajando {url}")
+        # Se escribe al lado y se renombra: un corte a mitad no deja un .tgz
+        # truncado que la siguiente corrida daria por bueno.
+        temporal = comprimido.with_suffix(".part")
+        try:
+            with httpx.stream(
+                "GET",
+                url,
+                follow_redirects=True,
+                timeout=120.0,
+                headers={"User-Agent": USER_AGENT},
+            ) as respuesta:
+                respuesta.raise_for_status()
+                with temporal.open("wb") as salida:
+                    for trozo in respuesta.iter_bytes(TROZO):
+                        salida.write(trozo)
+        except httpx.HTTPError as error:
+            temporal.unlink(missing_ok=True)
+            raise DatasetError(f"no se pudo bajar {url}: {error}") from error
+        temporal.replace(comprimido)
+
+    huella = sha256(comprimido)
+    (destino / "lfw.tgz.sha256").write_text(f"{huella}  lfw.tgz\n", encoding="utf-8")
+    log(f"sha256 del comprimido: {huella}")
+
+    log(f"extrayendo en {raiz}")
+    try:
+        with tarfile.open(comprimido, "r:gz") as tar:
+            # filter="data" rechaza rutas absolutas, enlaces fuera del destino
+            # y permisos raros: el .tgz viene de fuera y no se abre a ciegas.
+            tar.extractall(destino, filter="data")
+    except (tarfile.TarError, OSError) as error:
+        raise DatasetError(f"no se pudo extraer {comprimido}: {error}") from error
+
+    if not raiz.is_dir():
+        raise DatasetError(f"el comprimido no trajo la carpeta {LFW}/")
+    return raiz
 
 
 def recolectar(raiz: Path, origen: str) -> Iterator[Rostro]:

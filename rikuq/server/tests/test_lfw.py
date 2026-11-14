@@ -1,14 +1,17 @@
 """El dataset de rostros: descarga, manifiesto y verificacion (#301), sin red."""
 
 import hashlib
+import tarfile
 from pathlib import Path
 
+import httpx
 import pytest
 
 from app.dataset.lfw import (
     DatasetError,
     Rostro,
     construir,
+    descargar,
     escribir,
     leer,
     recolectar,
@@ -204,3 +207,78 @@ def test_verificar_los_junta_todos_en_vez_de_cortar_al_primero(tmp_path: Path) -
         (rostros[0].ruta, "no esta en disco"),
         (rostros[2].ruta, "el contenido cambio"),
     ]
+
+
+# --- descarga -----------------------------------------------------------------
+
+
+def _tgz(ruta: Path, contenido: Path) -> Path:
+    with tarfile.open(ruta, "w:gz") as tar:
+        tar.add(contenido, arcname=contenido.name)
+    return ruta
+
+
+def test_descargar_extrae_el_comprimido_que_ya_esta(tmp_path: Path) -> None:
+    """Un .tgz ya bajado no se vuelve a pedir: la prueba no toca la red."""
+
+    fuente = tmp_path / "fuente" / "lfw"
+    _imagen(fuente / "Ana_Lopez", "Ana_Lopez_0001.jpg")
+    datos = tmp_path / "datos"
+    datos.mkdir()
+    _tgz(datos / "lfw.tgz", fuente)
+
+    raiz = descargar(destino=datos)
+
+    assert raiz == datos / "lfw"
+    assert (raiz / "Ana_Lopez" / "Ana_Lopez_0001.jpg").is_file()
+
+
+def test_descargar_deja_el_sha_del_comprimido(tmp_path: Path) -> None:
+    fuente = tmp_path / "fuente" / "lfw"
+    _imagen(fuente / "Ana_Lopez", "Ana_Lopez_0001.jpg")
+    datos = tmp_path / "datos"
+    datos.mkdir()
+    comprimido = _tgz(datos / "lfw.tgz", fuente)
+
+    descargar(destino=datos)
+
+    anotado = (datos / "lfw.tgz.sha256").read_text(encoding="utf-8")
+    assert anotado == f"{sha256(comprimido)}  lfw.tgz\n"
+
+
+def test_descargar_no_rehace_el_trabajo(tmp_path: Path) -> None:
+    datos = tmp_path / "datos"
+    _imagen(datos / "lfw" / "Ana_Lopez", "Ana_Lopez_0001.jpg")
+
+    # Sin lfw.tgz y sin red: si intentara bajar o extraer, fallaria.
+    assert descargar(destino=datos) == datos / "lfw"
+
+
+def test_descargar_avisa_si_el_comprimido_no_trae_lfw(tmp_path: Path) -> None:
+    otra = tmp_path / "fuente" / "otra_cosa"
+    _imagen(otra, "x.jpg")
+    datos = tmp_path / "datos"
+    datos.mkdir()
+    _tgz(datos / "lfw.tgz", otra)
+
+    with pytest.raises(DatasetError, match="lfw/"):
+        descargar(destino=datos)
+
+
+def test_descargar_no_deja_un_comprimido_a_medias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Si no se borrara el .part, la siguiente corrida lo daria por bueno."""
+
+    def cae(*_args: object, **_kwargs: object) -> None:
+        raise httpx.ConnectError("sin red")
+
+    monkeypatch.setattr(httpx, "stream", cae)
+    datos = tmp_path / "datos"
+    datos.mkdir()
+
+    with pytest.raises(DatasetError, match="no se pudo bajar"):
+        descargar(destino=datos)
+
+    assert not (datos / "lfw.part").exists()
+    assert not (datos / "lfw.tgz").exists()
