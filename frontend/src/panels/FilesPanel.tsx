@@ -7,8 +7,10 @@ import type {
   ColumnInfo,
   IndexInfo,
   LoadResult,
+  TableFragments,
   TableInfo,
 } from "@/api/types";
+import { conteoDe, rangoDe } from "@/lib/fragments";
 import { cn } from "@/lib/utils";
 import { CargaCarpeta, type CargaCarpetaProps } from "@/panels/CargaCarpeta";
 
@@ -17,6 +19,8 @@ type Multimedia = Omit<CargaCarpetaProps, "tabla">;
 interface FilesPanelProps extends Multimedia {
   tablas: TableInfo[];
   cargando: boolean;
+  /** Fragmentos por tabla, si el frontend habla con el coordinador (#295). */
+  fragmentos: TableFragments[] | null;
   /**
    * Sube el CSV y devuelve el informe del motor. Lo resuelve `App`. Con
    * `atomic`, si una fila falla no queda ninguna (#291).
@@ -214,14 +218,53 @@ function Cargar({
   );
 }
 
+/**
+ * Donde vive cada parte de la tabla (#295): fragmento, nodo, rango de la
+ * clave y filas. Un nodo caido sale como no disponible, con el motivo al
+ * pasar el cursor, y los demas fragmentos siguen con su conteo.
+ */
+function Fragmentos({ particion }: { particion: TableFragments }) {
+  return (
+    <>
+      <h3 className="px-3 pt-2 pb-0.5 text-[10px] tracking-wide text-muted-foreground uppercase">
+        Fragmentos
+      </h3>
+      <ul>
+        {particion.fragments.map((f) => (
+          <li key={f.fragment_id} className="px-3 py-1.5" title={f.reason ?? undefined}>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="truncate font-mono text-xs">{f.fragment_id}</span>
+              <Badge variant="outline" className="shrink-0 px-1 py-0 font-mono text-[9px]">
+                {f.node_id}
+              </Badge>
+            </div>
+            <div className="mt-0.5 flex flex-wrap items-baseline gap-1 text-[10px] text-muted-foreground">
+              <span className="font-mono">
+                {rangoDe(particion.primary_key, f.lower, f.upper)}
+              </span>
+              <span
+                className={cn(!f.available && "text-amber-700 dark:text-amber-400")}
+              >
+                · {conteoDe(f)}
+              </span>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
 function Detalle({
   tabla,
   onCargarCsv,
   multimedia,
+  particion,
 }: {
   tabla: TableInfo;
   onCargarCsv: FilesPanelProps["onCargarCsv"];
   multimedia: Multimedia;
+  particion: TableFragments | undefined;
 }) {
   return (
     <div className="pb-2">
@@ -243,6 +286,8 @@ function Detalle({
           una carga no debe quedar colgando bajo otra tabla. */}
       <Cargar key={tabla.name} tabla={tabla} onCargarCsv={onCargarCsv} />
       <CargaCarpeta key={`carpeta-${tabla.name}`} tabla={tabla} {...multimedia} />
+
+      {particion && <Fragmentos particion={particion} />}
 
       <h3 className="px-3 pt-1 pb-0.5 text-[10px] tracking-wide text-muted-foreground uppercase">
         Columnas
@@ -275,6 +320,7 @@ function Detalle({
 export function FilesPanel({
   tablas,
   cargando,
+  fragmentos,
   onCargarCsv,
   ...multimedia
 }: FilesPanelProps) {
@@ -318,7 +364,12 @@ export function FilesPanel({
           </ul>
 
           <div className="min-h-0 flex-1 overflow-auto">
-            <Detalle tabla={tabla} onCargarCsv={onCargarCsv} multimedia={multimedia} />
+            <Detalle
+              tabla={tabla}
+              onCargarCsv={onCargarCsv}
+              multimedia={multimedia}
+              particion={fragmentos?.find((f) => f.table === tabla.name)}
+            />
           </div>
         </div>
       )}

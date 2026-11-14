@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import {
   executeQuery,
+  listFragments,
   listTables,
   listVocabularies,
   loadCsv,
@@ -16,7 +17,7 @@ import {
 import { MotorError } from "@/api/errors";
 import { CONSULTA_DE_PRUEBA } from "@/api/mock";
 import { efectoDe, type Efecto } from "@/api/sentencia";
-import type { TableInfo } from "@/api/types";
+import type { TableFragments, TableInfo } from "@/api/types";
 import { useSpatialContext } from "@/hooks/useSpatialContext";
 import {
   cargarCarpeta as cargarCarpetaEn,
@@ -57,8 +58,19 @@ export default function App() {
   const base = useSpatialContext(resultado, tablas, baseRevision);
   const [efecto, setEfecto] = useState<Efecto>({ clase: "otra" });
 
+  // Solo con el coordinador distribuido; contra la API local queda en null (#295).
+  const [fragmentos, setFragmentos] = useState<TableFragments[] | null>(null);
+
   const recargarCatalogo = useCallback(
-    () => listTables().then(setTablas).catch(() => setTablas([])),
+    () =>
+      Promise.all([
+        // Si el catalogo no responde se conserva el anterior: con un nodo
+        // caido, `GET /tables` del coordinador responde 503 (no hay conteo
+        // parcial) y vaciar la lista escondia justo los fragmentos que
+        // explican la caida (#295).
+        listTables().then(setTablas).catch(() => undefined),
+        listFragments().then(setFragmentos),
+      ]),
     [],
   );
 
@@ -79,9 +91,13 @@ export default function App() {
         }
         if (id !== requestId.current) return;
         // Tambien en lotes cuya ultima sentencia es SELECT: la tabla puede ser nueva.
-        const catalogo = await listTables().catch(() => [] as TableInfo[]);
+        const [catalogo, particiones] = await Promise.all([
+          listTables().catch(() => null),
+          listFragments(),
+        ]);
         if (id !== requestId.current) return;
-        setTablas(catalogo);
+        if (catalogo !== null) setTablas(catalogo);
+        setFragmentos(particiones);
         setEfecto(efectoNuevo);
         dispatch({ type: "complete", id, result });
       } catch (fallo) {
@@ -151,6 +167,7 @@ export default function App() {
         <FilesPanel
           tablas={tablas}
           cargando={cargandoTablas}
+          fragmentos={fragmentos}
           onCargarCsv={cargarCsv}
           onCargarCarpeta={cargarCarpeta}
           onListarVocabularios={listVocabularies}

@@ -37,6 +37,7 @@ import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from engine.api.schemas import QueryErrorResponse, QueryRequest, QueryResponse, TableInfo
 from engine.api.service import to_error
@@ -63,6 +64,27 @@ class NodeStatus:
     ready: bool
     reason: str | None
     fragment_ids: tuple[str, ...]
+
+
+class FragmentStatus(BaseModel):
+    """Un fragmento del catálogo y lo que su nodo dice de él ahora."""
+
+    fragment_id: str
+    node_id: str
+    lower: int | None
+    upper: int | None
+    available: bool
+    record_count: int | None
+    reason: str | None
+
+
+class TableFragments(BaseModel):
+    """Respuesta de ``GET /fragments`` por tabla, en orden de rango."""
+
+    table: str
+    mode: str
+    primary_key: str
+    fragments: list[FragmentStatus]
 
 
 def schema_problem(table: DistributedTable, info: TableInfo) -> str | None:
@@ -235,6 +257,55 @@ class Coordinator:
             [(f, r.result) for f, r in zip(scan.fragments, results, strict=True)],
         )
 
+    async def fragments(self) -> list[TableFragments]:
+        """Cada tabla con sus fragmentos, nodos, rangos y conteos (#295).
+
+        A diferencia de ``tables()``, un nodo caído no hace fallar la
+        respuesta: sus fragmentos salen como no disponibles, con el motivo, y
+        los demás siguen mostrando su conteo. Es lo que hay que ver en una
+        demo cuando se apaga un nodo.
+        """
+
+        node_ids = sorted({f.node_id for t in self.catalog.tables for f in t.fragments})
+        results = await asyncio.gather(
+            *(self.clients[n].describe() for n in node_ids), return_exceptions=True
+        )
+        counts: dict[str, int] = {}
+        problems: dict[str, str] = {}
+        for node_id, result in zip(node_ids, results, strict=True):
+            if isinstance(result, NodeFailure):
+                problems[node_id] = result.public_message()
+                continue
+            if isinstance(result, BaseException):
+                raise result
+            problem = self._description_problem(node_id, result)
+            if problem is not None:
+                problems[node_id] = f"[SCHEMA_MISMATCH] nodo {node_id}: {problem}"
+                continue
+            for fragment in result.fragments:
+                counts[fragment.fragment_id] = fragment.table_info.record_count
+
+        return [
+            TableFragments(
+                table=table.name,
+                mode=table.mode,
+                primary_key=table.primary_key,
+                fragments=[
+                    FragmentStatus(
+                        fragment_id=f.fragment_id,
+                        node_id=f.node_id,
+                        lower=f.lower,
+                        upper=f.upper,
+                        available=f.node_id not in problems,
+                        record_count=counts.get(f.fragment_id),
+                        reason=problems.get(f.node_id),
+                    )
+                    for f in table.ordered_fragments
+                ],
+            )
+            for table in self.catalog.tables
+        ]
+
 
 def failure_response(failure: NodeFailure) -> JSONResponse:
     """Un ``NodeFailure`` como ``QueryErrorResponse``, el error público de siempre."""
@@ -298,6 +369,10 @@ def create_coordinator_app(coordinator: Coordinator) -> FastAPI:
     @app.get("/tables", response_model=list[TableInfo])
     async def tables() -> list[TableInfo]:
         return await coordinator.tables()
+
+    @app.get("/fragments", response_model=list[TableFragments])
+    async def fragments() -> list[TableFragments]:
+        return await coordinator.fragments()
 
     @app.post("/query", response_model=QueryResponse)
     async def query(request: QueryRequest) -> QueryResponse:
