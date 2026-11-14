@@ -687,7 +687,8 @@ Cinco paneles en una sola pantalla:
   el avance de cada paso; al terminar, "Probar SIMILAR_TO" deja una consulta lista
   en el editor.
 - **Consultas**: editor Monaco con resaltado SQL; `Ctrl+Enter` ejecuta y los errores
-  se muestran con línea y columna.
+  se muestran con línea y columna. "Usar un archivo" sube una imagen o un audio
+  del computador y pone su ruta en el cursor, para buscar con `SIMILAR_TO`.
 - **Resultados**: tabla virtualizada con el tipo de cada columna, filas y tiempo.
 - **Mapa**: Leaflet sobre OpenStreetMap. Resultados en azul, resto de la tabla en
   gris, punto de referencia en ámbar y la región de búsqueda: el círculo de un

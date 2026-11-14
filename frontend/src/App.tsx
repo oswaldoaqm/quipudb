@@ -18,7 +18,11 @@ import { CONSULTA_DE_PRUEBA } from "@/api/mock";
 import { efectoDe, type Efecto } from "@/api/sentencia";
 import type { TableInfo } from "@/api/types";
 import { useSpatialContext } from "@/hooks/useSpatialContext";
-import { cargarCarpeta as cargarCarpetaEn, type MediaApi } from "@/lib/media-ingest";
+import {
+  cargarCarpeta as cargarCarpetaEn,
+  subirArchivoDeConsulta,
+  type MediaApi,
+} from "@/lib/media-ingest";
 import { executionReducer, initialExecution } from "@/lib/query-execution";
 import { FilesPanel } from "@/panels/FilesPanel";
 import { MapPanel } from "@/panels/MapPanel";
@@ -160,6 +164,9 @@ export default function App() {
             onEjecutar={() => void ejecutar(sql)}
             ejecutando={ejecutando}
             error={error}
+            onSubirArchivo={(archivo) =>
+              subirArchivoDeConsulta(uploadMedia, { name: archivo.name, file: archivo })
+            }
           />
 
           <div className="grid min-h-0 auto-rows-[minmax(320px,1fr)] grid-cols-1 gap-2 overflow-auto xl:grid-cols-2">

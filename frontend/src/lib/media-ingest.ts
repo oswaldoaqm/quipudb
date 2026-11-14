@@ -267,17 +267,12 @@ export async function cargarCarpeta(
 }
 
 /**
- * Una consulta SIMILAR_TO lista para el editor, con el primer indice
- * vectorial de la tabla. Sin IVF ni HNSW no hay consulta posible: el motor
- * exige `USING`.
+ * Una consulta SIMILAR_TO lista para el editor. El motor exige `USING`; se
+ * usa el indice vectorial que tenga la tabla y, si no tiene, HNSW, que en
+ * ese caso cae a la busqueda exacta (`docs/consultas-multimedia.md`).
  */
-export function consultaDeEjemplo(
-  tabla: string,
-  ruta: string,
-  estructuras: string[],
-): string | null {
-  const indice = estructuras.find((e) => e === "hnsw" || e === "ivf");
-  if (!indice) return null;
+export function consultaDeEjemplo(tabla: string, ruta: string, estructuras: string[]): string {
+  const indice = estructuras.find((e) => e === "hnsw" || e === "ivf") ?? "hnsw";
   const literal = ruta.replaceAll("'", "''");
   return (
     `SELECT id, nombre, SIMILARITY_SCORE() AS score FROM ${tabla}\n` +
@@ -285,4 +280,48 @@ export function consultaDeEjemplo(
     `USING ${indice.toUpperCase()} WITH METRIC=cosine\n` +
     "ORDER BY score DESC"
   );
+}
+
+/**
+ * Sube un archivo suelto para usarlo en SIMILAR_TO (#290) y devuelve su ruta
+ * en el servidor. Cada archivo va a su propia carpeta de `subidas/`, asi dos
+ * consultas con `foto.jpg` no chocan.
+ */
+export async function subirArchivoDeConsulta(
+  upload: MediaApi["upload"],
+  archivo: ArchivoElegido,
+): Promise<string> {
+  if (!esMultimedia(archivo.name)) {
+    throw new Error(`${archivo.name} no es una imagen ni un audio que el motor pueda describir`);
+  }
+  const respuesta = await upload([archivo], { name: "consulta" });
+  const guardado = respuesta.files[0];
+  if (!guardado) {
+    const motivo = respuesta.rejected[0]?.error ?? "el servidor no lo guardo";
+    throw new Error(`no se pudo subir ${archivo.name}: ${motivo}`);
+  }
+  return guardado.path;
+}
+
+/**
+ * Pone la ruta en el texto donde esta la seleccion, como literal SQL.
+ *
+ * Si la seleccion ya esta entre comillas simples, como al escribir
+ * `SIMILAR_TO('|', k=5)`, entra sin comillas propias; si no, entra con ellas.
+ * Una comilla en la ruta se duplica, igual que en cualquier literal. Devuelve
+ * el texto nuevo y donde queda el cursor, en offsets de caracteres.
+ */
+export function insertarRuta(
+  texto: string,
+  inicio: number,
+  fin: number,
+  ruta: string,
+): { texto: string; cursor: number } {
+  const escapada = ruta.replaceAll("'", "''");
+  const entreComillas = texto[inicio - 1] === "'" && texto[fin] === "'";
+  const pieza = entreComillas ? escapada : `'${escapada}'`;
+  return {
+    texto: texto.slice(0, inicio) + pieza + texto.slice(fin),
+    cursor: inicio + pieza.length,
+  };
 }

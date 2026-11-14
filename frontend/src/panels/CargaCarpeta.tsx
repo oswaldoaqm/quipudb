@@ -101,7 +101,7 @@ function InformeCarpeta({
         </ul>
       )}
 
-      {consulta ? (
+      {consulta && (
         <Button
           type="button"
           size="xs"
@@ -111,11 +111,6 @@ function InformeCarpeta({
         >
           Probar SIMILAR_TO
         </Button>
-      ) : (
-        <p className="mt-1 text-[10px] text-muted-foreground">
-          Para buscar con SIMILAR_TO, crea un índice HNSW o IVF sobre{" "}
-          <span className="font-mono">rasgos</span>.
-        </p>
       )}
     </div>
   );
