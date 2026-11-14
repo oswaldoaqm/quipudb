@@ -101,9 +101,9 @@ export default function App() {
   );
 
   const cargarCsv = useCallback(
-    async (tabla: string, archivo: File) => {
+    async (tabla: string, archivo: File, atomic: boolean) => {
       try {
-        return await loadCsv(tabla, archivo);
+        return await loadCsv(tabla, archivo, atomic);
       } finally {
         setBaseRevision(revision => revision + 1);
         await recargarCatalogo();

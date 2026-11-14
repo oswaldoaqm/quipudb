@@ -449,6 +449,7 @@ function cederElHilo(): Promise<void> {
 export async function mockLoadCsv(
   nombre: string,
   archivo: File,
+  atomic = false,
 ): Promise<LoadResult> {
   // El motor toma su propio lock exclusivo durante todo el archivo, asi que
   // no cabe dentro de una transaccion abierta.
@@ -483,8 +484,17 @@ export async function mockLoadCsv(
 
   let inserted = 0;
   let failed = 0;
+  const nuevas: CellValue[][] = [];
   const errors: LoadRowError[] = [];
   const anotarFallo = (linea: number, error: string) => {
+    // Mismo texto que `load_csv` con atomic: la primera fila mala corta la
+    // carga y no queda ninguna, porque las buenas aun no se agregaron.
+    if (atomic) {
+      fallaDeCarga(
+        `linea ${linea}: ${error}. La carga es atomica y no se inserto ninguna fila`,
+        linea,
+      );
+    }
     failed++;
     if (errors.length < MAXIMO_ERRORES) errors.push({ line: linea, error });
   };
@@ -526,9 +536,11 @@ export async function mockLoadCsv(
       claves.add(clave);
     }
 
-    tabla!.filas.push(fila);
+    nuevas.push(fila);
     inserted++;
   }
+  // Se agregan al final para que una carga atomica que falla no deje nada.
+  tabla!.filas.push(...nuevas);
 
   tabla!.info.record_count = tabla!.filas.length;
 
