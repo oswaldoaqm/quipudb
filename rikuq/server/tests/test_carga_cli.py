@@ -1,4 +1,9 @@
-"""La carga desde la linea de comandos (#302), con el motor simulado."""
+"""La carga desde la linea de comandos, y la ida y vuelta contra el motor (#302).
+
+La prueba de ida y vuelta necesita un QuipuDB levantado y se salta sola si no
+hay ninguno escuchando: no se puede exigir un motor corriendo para que pase
+el resto de la suite.
+"""
 
 import ast
 import json
@@ -10,11 +15,26 @@ import pytest
 
 from app.carga.dataset import main
 from app.carga.esquema import PERSONAS, ROSTROS
+from app.config import Settings
 from app.dataset.lfw import escribir
-from app.motor import ClienteMotor
+from app.motor import ClienteMotor, MotorError, MotorNoDisponible
 from app.rostros.embedding import DIMENSIONES
 
 SERVIDOR = Path(__file__).resolve().parents[1]
+
+
+def _hay_motor() -> bool:
+    try:
+        with ClienteMotor.desde(Settings.del_entorno()) as cliente:
+            cliente.tables()
+    except (OSError, MotorError):
+        return False
+    return True
+
+
+sin_motor = pytest.mark.skipif(
+    not _hay_motor(), reason="no hay un QuipuDB escuchando en QUIPUDB_API_URL"
+)
 
 
 # --- el aislamiento que exige el enunciado ------------------------------------
@@ -39,6 +59,9 @@ def test_ningun_modulo_de_rikuq_importa_el_motor() -> None:
                 culpables.append(f"{archivo.name}:{nodo.lineno}")
 
     assert culpables == [], f"importan el motor: {culpables}"
+
+
+# --- la linea de comandos -----------------------------------------------------
 
 
 def _manifiesto(tmp_path: Path, cuantas: int = 3) -> Path:
@@ -156,3 +179,60 @@ def test_main_explica_el_motor_apagado_en_vez_de_reventar(
 
     assert main(["--manifiesto", str(_manifiesto(tmp_path, 1)), "--datos", str(tmp_path)]) == 1
     assert "revisa que este levantado" in capsys.readouterr().err
+
+
+# --- ida y vuelta contra un motor de verdad -----------------------------------
+
+
+@sin_motor
+def test_ida_y_vuelta_contra_el_motor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cargar, soltar el cliente, reabrirlo y recuperar lo guardado."""
+
+    monkeypatch.setattr(
+        "app.carga.dataset.vectores_de",
+        lambda *_: (np.full(DIMENSIONES, 0.5, dtype=np.float32),),
+    )
+    monkeypatch.setattr("app.carga.dataset.crear_detector", lambda *_, **__: object())
+    monkeypatch.setattr("app.carga.dataset.crear_descriptor", lambda *_, **__: object())
+
+    ruta = _manifiesto(tmp_path, cuantas=2)
+    assert main(["--manifiesto", str(ruta), "--datos", str(tmp_path), "--rehacer"]) == 0
+
+    # Cliente nuevo: el catalogo se vuelve a leer del motor.
+    with ClienteMotor.desde(Settings.del_entorno()) as cliente:
+        assert {PERSONAS, ROSTROS} <= cliente.table_names()
+        personas = cliente.query(f"SELECT id, nombre, fotos FROM {PERSONAS}").dicts()
+        rostros = cliente.query(f"SELECT id, persona_id, ruta FROM {ROSTROS}").dicts()
+
+    assert [p["nombre"] for p in personas] == ["Ana"]
+    assert personas[0]["fotos"] == 2
+    assert len(rostros) == 2
+    assert all(r["persona_id"] == personas[0]["id"] for r in rostros)
+
+
+@sin_motor
+def test_el_indice_hnsw_queda_en_el_catalogo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "app.carga.dataset.vectores_de",
+        lambda *_: (np.full(DIMENSIONES, 0.5, dtype=np.float32),),
+    )
+    monkeypatch.setattr("app.carga.dataset.crear_detector", lambda *_, **__: object())
+    monkeypatch.setattr("app.carga.dataset.crear_descriptor", lambda *_, **__: object())
+
+    main(["--manifiesto", str(_manifiesto(tmp_path, 1)), "--datos", str(tmp_path), "--rehacer"])
+
+    with ClienteMotor.desde(Settings.del_entorno()) as cliente:
+        tablas = {t["name"]: t for t in cliente.tables()}
+
+    assert ROSTROS in tablas
+
+
+def test_sin_motor_el_cliente_lo_dice_claro() -> None:
+    """Un puerto donde no hay nadie da MotorNoDisponible, no un error raro."""
+
+    settings = Settings(quipudb_api_url="http://127.0.0.1:1")
+
+    with ClienteMotor.desde(settings) as cliente, pytest.raises(MotorNoDisponible):
+        cliente.tables()
