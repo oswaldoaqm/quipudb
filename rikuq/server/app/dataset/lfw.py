@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import hashlib
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 RIKUQ = Path(__file__).resolve().parents[3]
 DATOS = RIKUQ / "datos"
+MANIFIESTO = RIKUQ / "dataset" / "rostros.tsv"
 
 # Carpetas dentro de DATOS. El origen tambien es la primera parte de la ruta en
 # el manifiesto, asi que leerlo no necesita adivinar de donde salio cada imagen.
@@ -103,4 +104,39 @@ def construir(datos: Path = DATOS, minimo: int = MINIMO_POR_DEFECTO) -> list[Ros
             f"no hay imagenes en {datos}: corre primero `descargar`, o baja el "
             f"minimo (ahora {minimo})"
         )
+    return rostros
+
+
+def escribir(rostros: Iterable[Rostro], ruta: Path = MANIFIESTO) -> int:
+    """Escribe el manifiesto como TSV con cabecera. Devuelve cuantas filas."""
+
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    filas = 0
+    with ruta.open("w", encoding="utf-8", newline="\n") as salida:
+        salida.write("persona\truta\tsha256\torigen\n")
+        for rostro in rostros:
+            salida.write(f"{rostro.persona}\t{rostro.ruta}\t{rostro.sha256}\t{rostro.origen}\n")
+            filas += 1
+    return filas
+
+
+def leer(ruta: Path = MANIFIESTO) -> list[Rostro]:
+    """Lee el manifiesto. Una linea mal formada es un error, no se salta.
+
+    El manifiesto es la garantia de que todos trabajamos sobre los mismos
+    archivos: si una fila esta rota, saltarla en silencio la volveria inutil.
+    """
+
+    if not ruta.is_file():
+        raise DatasetError(f"no existe {ruta}: corre primero `manifiesto`")
+    rostros = []
+    with ruta.open(encoding="utf-8") as entrada:
+        cabecera = entrada.readline().rstrip("\n").split("\t")
+        if cabecera != ["persona", "ruta", "sha256", "origen"]:
+            raise DatasetError(f"{ruta} no tiene la cabecera esperada: {cabecera}")
+        for numero, linea in enumerate(entrada, start=2):
+            campos = linea.rstrip("\n").split("\t")
+            if len(campos) != 4:
+                raise DatasetError(f"{ruta}:{numero} tiene {len(campos)} columnas, se esperaban 4")
+            rostros.append(Rostro(*campos))
     return rostros

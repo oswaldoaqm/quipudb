@@ -5,7 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from app.dataset.lfw import DatasetError, Rostro, construir, recolectar, sha256
+from app.dataset.lfw import (
+    DatasetError,
+    Rostro,
+    construir,
+    escribir,
+    leer,
+    recolectar,
+    sha256,
+)
 
 
 def _imagen(carpeta: Path, nombre: str, contenido: bytes = b"\xff\xd8\xff falsa") -> Path:
@@ -112,3 +120,49 @@ def test_construir_sin_imagenes_explica_que_hacer(tmp_path: Path) -> None:
 def test_construir_rechaza_un_minimo_invalido(tmp_path: Path) -> None:
     with pytest.raises(DatasetError, match="al menos 1"):
         construir(tmp_path, minimo=0)
+
+
+def test_escribir_y_leer_dan_lo_mismo(tmp_path: Path) -> None:
+    _poblar(tmp_path, {"Ana_Lopez": 2})
+    _poblar(tmp_path, {"Danna": 1}, origen="equipo")
+    originales = construir(tmp_path, minimo=1)
+    salida = tmp_path / "dataset" / "rostros.tsv"
+
+    filas = escribir(originales, salida)
+
+    assert filas == 3
+    assert leer(salida) == originales
+
+
+def test_el_manifiesto_es_un_tsv_con_cabecera(tmp_path: Path) -> None:
+    _poblar(tmp_path, {"Ana_Lopez": 1})
+    salida = tmp_path / "rostros.tsv"
+
+    escribir(construir(tmp_path, minimo=1), salida)
+
+    lineas = salida.read_text(encoding="utf-8").splitlines()
+    assert lineas[0] == "persona\truta\tsha256\torigen"
+    assert lineas[1].split("\t")[:2] == ["Ana_Lopez", "lfw/Ana_Lopez/Ana_Lopez_0001.jpg"]
+
+
+def test_leer_un_manifiesto_que_no_existe_explica_que_hacer(tmp_path: Path) -> None:
+    with pytest.raises(DatasetError, match="manifiesto"):
+        leer(tmp_path / "no-esta.tsv")
+
+
+def test_leer_rechaza_una_cabecera_distinta(tmp_path: Path) -> None:
+    ruta = tmp_path / "rostros.tsv"
+    ruta.write_text("persona\truta\n", encoding="utf-8")
+
+    with pytest.raises(DatasetError, match="cabecera"):
+        leer(ruta)
+
+
+def test_leer_rechaza_una_fila_incompleta(tmp_path: Path) -> None:
+    """Saltarla en silencio volveria inutil la garantia del manifiesto."""
+
+    ruta = tmp_path / "rostros.tsv"
+    ruta.write_text("persona\truta\tsha256\torigen\nAna\tlfw/Ana/a.jpg\n", encoding="utf-8")
+
+    with pytest.raises(DatasetError, match=r":2 "):
+        leer(ruta)
