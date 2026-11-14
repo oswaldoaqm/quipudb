@@ -8,11 +8,16 @@ corremos el mismo modelo. Un modelo distinto da vectores distintos, y los
 umbrales de #303 dejarian de significar lo que midio #306.
 
 Se bajan del zoo oficial de OpenCV y quedan en ``rikuq/datos/modelos/``.
+
+Para traerlos los dos de una vez, desde ``rikuq/server``::
+
+    python -m app.rostros.modelos
 """
 
 from __future__ import annotations
 
 import hashlib
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -127,4 +132,27 @@ def traer(
     return destino
 
 
-__all__ = ["MODELOS", "SFACE", "YUNET", "Modelo", "ModeloError", "traer"]
+def main(argv: list[str] | None = None) -> int:
+    """Trae los dos modelos del proyecto y dice donde quedaron."""
+
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
+    parser.add_argument("--carpeta", type=Path, default=MODELOS)
+    args = parser.parse_args(argv)
+
+    try:
+        for modelo in (YUNET, SFACE):
+            ruta = traer(modelo, args.carpeta, log=print)
+            print(f"{ruta} ({ruta.stat().st_size} bytes)")
+    except ModeloError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+__all__ = ["MODELOS", "SFACE", "YUNET", "Modelo", "ModeloError", "main", "traer"]
+
+
+if __name__ == "__main__":
+    sys.exit(main())

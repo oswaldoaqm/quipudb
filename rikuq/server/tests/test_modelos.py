@@ -7,7 +7,7 @@ from typing import Self
 import httpx
 import pytest
 
-from app.rostros.modelos import SFACE, YUNET, Modelo, ModeloError, traer
+from app.rostros.modelos import SFACE, YUNET, Modelo, ModeloError, main, traer
 
 CONTENIDO = b"onnx de mentira"
 HUELLA = hashlib.sha256(CONTENIDO).hexdigest()
@@ -118,3 +118,34 @@ def test_los_dos_modelos_del_proyecto_salen_del_zoo_de_opencv() -> None:
 
 def test_cada_modelo_resuelve_su_ruta_en_la_carpeta(tmp_path: Path) -> None:
     assert YUNET.ruta(tmp_path) == tmp_path / "face_detection_yunet_2023mar.onnx"
+
+
+def test_main_trae_los_dos_modelos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """Un solo comando deja listo el pipeline entero, sin correr nada mas."""
+
+    traidos: list[str] = []
+
+    def traer_falso(modelo, carpeta, log=None):
+        traidos.append(modelo.archivo)
+        destino = carpeta / modelo.archivo
+        carpeta.mkdir(parents=True, exist_ok=True)
+        destino.write_bytes(CONTENIDO)
+        return destino
+
+    monkeypatch.setattr("app.rostros.modelos.traer", traer_falso)
+
+    assert main(["--carpeta", str(tmp_path)]) == 0
+    assert traidos == [YUNET.archivo, SFACE.archivo]
+    assert "bytes" in capsys.readouterr().out
+
+
+def test_main_explica_el_error_en_vez_de_reventar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    def cae(*_args: object, **_kwargs: object) -> None:
+        raise ModeloError("el zoo no responde")
+
+    monkeypatch.setattr("app.rostros.modelos.traer", cae)
+
+    assert main(["--carpeta", str(tmp_path)]) == 1
+    assert "error: el zoo no responde" in capsys.readouterr().err
