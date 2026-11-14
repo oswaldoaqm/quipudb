@@ -14,7 +14,9 @@ from app.dataset.lfw import (
     descargar,
     escribir,
     leer,
+    main,
     recolectar,
+    resumen,
     sha256,
     verificar,
 )
@@ -282,3 +284,47 @@ def test_descargar_no_deja_un_comprimido_a_medias(
 
     assert not (datos / "lfw.part").exists()
     assert not (datos / "lfw.tgz").exists()
+
+
+# --- linea de comandos --------------------------------------------------------
+
+
+def test_resumen_separa_lfw_del_equipo(tmp_path: Path) -> None:
+    _poblar(tmp_path, {"Ana_Lopez": 2, "Beto_Diaz": 2})
+    _poblar(tmp_path, {"Danna": 3}, origen="equipo")
+
+    texto = resumen(construir(tmp_path, minimo=1))
+
+    assert "equipo: 1 personas, 3 imagenes" in texto
+    assert "lfw: 2 personas, 4 imagenes" in texto
+
+
+def test_main_arma_el_manifiesto_y_lo_verifica(tmp_path: Path, capsys) -> None:
+    _poblar(tmp_path, {"Ana_Lopez": 2})
+    salida = tmp_path / "rostros.tsv"
+
+    armar = main(["manifiesto", "--datos", str(tmp_path), "--salida", str(salida), "--minimo", "1"])
+    assert armar == 0
+    assert "2 imagenes" in capsys.readouterr().out
+
+    comprobar = main(["verificar", "--manifiesto", str(salida), "--datos", str(tmp_path)])
+    assert comprobar == 0
+    assert "todas coinciden" in capsys.readouterr().out
+
+
+def test_main_devuelve_1_si_el_dataset_no_coincide(tmp_path: Path, capsys) -> None:
+    _poblar(tmp_path, {"Ana_Lopez": 2})
+    salida = tmp_path / "rostros.tsv"
+    main(["manifiesto", "--datos", str(tmp_path), "--salida", str(salida), "--minimo", "1"])
+    capsys.readouterr()
+    (tmp_path / "lfw" / "Ana_Lopez" / "Ana_Lopez_0001.jpg").write_bytes(b"otra")
+
+    assert main(["verificar", "--manifiesto", str(salida), "--datos", str(tmp_path)]) == 1
+    assert "el contenido cambio" in capsys.readouterr().err
+
+
+def test_main_explica_el_error_en_vez_de_reventar(tmp_path: Path, capsys) -> None:
+    """Un DatasetError sale como mensaje y codigo 1, no como traza."""
+
+    assert main(["manifiesto", "--datos", str(tmp_path), "--salida", str(tmp_path / "x.tsv")]) == 1
+    assert "error: no hay imagenes" in capsys.readouterr().err

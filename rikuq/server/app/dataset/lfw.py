@@ -5,11 +5,26 @@ datos biometricos que no salen de nuestras maquinas. Lo que si se versiona es
 el manifiesto, una fila por imagen con su persona, su ruta y su SHA-256. Con
 el se comprueba que todos tenemos exactamente los mismos archivos sin tener
 que subirlos.
+
+Tres pasos, desde ``rikuq/server``::
+
+    python -m app.dataset.lfw descargar
+    python -m app.dataset.lfw manifiesto --minimo 10
+    python -m app.dataset.lfw verificar
+
+El primero trae ``lfw.tgz`` y lo extrae en ``rikuq/datos/lfw/``. El segundo
+recorre esa carpeta mas ``rikuq/datos/equipo/`` y escribe el manifiesto. El
+tercero vuelve a calcular los SHA-256 y avisa si algo falta o cambio.
+
+Privacidad: un rostro es un dato biometrico. El consentimiento de cada
+companero fotografiado se anota en ``rikuq/dataset/README.md``.
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
+import sys
 import tarfile
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
@@ -223,3 +238,74 @@ def verificar(rostros: Iterable[Rostro], datos: Path = DATOS) -> list[tuple[str,
         elif sha256(archivo) != rostro.sha256:
             problemas.append((rostro.ruta, "el contenido cambio"))
     return problemas
+
+
+def resumen(rostros: Iterable[Rostro]) -> str:
+    """Una linea por origen: cuantas personas y cuantas imagenes.
+
+    Es la cifra que va al informe: cuantas identidades quedaron despues de
+    aplicar el minimo.
+    """
+
+    personas: dict[str, set[str]] = {}
+    imagenes: Counter[str] = Counter()
+    for rostro in rostros:
+        personas.setdefault(rostro.origen, set()).add(rostro.persona)
+        imagenes[rostro.origen] += 1
+    return "\n".join(
+        f"  {origen}: {len(quienes)} personas, {imagenes[origen]} imagenes"
+        for origen, quienes in sorted(personas.items())
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
+    sub = parser.add_subparsers(dest="paso", required=True)
+
+    bajar = sub.add_parser("descargar", help="trae lfw.tgz y lo extrae")
+    bajar.add_argument("--url", default=URL_LFW)
+    bajar.add_argument("--datos", type=Path, default=DATOS)
+
+    armar = sub.add_parser("manifiesto", help=f"escribe {MANIFIESTO.name}")
+    armar.add_argument("--datos", type=Path, default=DATOS)
+    armar.add_argument("--salida", type=Path, default=MANIFIESTO)
+    armar.add_argument(
+        "--minimo",
+        type=int,
+        default=MINIMO_POR_DEFECTO,
+        help="fotos minimas por identidad de LFW (por omision: %(default)s)",
+    )
+
+    comprobar = sub.add_parser("verificar", help="compara el disco con el manifiesto")
+    comprobar.add_argument("--manifiesto", type=Path, default=MANIFIESTO)
+    comprobar.add_argument("--datos", type=Path, default=DATOS)
+
+    args = parser.parse_args(argv)
+    try:
+        if args.paso == "descargar":
+            print(f"LFW en {descargar(args.url, args.datos, log=print)}")
+            return 0
+
+        if args.paso == "manifiesto":
+            rostros = construir(args.datos, args.minimo)
+            print(f"{escribir(rostros, args.salida)} imagenes en {args.salida}")
+            print(resumen(rostros))
+            return 0
+
+        rostros = leer(args.manifiesto)
+        problemas = verificar(rostros, args.datos)
+    except DatasetError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+
+    if not problemas:
+        print(f"{len(rostros)} imagenes verificadas, todas coinciden")
+        return 0
+    print(f"{len(problemas)} de {len(rostros)} imagenes no coinciden:", file=sys.stderr)
+    for ruta, motivo in problemas:
+        print(f"  {ruta}: {motivo}", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
