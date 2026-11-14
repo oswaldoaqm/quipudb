@@ -1,0 +1,5 @@
+# Hereda la configuracion de la raiz; app es el paquete propio del servidor.
+extend = "../../pyproject.toml"
+
+[lint.isort]
+known-first-party = ["app"]
