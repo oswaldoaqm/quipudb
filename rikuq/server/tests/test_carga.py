@@ -216,3 +216,19 @@ def test_el_informe_no_vuelca_cientos_de_fallos() -> None:
 
     assert "y 15 mas" in texto
     assert texto.count(".jpg") == 10
+
+
+def test_los_insert_se_mandan_en_lotes(pipeline) -> None:
+    """Una peticion por fila son 4324 idas y vueltas; una sola es enorme."""
+
+    from app.carga.dataset import LOTE
+
+    pipeline()
+    recibidas: list[str] = []
+    muchos = [_rostro("Ana", i) for i in range(1, LOTE + 10)]
+
+    with _motor(recibidas) as cliente:
+        cargar(cliente, muchos, detector=1, descriptor=1)
+
+    assert len(recibidas) == 2
+    assert recibidas[0].count("INSERT") == LOTE

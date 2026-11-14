@@ -13,7 +13,7 @@ entraron y cuantas no.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -23,6 +23,12 @@ from app.motor import ClienteMotor, literal, literal_vector
 from app.rostros.deteccion import crear_detector
 from app.rostros.embedding import crear_descriptor, vectores_de
 from app.rostros.errores import FeatureExtractionError
+
+# Cuantos INSERT se mandan en una sola llamada. El API acepta un lote separado
+# por ';'. Agrupar baja el costo de ida y vuelta; pasarse hace una peticion
+# enorme que el motor tarda en responder y que, si falla, no dice cual fila
+# tuvo la culpa.
+LOTE = 50
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +89,11 @@ def por_persona(rostros: Iterable[Rostro]) -> dict[str, list[Rostro]]:
     return agrupado
 
 
+def _en_lotes(sentencias_sql: list[str], tamano: int = LOTE) -> Iterator[str]:
+    for inicio in range(0, len(sentencias_sql), tamano):
+        yield ";\n".join(sentencias_sql[inicio : inicio + tamano])
+
+
 def cargar(
     cliente: ClienteMotor,
     rostros: Iterable[Rostro],
@@ -129,8 +140,8 @@ def cargar(
         rostros_cargados += len(vectores)
         log(f"{nombre}: {len(vectores)} rostros")
 
-    for sentencia in pendientes:
-        cliente.query(sentencia)
+    for lote in _en_lotes(pendientes):
+        cliente.query(lote)
 
     return Informe(
         personas=personas,
@@ -140,6 +151,7 @@ def cargar(
 
 
 __all__ = [
+    "LOTE",
     "Informe",
     "cargar",
     "crear_esquema",
