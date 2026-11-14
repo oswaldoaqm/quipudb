@@ -297,3 +297,28 @@ export interface MediaJob {
   dimension: number | null;
   error: string | null;
 }
+
+/**
+ * Lo que responde `GET /fragments` del coordinador distribuido (#295), una
+ * entrada por tabla. La API local no tiene esa ruta: sin coordinador, el
+ * frontend no muestra fragmentos. Espejo de `TableFragments` en
+ * `engine/distributed/coordinator.py`.
+ */
+export interface FragmentStatus {
+  fragment_id: string;
+  node_id: string;
+  /** Limites del rango de la clave: `lower <= id < upper`; null es infinito. */
+  lower: number | null;
+  upper: number | null;
+  /** Falso si el nodo no respondio o describe otro esquema; ver `reason`. */
+  available: boolean;
+  record_count: number | null;
+  reason: string | null;
+}
+
+export interface TableFragments {
+  table: string;
+  mode: "range" | "single";
+  primary_key: string;
+  fragments: FragmentStatus[];
+}
