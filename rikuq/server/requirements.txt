@@ -1,0 +1,12 @@
+# Servidor de Rikuq. Va aparte del requirements.txt de la raiz: no importa el
+# motor ni el modulo nativo, solo habla con el API de QuipuDB por HTTP.
+# El esqueleto del servidor (FastAPI, uvicorn, httpx) entra con #308.
+
+# Dataset y pipeline de rostros (#301, #304, #305)
+opencv-python>=4.10   # FaceDetectorYN y FaceRecognizerSF vienen incluidos
+numpy>=1.26
+httpx>=0.27           # descarga de LFW; tambien sera el cliente del motor
+
+# Desarrollo
+pytest>=8.3
+ruff>=0.7
