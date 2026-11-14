@@ -119,6 +119,23 @@ distribuida devuelve `plan: null`.
 Un ORDER BY por otra columna se rechaza en el coordinador y el editor subraya la
 parte no admitida, con la misma posición que mandaría la API local.
 
+### Ver la fragmentación (#295)
+
+Con el frontend conectado al coordinador, el panel de Archivos muestra debajo
+de cada tabla sus fragmentos: nombre, nodo, rango de la clave y cuántas filas
+guarda, por ejemplo `items_f0 · n1 · id < 10,000 · 3 filas`. Los conteos salen
+de `GET /fragments` del coordinador y se actualizan después de cada consulta,
+así un INSERT con id 10000 se ve sumar en `items_f1`. Contra la API local esa
+ruta no existe y la sección no aparece.
+
+Si un nodo se cae, sus fragmentos dicen "nodo no disponible" (el motivo sale al
+pasar el cursor) y los del otro nodo siguen con su conteo. `GET /tables`
+responde 503 en ese caso, porque no da conteos parciales; el panel conserva
+entonces la última lista de tablas en vez de vaciarse, así que el total de
+registros de la tabla es el de antes de la caída.
+
+![Fragmentos con n2 caído](informe/capturas/distribuido/frontend-fragmentos.png)
+
 ## Pruebas integradas
 
 [`tests/distributed/test_integracion.py`](../tests/distributed/test_integracion.py)
