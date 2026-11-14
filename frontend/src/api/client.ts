@@ -73,18 +73,24 @@ export function executeQuery(sql: string): Promise<QueryResult> {
  * streaming y no lo carga entero en memoria (issue #114). El frontend solo
  * informa de lo que responde.
  *
- * Va sin `atomic`, asi que se queda con el valor por defecto de la API: las
- * filas buenas entran aunque alguna falle. Es lo que pide el criterio 3, que
- * quiere el conteo de las que entraron Y el de las que no.
+ * Por omision va sin `atomic`: las filas buenas entran aunque alguna falle,
+ * que es lo que pide el criterio 3 del #113 (el conteo de las que entraron Y
+ * el de las que no). Con `atomic`, la primera fila mala deshace la carga
+ * entera y el motor responde 400 con esa linea (#291).
  */
-export function loadCsv(tabla: string, archivo: File): Promise<LoadResult> {
+export function loadCsv(
+  tabla: string,
+  archivo: File,
+  atomic = false,
+): Promise<LoadResult> {
   if (USA_DATOS_FALSOS) {
-    return mockLoadCsv(tabla, archivo);
+    return mockLoadCsv(tabla, archivo, atomic);
   }
 
   const cuerpo = new FormData();
   cuerpo.append("file", archivo);
-  return pedir<LoadResult>(`/tables/${encodeURIComponent(tabla)}/load`, {
+  const consulta = atomic ? "?atomic=true" : "";
+  return pedir<LoadResult>(`/tables/${encodeURIComponent(tabla)}/load${consulta}`, {
     method: "POST",
     body: cuerpo,
   });
