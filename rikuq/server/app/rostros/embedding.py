@@ -4,10 +4,19 @@ Paso 3 de la lamina de la clase 10: *Global Descriptor Extraction*. SFace
 convierte un recorte alineado de 112x112 en 128 numeros, lo que la
 diapositiva llama el *digital fingerprint* de la persona.
 
-**La dimension es 128**, medida sobre el modelo real. Es lo que fija el tipo
-de la columna en #302 (``VECTOR(128)``, 512 bytes por vector) y, con el, los
-umbrales de #303. ``describir`` lo comprueba en cada llamada en vez de
-confiar: si un dia se cambia el modelo, se entera aqui y no al comparar.
+Dos cosas medidas sobre el modelo real, porque ninguna estaba garantizada:
+
+- **La dimension es 128.** Es lo que fija el tipo de la columna en #302
+  (``VECTOR(128)``, 512 bytes por vector) y, con el, los umbrales de #303.
+  ``describir`` lo comprueba en cada llamada en vez de confiar: si un dia se
+  cambia el modelo, se entera aqui y no al comparar.
+- **SFace NO devuelve vectores unitarios.** Sus normas rondan 4 y 5. Importa
+  porque ``cv2.match`` normaliza por dentro, pero QuipuDB no: si se insertara
+  el vector crudo y se pidiera distancia por producto punto, el resultado no
+  seria el coseno. Se normaliza aqui, antes de guardar, no al consultar.
+
+Con vectores unitarios el producto punto vale lo mismo que el coseno, que es
+la equivalencia en la que se apoya #181.
 
 """
 
@@ -38,7 +47,7 @@ def crear_descriptor(carpeta: Path = MODELOS) -> cv2.FaceRecognizerSF:
 
 
 def describir(recorte: np.ndarray, descriptor: cv2.FaceRecognizerSF) -> np.ndarray:
-    """Devuelve el vector de 128 numeros de un recorte alineado.
+    """Devuelve el vector unitario de 128 numeros de un recorte alineado.
 
     El recorte tiene que venir de ``alinear``. Un rostro que no se detecto no
     llega hasta aqui: eso es un error de la etapa anterior, no de esta.
@@ -51,9 +60,10 @@ def describir(recorte: np.ndarray, descriptor: cv2.FaceRecognizerSF) -> np.ndarr
             "cambia el tipo de la columna en #302 antes de seguir"
         )
 
-    if not bruto.any():
+    norma = float(np.linalg.norm(bruto))
+    if norma == 0.0:
         raise EmptyObjectError("el recorte dio un vector nulo, no describe nada")
-    return bruto
+    return bruto / norma
 
 
 __all__ = [

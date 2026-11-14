@@ -39,13 +39,23 @@ def _recorte() -> np.ndarray:
     return np.zeros((112, 112, 3), dtype=np.uint8)
 
 
-def test_el_vector_tiene_128_numeros() -> None:
+def test_el_vector_sale_con_norma_1() -> None:
+    """SFace devuelve normas de 4 a 5; QuipuDB no normaliza al consultar."""
+
     crudo = np.full(DIMENSIONES, 3.0, dtype=np.float32)
 
     vector = describir(_recorte(), _DescriptorFalso(crudo))
 
     assert vector.shape == (DIMENSIONES,)
-    assert vector.dtype == np.float32
+    assert float(np.linalg.norm(vector)) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_normalizar_no_cambia_la_direccion() -> None:
+    crudo = np.arange(DIMENSIONES, dtype=np.float32) + 1.0
+
+    vector = describir(_recorte(), _DescriptorFalso(crudo))
+
+    assert np.allclose(vector, crudo / np.linalg.norm(crudo), atol=1e-6)
 
 
 def test_un_vector_de_otro_largo_se_rechaza_antes_de_comparar() -> None:
