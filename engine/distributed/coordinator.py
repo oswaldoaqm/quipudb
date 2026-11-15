@@ -33,6 +33,7 @@ import logging
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
+from time import perf_counter
 from typing import Annotated
 
 import httpx
@@ -239,15 +240,16 @@ class Coordinator:
         falla entera si falla uno: nunca hay filas parciales.
         """
 
+        started = perf_counter()
         target = route(self.catalog, sql)
         if isinstance(target, Execute):
             response = await self.clients[target.node_id].execute(
                 target.fragment_id, target.table, target.sql, write=target.write
             )
             return response.result
-        return await self._scan(target)
+        return await self._scan(target, sql, started)
 
-    async def _scan(self, scan: Scan) -> QueryResponse:
+    async def _scan(self, scan: Scan, sql: str, started: float) -> QueryResponse:
         results = await asyncio.gather(
             *(
                 self.clients[f.node_id].scan(f.fragment_id, scan.table.name, scan.sql)
@@ -265,6 +267,8 @@ class Coordinator:
         return merge(
             scan,
             [(f, r.result) for f, r in zip(scan.fragments, results, strict=True)],
+            sql=sql,
+            started=started,
         )
 
     async def fragments(self) -> list[TableFragments]:
