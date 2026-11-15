@@ -13,14 +13,20 @@ falta aqui: el vector lo produce ArcFace en #305, no el vocabulario visual
 de la Parte 4. Si se le pasara el archivo, el motor extraeria SIFT y
 compararia manzanas con naranjas.
 
+Uso, desde ``rikuq/server``::
+
+    python -m app.consulta.identificar foto.jpg
 """
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 from app.carga.esquema import PERSONAS, ROSTROS
+from app.config import Settings
 from app.motor import ClienteMotor, literal_vector
 
 UMBRAL_POR_DEFECTO = 0.55
@@ -194,6 +200,68 @@ def identificar(
     )
 
 
+def identificar_imagen(
+    ruta: str | Path,
+    cliente: ClienteMotor,
+    detector,
+    descriptor,
+    *,
+    umbral: float = UMBRAL_POR_DEFECTO,
+    k: int = VECINOS,
+) -> tuple[Identificacion, ...]:
+    """Una identificacion por cada rostro que haya en la imagen."""
+
+    from app.rostros.embedding import vectores_de
+
+    return tuple(
+        identificar(cliente, vector, umbral=umbral, k=k)
+        for vector in vectores_de(ruta, detector, descriptor)
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    from app.motor import MotorError
+    from app.rostros.deteccion import crear_detector
+    from app.rostros.embedding import crear_descriptor
+    from app.rostros.errores import FeatureExtractionError
+
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
+    parser.add_argument("imagenes", nargs="+", type=Path)
+    parser.add_argument("--umbral", type=float, default=UMBRAL_POR_DEFECTO)
+    parser.add_argument("--k", type=int, default=VECINOS)
+    parser.add_argument("--candidatos", action="store_true", help="muestra los k vecinos")
+    args = parser.parse_args(argv)
+
+    detector, descriptor = crear_detector(), crear_descriptor()
+    problemas = 0
+
+    with ClienteMotor.desde(Settings.del_entorno()) as cliente:
+        for ruta in args.imagenes:
+            try:
+                respuestas = identificar_imagen(
+                    ruta, cliente, detector, descriptor, umbral=args.umbral, k=args.k
+                )
+            except FeatureExtractionError as error:
+                print(f"  {error}", file=sys.stderr)
+                problemas += 1
+                continue
+            except MotorError as error:
+                print(f"error: {error}", file=sys.stderr)
+                return 1
+
+            for numero, respuesta in enumerate(respuestas, start=1):
+                print(f"{ruta.name} #{numero}: {respuesta}")
+                if not args.candidatos:
+                    continue
+                for candidato in respuesta.candidatos:
+                    nombre = candidato.persona or f"persona {candidato.persona_id}"
+                    print(f"    {candidato.distancia:.4f}  {nombre}  {candidato.ruta}")
+
+    return 1 if problemas else 0
+
+
 __all__ = [
     "UMBRAL_POR_DEFECTO",
     "VECINOS",
@@ -203,6 +271,12 @@ __all__ = [
     "consulta_sql",
     "distancia_de",
     "identificar",
+    "identificar_imagen",
+    "main",
     "nombres_de",
     "vecinos",
 ]
+
+
+if __name__ == "__main__":
+    sys.exit(main())
