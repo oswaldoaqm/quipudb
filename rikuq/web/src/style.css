@@ -1,0 +1,18 @@
+:root { font-family: system-ui, sans-serif; color: #172b42; background: #f2f5f8; font-synthesis: none; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, input { font: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 3px solid #285ed6; outline-offset: 4px; }
+.workspace { max-width: 1200px; margin: auto; padding: 32px 40px; }
+header { display: flex; justify-content: space-between; align-items: center; gap: 20px; border-bottom: 1px solid #cad4e1; padding-bottom: 24px; font-size: 14px; }
+.wordmark { font: bold 34px "Trebuchet MS", sans-serif; letter-spacing: -2px; }
+.wordmark span { color: #285ed6; }
+.intro { padding: 48px 0 28px; }
+.eyebrow { color: #285ed6; text-transform: uppercase; font-size: 12px; letter-spacing: .13em; font-weight: 700; }
+h1 { font: 700 clamp(28px, 4.5vw, 52px)/1.1 "Trebuchet MS", sans-serif; letter-spacing: -.04em; margin: 16px 0; }
+p { line-height: 1.6; }
+.placeholder { text-align: center; border: 1px dashed #8b9bb0; padding: 44px 20px; background: white; border-radius: 16px; }
+.frame-mark { font: 54px/1.1 monospace; color: #285ed6; }
+footer { color: #526278; font-size: 12px; padding-top: 32px; line-height: 1.6; }
+@media (max-width: 600px) { .workspace { padding: 20px; } header { align-items: flex-start; } header > span:last-child { max-width: 160px; text-align: right; } }

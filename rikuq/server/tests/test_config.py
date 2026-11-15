@@ -23,6 +23,18 @@ def test_lee_la_url_del_entorno() -> None:
     assert settings.quipudb_api_url == "http://otro:9000"
 
 
+def test_url_del_issue_es_prioritaria_sin_romper_la_variable_anterior() -> None:
+    settings = Settings.del_entorno(
+        {"QUIPUDB_URL": "http://nuevo:8000/", "QUIPUDB_API_URL": "http://anterior:8000"}
+    )
+    assert settings.quipudb_api_url == "http://nuevo:8000"
+
+
+def test_lee_los_origenes_permitidos() -> None:
+    settings = Settings.del_entorno({"RIKUQ_WEB_ORIGINS": " http://uno:5175, http://dos:5175 "})
+    assert settings.web_origins == ("http://uno:5175", "http://dos:5175")
+
+
 def test_le_quita_la_barra_final_a_la_url() -> None:
     """Si no, cada ruta queda con una barra doble."""
 
