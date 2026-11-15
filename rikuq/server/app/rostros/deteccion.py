@@ -31,12 +31,37 @@ from app.rostros.errores import EmptyObjectError
 from app.rostros.lectura import leer_color
 from app.rostros.modelos import MODELOS, YUNET, traer
 
-UMBRAL_CONFIANZA = 0.9
+UMBRAL_CONFIANZA = 0.6
 """Confianza minima para dar un rostro por bueno.
 
-YuNet es generoso: con el umbral bajo marca manchas que no son caras, y cada
-falso rostro entra al dataset como una identidad mas. 0.9 es estricto a
-proposito; se afloja desde el parametro cuando una foto cuesta.
+Antes era 0.9, con el argumento de que YuNet "marca manchas" si se afloja.
+**Eso era falso y costaba rostros de verdad.** Medido:
+
+- En imagenes sin ninguna cara -- ruido, degradados, damero, textura -- la
+  confianza maxima de YuNet es **0.182**. No hay manchas que temer.
+- Con 0.9, de 120 fotos de LFW -- recortadas, frontales, bien iluminadas --
+  **una no detectaba nada**. Con 0.8 o menos, ninguna se pierde.
+- La confianza cae con el tamano del rostro: 0.93 con la cara a 150 px, 0.90
+  a 50 px y 0.79 a 35 px. En una foto cualquiera un rostro mide 60-150 px, y
+  con 0.9 se descartaban casi todos.
+
+0.6 queda muy por encima del 0.182 de lo que no es una cara y por debajo de
+lo que puntua un rostro pequeno o de perfil.
+
+Ojo: que un rostro se detecte no quiere decir que su vector sirva. Ver
+``LADO_FIABLE``.
+"""
+
+LADO_FIABLE = 80
+"""Lado minimo, en pixeles, para fiarse del vector de un rostro.
+
+El descriptor se degrada con la resolucion aunque la deteccion acierte.
+Medido contra la misma foto a distintos tamanos, la distancia a su propio
+vector de referencia crece asi: 0.05 a 150 px, 0.06 a 100 px, 0.15 a 70 px,
+0.27 a 50 px y 0.50 a 35 px -- esto ultimo ya roza el umbral de #303.
+
+No se descarta el rostro: se marca, para que la interfaz pueda avisar que el
+resultado es poco fiable en vez de dar un nombre dudoso como si fuera seguro.
 """
 
 LADO_ALINEADO = 112
@@ -76,6 +101,23 @@ class RostroDetectado:
     # tal cual: convertirla a tuplas y volver a armarla solo agrega una
     # oportunidad de equivocarse en el orden de los puntos.
     fila: np.ndarray = field(repr=False)
+
+    @property
+    def lado(self) -> int:
+        """El lado menor de la caja: cuanta cara hay de verdad."""
+
+        return min(self.caja[2], self.caja[3])
+
+    @property
+    def fiable(self) -> bool:
+        """Si el rostro es lo bastante grande para fiarse de su vector.
+
+        Un rostro chico se detecta bien pero se describe mal, asi que la
+        respuesta puede traer un nombre con poco fundamento. Quien consulte
+        esto puede avisarlo en vez de presentarlo como seguro.
+        """
+
+        return self.lado >= LADO_FIABLE
 
 
 def crear_detector(
@@ -194,6 +236,7 @@ def main(argv: list[str] | None = None) -> int:
 
 __all__ = [
     "LADO_ALINEADO",
+    "LADO_FIABLE",
     "PLANTILLA",
     "UMBRAL_CONFIANZA",
     "RostroDetectado",

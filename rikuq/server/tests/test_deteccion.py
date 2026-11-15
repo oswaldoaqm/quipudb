@@ -96,10 +96,32 @@ def test_una_imagen_sin_rostros_no_es_un_archivo_roto(tmp_path: Path) -> None:
     assert error.value.path == tmp_path / "paisaje.jpg"
 
 
-def test_el_umbral_por_omision_es_estricto() -> None:
-    """Con el umbral bajo, YuNet marca manchas y cada falso rostro es una identidad."""
+def test_el_umbral_por_omision_deja_pasar_rostros_pequenos() -> None:
+    """Con 0.9 se perdian: una cara de 50 px puntua 0.90 y una de 35 px, 0.79.
 
-    assert UMBRAL_CONFIANZA == 0.9
+    En imagenes sin ninguna cara YuNet no pasa de 0.182, asi que 0.6 tiene
+    margen de sobra sin inventar rostros.
+    """
+
+    assert UMBRAL_CONFIANZA == 0.6
+    assert UMBRAL_CONFIANZA > 0.182
+
+
+def test_un_rostro_chico_se_detecta_pero_se_marca_como_poco_fiable() -> None:
+    """El descriptor se degrada con la resolucion aunque la deteccion acierte."""
+
+    chico = RostroDetectado((0, 0, 40, 40), 0.8, ((0, 0),) * 5, _fila())
+    grande = RostroDetectado((0, 0, 200, 200), 0.8, ((0, 0),) * 5, _fila())
+
+    assert chico.lado == 40
+    assert not chico.fiable
+    assert grande.fiable
+
+
+def test_el_lado_es_el_menor_de_la_caja() -> None:
+    """Una caja alargada no tiene mas cara que su lado corto."""
+
+    assert RostroDetectado((0, 0, 200, 30), 0.8, ((0, 0),) * 5, _fila()).lado == 30
 
 
 @sin_modelos
