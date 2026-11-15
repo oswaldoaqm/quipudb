@@ -1,8 +1,7 @@
 """La carga desde la linea de comandos, y la ida y vuelta contra el motor (#302).
 
-La prueba de ida y vuelta necesita un QuipuDB levantado y se salta sola si no
-hay ninguno escuchando: no se puede exigir un motor corriendo para que pase
-el resto de la suite.
+Las pruebas reales crean su propio QuipuDB con catalogo temporal. Nunca se
+usa el motor que el usuario tenga levantado ni se descubren sus tablas.
 """
 
 import ast
@@ -17,24 +16,11 @@ from app.carga.dataset import main
 from app.carga.esquema import PERSONAS, ROSTROS
 from app.config import Settings
 from app.dataset.lfw import escribir
-from app.motor import ClienteMotor, MotorError, MotorNoDisponible
+from app.motor import ClienteMotor, MotorNoDisponible
 from app.rostros.embedding import DIMENSIONES
+from tests.motor_aislado import motor_aislado as _motor_aislado  # noqa: F401 -- fixture de pytest
 
 SERVIDOR = Path(__file__).resolve().parents[1]
-
-
-def _hay_motor() -> bool:
-    try:
-        with ClienteMotor.desde(Settings.del_entorno()) as cliente:
-            cliente.tables()
-    except (OSError, MotorError):
-        return False
-    return True
-
-
-sin_motor = pytest.mark.skipif(
-    not _hay_motor(), reason="no hay un QuipuDB escuchando en QUIPUDB_API_URL"
-)
 
 
 # --- el aislamiento que exige el enunciado ------------------------------------
@@ -217,9 +203,12 @@ def test_main_explica_el_motor_apagado_en_vez_de_reventar(
 # --- ida y vuelta contra un motor de verdad -----------------------------------
 
 
-@sin_motor
-def test_ida_y_vuelta_contra_el_motor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ida_y_vuelta_contra_el_motor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, motor_aislado: str
+) -> None:
     """Cargar, soltar el cliente, reabrirlo y recuperar lo guardado."""
+
+    assert Settings.del_entorno().quipudb_api_url == motor_aislado
 
     monkeypatch.setattr(
         "app.carga.dataset.vectores_de",
@@ -243,10 +232,10 @@ def test_ida_y_vuelta_contra_el_motor(tmp_path: Path, monkeypatch: pytest.Monkey
     assert all(r["persona_id"] == personas[0]["id"] for r in rostros)
 
 
-@sin_motor
 def test_el_indice_hnsw_queda_en_el_catalogo(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, motor_aislado: str
 ) -> None:
+    assert Settings.del_entorno().quipudb_api_url == motor_aislado
     monkeypatch.setattr(
         "app.carga.dataset.vectores_de",
         lambda *_: (np.full(DIMENSIONES, 0.5, dtype=np.float32),),

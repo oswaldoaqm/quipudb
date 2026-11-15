@@ -8,7 +8,7 @@ import httpx
 from fastapi import HTTPException
 
 from app.config import Settings
-from app.consulta.identificar import identificar
+from app.consulta.identificar import UMBRAL_POR_DEFECTO, identificar
 from app.motor import ClienteMotor
 from app.pipeline import Pipeline
 from app.rostros.errores import EmptyObjectError
@@ -34,7 +34,7 @@ class Servicio:
             rostros = []
             with ClienteMotor.desde(self.settings, self.transport) as cliente:
                 for rostro in imagen.rostros:
-                    respuesta = identificar(cliente, rostro.vector)
+                    respuesta = identificar(cliente, rostro.vector, umbral=UMBRAL_POR_DEFECTO)
                     mejor = respuesta.candidatos[0] if respuesta.conocido else None
                     rostros.append(
                         {
@@ -54,6 +54,7 @@ class Servicio:
                 "rostros": rostros,
                 "ancho": imagen.ancho,
                 "alto": imagen.alto,
+                "umbral": UMBRAL_POR_DEFECTO,
                 "ms_motor": sum(r["ms_motor"] for r in rostros),
             }
         finally:

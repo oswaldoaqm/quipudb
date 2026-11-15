@@ -17,6 +17,8 @@ export function Cajas({ resultado, rostros = resultado.rostros }: { resultado: I
 }
 
 export function Resultado({ resultado }: { resultado: Identificacion | null }) {
+  const umbral = typeof resultado?.umbral === "number" && Number.isFinite(resultado.umbral)
+    && resultado.umbral > 0 ? resultado.umbral : null;
   return <aside className="result-panel" aria-label="Resultado del reconocimiento" aria-live="polite">
     <p className="eyebrow">Resultado</p>
     {!resultado ? <><h2>Primero, una imagen.</h2><p>Si el rostro está registrado y supera la verificación, verás su nombre aquí. Si no, diremos «Desconocido».</p>
@@ -28,7 +30,11 @@ export function Resultado({ resultado }: { resultado: Identificacion | null }) {
           <p>{r.persona ? "Foto de referencia registrada" : "No hay una identidad confirmada dentro del umbral."}</p>
         </div>
         <dl className="metrics"><div><dt>Distancia coseno ↓</dt><dd>{r.distancia?.toFixed(4) ?? "Sin candidatos"}</dd></div>
-          <div><dt title="Margen al umbral; no es una probabilidad de acierto">Margen de confianza</dt><dd>{(r.confianza * 100).toFixed(1)} %</dd></div></dl>
+          <div><dt>Margen al umbral</dt><dd>{r.persona ? `${(r.confianza * 100).toFixed(1)} %` : "No aplica"}</dd></div></dl>
+        <p>{umbral === null ? "Umbral de aceptación no informado por el servidor."
+          : <>Umbral de aceptación: <strong>{umbral.toFixed(4)}</strong>. Menor distancia indica mayor parecido.</>}</p>
+        <p>El margen mide la separación respecto al límite de aceptación. <strong>No es una probabilidad ni un porcentaje de acierto.</strong></p>
+        {!r.persona && <p>{r.distancia === null ? "Sin candidatos para comparar." : "No hay una coincidencia aceptada; el margen no aplica."}</p>}
       </article>)}
       <div className="timings"><h3>Dos tiempos, sin mezclarlos</h3>
         <dl className="metrics"><div><dt>Búsqueda · HTTP motor</dt><dd>{resultado.ms_motor.toFixed(2)} <small>ms</small></dd></div>
