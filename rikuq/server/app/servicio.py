@@ -44,7 +44,7 @@ class Servicio:
                             "distancia": respuesta.distancia
                             if math.isfinite(respuesta.distancia)
                             else None,
-                            "confianza": respuesta.confianza,
+                            "confianza": respuesta.confianza if respuesta.conocido else 0.0,
                             "caja": list(rostro.caja),
                             "ms_motor": respuesta.ms_motor,
                         }

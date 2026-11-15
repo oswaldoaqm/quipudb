@@ -1,5 +1,6 @@
 """Adaptador del pipeline existente a bytes; modelos cargados solo al consultar."""
 
+import hashlib
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -44,16 +45,30 @@ class PipelineArcFace:
         except ImportError as error:
             raise ModeloNoDisponible("instala rikuq/server/requirements.txt") from error
 
-        imagen = cv2.imdecode(np.frombuffer(datos, dtype=np.uint8), cv2.IMREAD_COLOR)
+        try:
+            imagen = cv2.imdecode(np.frombuffer(datos, dtype=np.uint8), cv2.IMREAD_COLOR)
+        except cv2.error as error:
+            raise FeatureExtractionError("no se pudo decodificar la imagen") from error
         if imagen is None:
             raise FeatureExtractionError("el archivo no es una imagen valida")
         alto, ancho = imagen.shape[:2]
         if alto * ancho > 16_000_000:
             raise FeatureExtractionError("reduce la imagen a menos de 16 megapixeles")
         if self._detector is None:
-            if not YUNET.ruta().is_file() or not ARCFACE.ruta().is_file():
-                raise ModeloNoDisponible("descarga los modelos con python -m app.rostros.modelos")
-            self._detector, self._descriptor = crear_detector(), crear_descriptor()
+            for modelo in (YUNET, ARCFACE):
+                if not modelo.ruta().is_file():
+                    raise ModeloNoDisponible(
+                        "descarga los modelos con python -m app.rostros.modelos"
+                    )
+                with modelo.ruta().open("rb") as archivo:
+                    if hashlib.file_digest(archivo, "sha256").hexdigest() != modelo.sha256:
+                        raise ModeloNoDisponible(
+                            "modelo alterado; ejecuta python -m app.rostros.modelos"
+                        )
+            try:
+                self._detector, self._descriptor = crear_detector(), crear_descriptor()
+            except cv2.error as error:
+                raise ModeloNoDisponible("no se pudo cargar YuNet o ArcFace") from error
         rostros = detectar(imagen, self._detector)
         if len(rostros) > 8:
             raise FeatureExtractionError("se admiten como maximo 8 rostros por imagen")

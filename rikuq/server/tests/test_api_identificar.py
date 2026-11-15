@@ -3,16 +3,20 @@
 import json
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.config import Settings
 from app.entrada import MAX_IMAGEN
 from app.main import create_app
 from app.pipeline import ModeloNoDisponible
 from app.rostros.errores import EmptyObjectError, FeatureExtractionError
+from app.servicio import Servicio
 from tests.pipeline_falso import PipelineFalso
 
 
@@ -89,6 +93,29 @@ def test_una_base_vacia_no_serializa_infinity() -> None:
     assert "Infinity" not in respuesta.text
 
 
+def test_un_rostro_sin_persona_relacionada_no_inventa_confianza() -> None:
+    def motor(request):
+        sql = json.loads(request.content)["sql"]
+        if "SIMILAR_TO" in sql:
+            return httpx.Response(
+                200,
+                json={
+                    "columns": ["id", "persona_id", "ruta", "puntaje"],
+                    "rows": [[1, 7, "foto.jpg", 0.99]],
+                },
+            )
+        return httpx.Response(200, json={"columns": ["id", "nombre"], "rows": []})
+
+    with TestClient(
+        create_app(pipeline=PipelineFalso(), engine_transport=httpx.MockTransport(motor))
+    ) as client:
+        response = client.post(
+            "/identificar", content=b"foto", headers={"Content-Type": "image/jpeg"}
+        )
+    assert response.json()["persona"] is None
+    assert response.json()["confianza"] == 0
+
+
 def test_soporta_varios_rostros_y_suma_el_tiempo_de_busqueda() -> None:
     with _cliente(PipelineFalso(rostros=2)) as client:
         cuerpo = client.post(
@@ -161,6 +188,47 @@ def test_no_admite_dos_archivos() -> None:
             ],
         )
     assert response.status_code == 422
+
+
+def test_multipart_no_utiliza_temporales_de_starlette(monkeypatch) -> None:
+    def prohibido(*args, **kwargs):
+        raise AssertionError("una foto de consulta no debe volcarse a disco")
+
+    monkeypatch.setattr("starlette.formparsers.SpooledTemporaryFile", prohibido)
+    with _cliente() as client:
+        assert (
+            client.post(
+                "/identificar", files={"imagen": ("foto.jpg", b"foto", "image/jpeg")}
+            ).status_code
+            == 200
+        )
+
+
+def test_el_pipeline_no_se_ejecuta_en_paralelo_y_libera_el_lock_tras_error() -> None:
+    dentro, terminar = Event(), Event()
+
+    class Bloqueante:
+        def extraer(self, _datos):
+            dentro.set()
+            assert terminar.wait(5)
+            raise EmptyObjectError("sin rostro")
+
+    servicio = Servicio(Settings(), Bloqueante())
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        futura = pool.submit(servicio.reconocer, b"uno")
+        assert dentro.wait(5)
+        try:
+            from fastapi import HTTPException
+
+            with pytest.raises(HTTPException) as error:
+                servicio.reconocer(b"dos")
+            assert error.value.status_code == 429
+        finally:
+            terminar.set()
+        with pytest.raises(EmptyObjectError):
+            futura.result(timeout=5)
+    with pytest.raises(EmptyObjectError):
+        servicio.reconocer(b"tres")
 
 
 def test_rechaza_el_tipo_antes_de_ejecutar_el_pipeline() -> None:
