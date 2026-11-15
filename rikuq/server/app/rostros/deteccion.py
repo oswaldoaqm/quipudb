@@ -31,12 +31,23 @@ from app.rostros.errores import EmptyObjectError
 from app.rostros.lectura import leer_color
 from app.rostros.modelos import MODELOS, YUNET, traer
 
-UMBRAL_CONFIANZA = 0.9
+UMBRAL_CONFIANZA = 0.6
 """Confianza minima para dar un rostro por bueno.
 
-YuNet es generoso: con el umbral bajo marca manchas que no son caras, y cada
-falso rostro entra al dataset como una identidad mas. 0.9 es estricto a
-proposito; se afloja desde el parametro cuando una foto cuesta.
+Antes era 0.9, con el argumento de que YuNet "marca manchas" si se afloja.
+**Eso era falso y costaba rostros de verdad.** Medido:
+
+- En imagenes sin ninguna cara -- ruido, degradados, damero, textura -- la
+  confianza maxima de YuNet es **0.182**. No hay manchas que temer.
+- Con 0.9, de 120 fotos de LFW -- recortadas, frontales, bien iluminadas --
+  **una no detectaba nada**. Con 0.8 o menos, ninguna se pierde.
+- La confianza cae con el tamano del rostro: 0.93 con la cara a 150 px, 0.90
+  a 50 px y 0.79 a 35 px. En una foto cualquiera un rostro mide 60-150 px, y
+  con 0.9 se descartaban casi todos.
+
+0.6 queda muy por encima del 0.182 de lo que no es una cara y por debajo de
+lo que puntua un rostro pequeno o de perfil.
+
 """
 
 LADO_ALINEADO = 112

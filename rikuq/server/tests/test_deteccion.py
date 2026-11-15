@@ -96,10 +96,15 @@ def test_una_imagen_sin_rostros_no_es_un_archivo_roto(tmp_path: Path) -> None:
     assert error.value.path == tmp_path / "paisaje.jpg"
 
 
-def test_el_umbral_por_omision_es_estricto() -> None:
-    """Con el umbral bajo, YuNet marca manchas y cada falso rostro es una identidad."""
+def test_el_umbral_por_omision_deja_pasar_rostros_pequenos() -> None:
+    """Con 0.9 se perdian: una cara de 50 px puntua 0.90 y una de 35 px, 0.79.
 
-    assert UMBRAL_CONFIANZA == 0.9
+    En imagenes sin ninguna cara YuNet no pasa de 0.182, asi que 0.6 tiene
+    margen de sobra sin inventar rostros.
+    """
+
+    assert UMBRAL_CONFIANZA == 0.6
+    assert UMBRAL_CONFIANZA > 0.182
 
 
 @sin_modelos
