@@ -28,7 +28,9 @@ flowchart TB
     C <-->|"HTTP /internal/v1: execute, scan"| N2
 ```
 
-Los tres procesos leen el mismo catálogo estático. El coordinador nunca abre
+Los tres procesos arrancan con el mismo catálogo; desde el #296 un
+`CREATE TABLE`, `CREATE INDEX` o `DROP TABLE` lo cambia en los tres
+([DDL distribuido](ddl-distribuido.md)). El coordinador nunca abre
 archivos de datos: todo lo que sabe de un nodo lo pregunta por HTTP. Cada nodo
 guarda solo sus fragmentos con el motor de siempre (heap, B+, hash) y rechaza
 filas que no le pertenecen.
@@ -323,8 +325,9 @@ catálogo de ejemplo (n1 hasta 9999, n2 desde 10000):
 ## Límites de esta versión
 
 El coordinador es un punto único de fallo y un nodo caído deja sin servicio a
-todo lo que lo necesita; no hay réplicas. El catálogo es estático: cambiar
-nodos o rangos exige parar, preparar y subir `catalog_version`. Sobre tablas
+todo lo que lo necesita; no hay réplicas. Las tablas se crean y
+borran por SQL (#296), pero cambiar los nodos o los rangos de una tabla que
+ya existe exige parar, preparar y subir `catalog_version`. Sobre tablas
 `range` solo se admite el SELECT de la matriz v1; las búsquedas de texto,
 multimedia y espaciales siguen disponibles en tablas `single`, que su dueño
 ejecuta completas. La carga CSV pasa por el coordinador fila por fila (#292) y

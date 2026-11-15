@@ -116,10 +116,13 @@ tipada sin contactar nodos.
 | `POST /internal/v1/catalog` | Sobre base | Descripción de tablas y fragmentos alojados, incluidos conteos actuales. |
 | `POST /internal/v1/fragments/{fragment_id}/execute` | Sobre base + `table`, `sql` | Ejecución completa de una operación admitida en ese fragmento. |
 | `POST /internal/v1/fragments/{fragment_id}/scan` | Sobre base + `table`, `sql` | Lectura de filas completas filtradas, para combinación global. |
+| `POST /internal/v1/catalog/apply` | Sobre base + `catalog` | Pasa al catálogo completo del cuerpo, de versión mayor, creando o borrando las tablas e índices de ese nodo (#296). |
 
 El sobre base contiene exactamente `protocol_version`, `catalog_version` y
-`request_id`. No hay endpoints internos de creación de fragmentos, DDL,
-transacciones, modificación de topología ni transferencia de páginas.
+`request_id`. La ruta `catalog/apply` se agregó en el #296 para el DDL
+distribuido ([DDL distribuido](ddl-distribuido.md)); solo agrega o quita
+tablas e índices. No hay endpoints de transacciones, de cambio de nodos o
+rangos de una tabla existente ni de transferencia de páginas.
 
 `execute` acepta una sola sentencia. En tablas `range`: INSERT de una fila o
 DELETE por igualdad de PK. En tablas `single`: INSERT, DELETE, SELECT o EXPLAIN
@@ -269,7 +272,7 @@ con el SQL original. No se vuelve a ordenar ni a truncar su respuesta. Las rutas
 de carga CSV/multimedia existentes se utilizan solo como proxy al propietario
 `single`, después de validar identidad/versiones mediante el endpoint de catálogo;
 se mantienen sus cuerpos multipart/JSON y códigos actuales, sin este sobre.
-La configuración permanece estática durante el tráfico. No se usan esas rutas
+Fuera del DDL del #296, la configuración permanece estática durante el tráfico. No se usan esas rutas
 para cargar tablas `range` ni se permite acceso externo directo que eluda su
 validación de pertenencia.
 
