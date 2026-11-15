@@ -8,9 +8,11 @@
 # local, asi que el frontend se conecta sin cambiar su configuracion. Por eso
 # no se puede levantar junto con docker-compose.yml: los dos usan el 8000.
 #
-# El catalogo es docs/ejemplos/catalogo-distribuido-v1.json: items con id < 10000
-# en n1 e id >= 10000 en n2. Dentro de la red de Docker los nodos se llaman n1 y
-# n2 y escuchan en el 8000, que es lo que dice ese catalogo.
+# El catalogo de arranque es docs/ejemplos/catalogo-distribuido-v1.json: items con
+# id < 10000 en n1 e id >= 10000 en n2. Las tablas que se creen despues por SQL
+# quedan en los volumenes; "down -v" vuelve al catalogo de arranque. Dentro de
+# la red de Docker los nodos se llaman n1 y n2 y escuchan en el 8000, que es lo
+# que dice ese catalogo.
 
 x-quipudb: &quipudb
   build: .
@@ -49,9 +51,14 @@ services:
 
   coordinador:
     <<: *quipudb
+    # --data-dir guarda el catalogo que cambian CREATE TABLE y DROP TABLE (#296);
+    # cada nodo guarda el suyo en su propio volumen.
     command: >
       python -m engine.distributed.coordinator --catalog catalogo.json
-      --catalog-version 1 --host 0.0.0.0 --port 8000
+      --catalog-version 1 --data-dir /app/datos/coordinador --host 0.0.0.0 --port 8000
+    volumes:
+      - ./docs/ejemplos/catalogo-distribuido-v1.json:/app/catalogo.json:ro
+      - coordinador-datos:/app/datos
     depends_on:
       - n1
       - n2
@@ -62,3 +69,4 @@ volumes:
   # Un volumen por nodo: cada uno guarda solo sus fragmentos.
   n1-datos:
   n2-datos:
+  coordinador-datos:
