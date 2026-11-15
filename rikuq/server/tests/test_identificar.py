@@ -13,7 +13,15 @@ import pytest
 
 from app.carga.esquema import PERSONAS, ROSTROS
 from app.config import Settings
-from app.consulta.identificar import VECINOS, consulta_sql, distancia_de, nombres_de, vecinos
+from app.consulta.identificar import (
+    UMBRAL_POR_DEFECTO,
+    VECINOS,
+    consulta_sql,
+    distancia_de,
+    identificar,
+    nombres_de,
+    vecinos,
+)
 from app.motor import ClienteMotor
 from app.rostros.embedding import DIMENSIONES
 
@@ -102,3 +110,63 @@ def test_el_nombre_se_trae_aparte_porque_similar_to_no_admite_join() -> None:
 
     # Una consulta por id distinto, sin repetir el 1.
     assert len(vistas) == 2
+
+
+# --- el umbral ----------------------------------------------------------------
+
+
+def test_un_rostro_cargado_se_identifica() -> None:
+    with _motor([_fila(1, 7, 0.95)], {7: "Ana_Lopez"}) as cliente:
+        respuesta = identificar(cliente, _vector(), umbral=0.5)
+
+    assert respuesta.conocido
+    assert respuesta.persona == "Ana_Lopez"
+    assert respuesta.distancia == pytest.approx(0.05)
+
+
+def test_un_rostro_ajeno_sale_desconocido() -> None:
+    """Es el criterio del issue: el vecino mas cercano siempre existe."""
+
+    with _motor([_fila(1, 7, 0.1)], {7: "Ana_Lopez"}) as cliente:
+        respuesta = identificar(cliente, _vector(), umbral=0.5)
+
+    assert not respuesta.conocido
+    assert respuesta.persona is None
+    assert respuesta.distancia == pytest.approx(0.9)
+
+
+def test_el_desconocido_igual_trae_los_candidatos() -> None:
+    """Sirve para depurar por que no reconocio, sin volver a consultar."""
+
+    with _motor([_fila(1, 7, 0.1)], {7: "Ana_Lopez"}) as cliente:
+        respuesta = identificar(cliente, _vector(), umbral=0.5)
+
+    assert respuesta.candidatos[0].persona == "Ana_Lopez"
+    assert respuesta.candidatos[0].distancia == pytest.approx(0.9)
+
+
+def test_justo_en_el_umbral_se_acepta() -> None:
+    """El criterio es 'a lo sumo esta lejos', no 'estrictamente menor'."""
+
+    with _motor([_fila(1, 7, 0.5)], {7: "Ana"}) as cliente:
+        assert identificar(cliente, _vector(), umbral=0.5).conocido
+
+
+def test_una_base_vacia_no_revienta() -> None:
+    with _motor([], {}) as cliente:
+        respuesta = identificar(cliente, _vector())
+
+    assert not respuesta.conocido
+    assert respuesta.candidatos == ()
+
+
+def test_el_umbral_por_defecto_cae_en_el_hueco_medido() -> None:
+    """Con ArcFace: misma persona 0.19-0.37, personas distintas 0.90-1.06."""
+
+    assert 0.37 < UMBRAL_POR_DEFECTO < 0.90
+
+
+def test_el_umbral_por_defecto_es_el_que_midio_el_barrido() -> None:
+    """0.55 con ArcFace: 92.9% de precision y 0 falsos positivos de 309 ajenas."""
+
+    assert UMBRAL_POR_DEFECTO == 0.55
