@@ -7,7 +7,7 @@ from typing import Self
 import httpx
 import pytest
 
-from app.rostros.modelos import SFACE, YUNET, Modelo, ModeloError, main, traer
+from app.rostros.modelos import ARCFACE, YUNET, Modelo, ModeloError, main, traer
 
 CONTENIDO = b"onnx de mentira"
 HUELLA = hashlib.sha256(CONTENIDO).hexdigest()
@@ -109,9 +109,19 @@ def test_traer_no_deja_un_archivo_a_medias(tmp_path: Path, monkeypatch: pytest.M
     assert list(tmp_path.iterdir()) == []
 
 
-def test_los_dos_modelos_del_proyecto_salen_del_zoo_de_opencv() -> None:
-    for modelo in (YUNET, SFACE):
-        assert modelo.url.startswith("https://github.com/opencv/opencv_zoo/")
+def test_el_detector_sale_del_zoo_de_opencv() -> None:
+    assert YUNET.url.startswith("https://github.com/opencv/opencv_zoo/")
+
+
+def test_el_descriptor_es_arcface_como_pide_el_enunciado() -> None:
+    """ "extrae embeddings faciales con modelos preentrenados (FaceNet, ArcFace)"."""
+
+    assert "arcface" in ARCFACE.archivo.lower()
+    assert "buffalo" in ARCFACE.url.lower()
+
+
+def test_los_dos_modelos_son_onnx() -> None:
+    for modelo in (YUNET, ARCFACE):
         assert modelo.archivo.endswith(".onnx")
         assert len(modelo.sha256) == 64
 
@@ -135,7 +145,7 @@ def test_main_trae_los_dos_modelos(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr("app.rostros.modelos.traer", traer_falso)
 
     assert main(["--carpeta", str(tmp_path)]) == 0
-    assert traidos == [YUNET.archivo, SFACE.archivo]
+    assert traidos == [YUNET.archivo, ARCFACE.archivo]
     assert "bytes" in capsys.readouterr().out
 
 
