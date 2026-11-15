@@ -74,3 +74,34 @@ def test_la_cabeza_inclinada_se_sigue_reconociendo(foto, pipeline, grados) -> No
     girada = cv2.warpAffine(foto, matriz, (ancho, alto))
 
     assert _se_mantiene(foto, girada, pipeline) < UMBRAL_POR_DEFECTO
+
+
+# --- calidad de imagen --------------------------------------------------------
+
+
+@pytest.mark.parametrize("calidad", [10, 30, 70])
+def test_la_compresion_jpeg_no_pierde_a_la_persona(foto, pipeline, calidad) -> None:
+    """Una foto de WhatsApp llega muy comprimida."""
+
+    datos = cv2.imencode(".jpg", foto, [cv2.IMWRITE_JPEG_QUALITY, calidad])[1]
+    comprimida = cv2.imdecode(datos, cv2.IMREAD_COLOR)
+
+    assert _se_mantiene(foto, comprimida, pipeline) < UMBRAL_POR_DEFECTO
+
+
+@pytest.mark.parametrize("lado", [7, 21])
+def test_el_desenfoque_no_pierde_a_la_persona(foto, pipeline, lado) -> None:
+    """La camara en vivo entrega cuadros movidos."""
+
+    assert _se_mantiene(foto, cv2.GaussianBlur(foto, (lado, lado), 0), pipeline) < (
+        UMBRAL_POR_DEFECTO
+    )
+
+
+def test_el_ruido_no_pierde_a_la_persona(foto, pipeline) -> None:
+    """Poca luz en la webcam se traduce en ruido."""
+
+    rng = np.random.default_rng(0)
+    sucia = np.clip(foto.astype(np.int16) + rng.normal(0, 25, foto.shape), 0, 255)
+
+    assert _se_mantiene(foto, sucia.astype(np.uint8), pipeline) < UMBRAL_POR_DEFECTO
