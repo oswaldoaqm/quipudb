@@ -101,9 +101,9 @@ def crear_tabla(tabla: str) -> str:
 # que para 4324 rostros no se siente.
 #
 # Por que METRIC=cosine: los vectores de #305 salen normalizados, asi que el
-# coseno y el producto punto dan lo mismo; el coseno es el que la literatura
-# de reconocimiento facial usa y el que hace comparables nuestros numeros con
-# los de SFace.
+# coseno y el producto punto dan lo mismo; el coseno es el que usa ArcFace y
+# la literatura de reconocimiento facial, y el que hace comparables nuestros
+# numeros con los publicados.
 INDICES: tuple[str, ...] = (
     f"CREATE INDEX rostros_por_embedding ON {ROSTROS} (embedding) USING HNSW WITH METRIC=cosine",
     # Contar los rostros de una persona y traer los suyos sin recorrer la tabla.
