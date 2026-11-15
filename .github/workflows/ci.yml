@@ -154,6 +154,30 @@ jobs:
           npm test
           npm run build
 
+  rikuq:
+    name: Probar Rikuq (servidor e interfaz)
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: pip install -r rikuq/server/requirements.txt
+      - run: ruff check rikuq/server
+      - name: Probar el servidor sin motor ni descarga de modelos
+        working-directory: rikuq/server
+        # Las pruebas reales ONNX/LFW declaran sus requisitos y aparecen en -rs.
+        run: python -m pytest -q -rs -p no:cacheprovider
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Probar y compilar la interfaz
+        working-directory: rikuq/web
+        run: |
+          npm ci
+          npm test
+          npm run build
+
   commits:
     name: Validar mensajes de commit
     if: github.event_name == 'pull_request'

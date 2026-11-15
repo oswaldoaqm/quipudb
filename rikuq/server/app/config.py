@@ -24,6 +24,7 @@ TIMEOUT_POR_DEFECTO = 60.0
 class Settings:
     quipudb_api_url: str = URL_POR_DEFECTO
     quipudb_timeout_s: float = TIMEOUT_POR_DEFECTO
+    web_origins: tuple[str, ...] = ("http://127.0.0.1:5175", "http://localhost:5175")
 
     @classmethod
     def del_entorno(cls, entorno: dict[str, str] | None = None) -> Self:
@@ -34,7 +35,11 @@ class Settings:
         """
 
         fuente = os.environ if entorno is None else entorno
-        url = (fuente.get("QUIPUDB_API_URL") or "").strip() or URL_POR_DEFECTO
+        url = (
+            (fuente.get("QUIPUDB_URL") or "").strip()
+            or (fuente.get("QUIPUDB_API_URL") or "").strip()
+            or URL_POR_DEFECTO
+        )
         crudo = (fuente.get("QUIPUDB_TIMEOUT_S") or "").strip()
         try:
             timeout = float(crudo) if crudo else TIMEOUT_POR_DEFECTO
@@ -42,7 +47,13 @@ class Settings:
             timeout = TIMEOUT_POR_DEFECTO
         if timeout <= 0:
             timeout = TIMEOUT_POR_DEFECTO
-        return cls(quipudb_api_url=url.rstrip("/"), quipudb_timeout_s=timeout)
+        origenes = fuente.get("RIKUQ_WEB_ORIGINS", "")
+        origins = tuple(o.strip() for o in origenes.split(",") if o.strip())
+        return cls(
+            quipudb_api_url=url.rstrip("/"),
+            quipudb_timeout_s=timeout,
+            web_origins=origins or cls().web_origins,
+        )
 
 
 __all__ = ["TIMEOUT_POR_DEFECTO", "URL_POR_DEFECTO", "Settings"]

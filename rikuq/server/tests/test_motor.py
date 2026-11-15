@@ -25,6 +25,18 @@ def _cliente(handler, **opciones) -> ClienteMotor:
     return ClienteMotor.desde(settings, transport=httpx.MockTransport(handler))
 
 
+def test_upload_usa_el_contrato_multipart_del_motor() -> None:
+    def handler(request):
+        assert request.url.path == "/media/uploads"
+        assert b'name="files"' in request.content
+        assert b'name="name"' in request.content
+        assert b"datos de prueba" in request.content
+        return httpx.Response(200, json={"saved": 1})
+
+    with _cliente(handler) as cliente:
+        assert cliente.upload([("prueba.jpg", b"datos de prueba")]) == {"saved": 1}
+
+
 # --- literales ----------------------------------------------------------------
 
 

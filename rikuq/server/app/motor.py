@@ -162,6 +162,18 @@ class ClienteMotor:
     def tables(self) -> list[dict[str, Any]]:
         return list(self._enviar("GET", "/tables"))
 
+    def upload(self, archivos: Sequence[tuple[str, bytes]], *, nombre: str = "rikuq") -> Any:
+        """Carga explicita al motor; NO se usa para fotos de consulta ni camara."""
+
+        if not archivos:
+            raise ValueError("la carga necesita al menos un archivo")
+        return self._enviar(
+            "POST",
+            "/media/uploads",
+            data={"name": nombre},
+            files=[("files", (archivo, datos)) for archivo, datos in archivos],
+        )
+
     def table_names(self) -> set[str]:
         return {str(tabla.get("name")) for tabla in self.tables()}
 

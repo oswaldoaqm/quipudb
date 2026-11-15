@@ -24,6 +24,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 
 from app.carga.esquema import PERSONAS, ROSTROS
 from app.config import Settings
@@ -80,6 +81,7 @@ class Identificacion:
     distancia: float
     confianza: float
     candidatos: tuple[Candidato, ...] = ()
+    ms_motor: float = 0.0
 
     @property
     def conocido(self) -> bool:
@@ -132,7 +134,16 @@ def distancia_de(puntaje: float) -> float:
 def vecinos(cliente: ClienteMotor, vector: Sequence[float], k: int = VECINOS) -> list[Candidato]:
     """Los k rostros mas cercanos, el mas parecido primero."""
 
+    return _buscar(cliente, vector, k)[0]
+
+
+def _buscar(
+    cliente: ClienteMotor, vector: Sequence[float], k: int
+) -> tuple[list[Candidato], float]:
+    inicio = perf_counter()
     filas = cliente.query(consulta_sql(vector, k)).dicts()
+    # Igual que #306: ida/vuelta HTTP del SELECT vectorial, no tiempo CPU puro.
+    ms_motor = (perf_counter() - inicio) * 1000
     candidatos = [
         Candidato(
             rostro_id=int(fila["id"]),
@@ -142,7 +153,7 @@ def vecinos(cliente: ClienteMotor, vector: Sequence[float], k: int = VECINOS) ->
         )
         for fila in filas
     ]
-    return sorted(candidatos, key=lambda c: c.distancia)
+    return sorted(candidatos, key=lambda c: c.distancia), ms_motor
 
 
 def nombres_de(cliente: ClienteMotor, ids: Sequence[int]) -> dict[int, str]:
@@ -172,9 +183,11 @@ def identificar(
 ) -> Identificacion:
     """Dice de quien es el rostro, o que no lo sabe."""
 
-    candidatos = vecinos(cliente, vector, k)
+    candidatos, ms_motor = _buscar(cliente, vector, k)
     if not candidatos:
-        return Identificacion(persona=None, distancia=float("inf"), confianza=0.0)
+        return Identificacion(
+            persona=None, distancia=float("inf"), confianza=0.0, ms_motor=ms_motor
+        )
 
     nombres = nombres_de(cliente, [c.persona_id for c in candidatos])
     candidatos = [
@@ -190,6 +203,7 @@ def identificar(
             distancia=mejor.distancia,
             confianza=0.0,
             candidatos=tuple(candidatos),
+            ms_motor=ms_motor,
         )
 
     return Identificacion(
@@ -197,6 +211,7 @@ def identificar(
         distancia=mejor.distancia,
         confianza=confianza_de(mejor.distancia, umbral),
         candidatos=tuple(candidatos),
+        ms_motor=ms_motor,
     )
 
 

@@ -20,6 +20,7 @@ e indexación anterior en siglos al disco duro.
 - [Uso](#uso)
 - [Comparación experimental](#comparación-experimental)
 - [Aplicación: Quipucamayoc](#aplicación-quipucamayoc)
+- [Aplicación: Rikuq](#aplicación-rikuq)
 - [Documentación](#documentación)
 - [Equipo](#equipo)
 
@@ -32,6 +33,7 @@ e indexación anterior en siglos al disco duro.
 | 3 | Búsqueda de texto: SPIMI, TF-IDF + coseno, BM25, `MATCH` y `SCORE()` en SQL y comparación contra GIN | **Completa** |
 | 4 | Búsqueda vectorial multimedia: SIFT/MFCC, bolsa de palabras, IVF, HNSW, `SIMILAR_TO` en SQL y experimentos | **Completa** |
 | 5 | [Quipucamayoc](quipucamayoc/README.md): RAG sobre 187 papers de arXiv (opción A), con QuipuDB y Gemini | **Completa**, con la búsqueda opcional por significado e híbrida (#251, #252) |
+| 5 (opción D) | [Rikuq](rikuq/README.md): reconocimiento facial con ArcFace, HNSW, subida y cámara | **En integración**: validación manual, capturas y video pendientes (#312) |
 
 ## Arquitectura del sistema
 
@@ -781,6 +783,19 @@ ejecutó en el motor con su plan.
 Detalles: [`quipucamayoc/README.md`](quipucamayoc/README.md), el
 [ADR 0010](docs/adr/0010-aplicacion-rag-quipucamayoc.md) y el
 [informe de la Parte 5](docs/informe/aplicacion_rag.md).
+
+## Aplicación: Rikuq
+
+Reconocimiento facial de la Parte 5, opción D. Usa YuNet y ArcFace para
+generar embeddings de 512 componentes y consulta HNSW/coseno en QuipuDB
+exclusivamente por HTTP. La interfaz permite subir una imagen o usar cámara
+en vivo, y muestra identidad o Desconocido, cajas, distancia y tiempos
+separados. No ejecuta modelos en el navegador ni guarda cuadros de consulta.
+
+Instalación y estado: [rikuq/README.md](rikuq/README.md). Decisiones:
+[ADR 0011](docs/adr/0011-aplicacion-rikuq.md). Informe:
+[aplicacion_rikuq.md](docs/informe/aplicacion_rikuq.md). La captura de video
+real y las imágenes de demostración autorizadas siguen pendientes en #312.
 
 ## Documentación
 
