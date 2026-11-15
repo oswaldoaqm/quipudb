@@ -6,11 +6,14 @@ sintácticos y semánticos salen con el mismo texto y la misma ubicación que en
 la API local. Lo que v1 no admite sale como ``SQLUnsupportedError`` con el
 prefijo ``[UNSUPPORTED_DISTRIBUTED]``.
 
-Hay dos destinos posibles:
+Hay tres destinos posibles:
 
 - ``Execute``: un solo fragmento recibe el SQL original. Es el caso de toda
   tabla ``single``, del INSERT en una ``range`` (va al dueño de la clave) y del
   DELETE por igualdad de clave primaria.
+- ``Ddl``: ``CREATE TABLE``, ``CREATE INDEX`` o ``DROP TABLE``. No va a un
+  fragmento: el coordinador calcula el catálogo nuevo (``ddl.py``) y lo
+  entrega a todos los nodos (#296).
 - ``Scan``: un SELECT sobre una tabla ``range``. Cada fragmento que puede tener
   filas recibe un ``SELECT * FROM tabla [WHERE ...]`` generado desde el AST; el
   orden, la proyección y el límite los aplica el coordinador al combinar
@@ -30,9 +33,12 @@ from engine.parser import parse_sql_script
 from engine.parser.ast import (
     BooleanLiteral,
     ComparisonCondition,
+    CreateIndexStatement,
+    CreateTableStatement,
     DateLiteral,
     DeleteStatement,
     DoubleLiteral,
+    DropTableStatement,
     ExplainStatement,
     InsertStatement,
     IntegerLiteral,
@@ -69,6 +75,13 @@ class Execute:
 
 
 @dataclass(frozen=True)
+class Ddl:
+    """``CREATE TABLE``, ``CREATE INDEX`` o ``DROP TABLE``: cambia el catálogo (#296)."""
+
+    statement: CreateTableStatement | CreateIndexStatement | DropTableStatement
+
+
+@dataclass(frozen=True)
 class Scan:
     """Un SELECT sobre una tabla ``range``, repartido entre fragmentos.
 
@@ -89,7 +102,7 @@ def unsupported(message: str, span: Span, sql: str) -> SQLUnsupportedError:
     return SQLUnsupportedError(f"[UNSUPPORTED_DISTRIBUTED] {message}", span, sql)
 
 
-def route(catalog: DistributedCatalog, sql: str) -> Execute | Scan:
+def route(catalog: DistributedCatalog, sql: str) -> Execute | Scan | Ddl:
     """Decide el destino de ``sql``. Lanza ``SQLError`` si no puede ejecutarse."""
 
     statements = parse_sql_script(sql)
@@ -105,12 +118,10 @@ def route(catalog: DistributedCatalog, sql: str) -> Execute | Scan:
         name = inner.source.table
     elif isinstance(inner, (InsertStatement, DeleteStatement)):
         name = inner.table
+    elif isinstance(inner, (CreateTableStatement, CreateIndexStatement, DropTableStatement)):
+        return Ddl(inner)
     else:
-        raise unsupported(
-            "v1 no admite DDL ni transacciones: la topología del catálogo es estática",
-            statement.span,
-            sql,
-        )
+        raise unsupported("v1 no admite transacciones distribuidas", statement.span, sql)
 
     try:
         table = catalog.table(name.name)
@@ -266,4 +277,13 @@ def double_sql(value: float) -> str:
     return text if "." in text else text + ".0"
 
 
-__all__ = ["Execute", "Scan", "double_sql", "literal_sql", "route", "scan_sql", "unsupported"]
+__all__ = [
+    "Ddl",
+    "Execute",
+    "Scan",
+    "double_sql",
+    "literal_sql",
+    "route",
+    "scan_sql",
+    "unsupported",
+]

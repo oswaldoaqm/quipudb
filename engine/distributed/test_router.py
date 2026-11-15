@@ -6,8 +6,8 @@ from datetime import date
 import pytest
 
 from engine.distributed.catalog import DistributedCatalog
-from engine.distributed.router import Execute, Scan, double_sql, literal_sql, route, scan_sql
-from engine.parser import parse_sql_script
+from engine.distributed.router import Ddl, Execute, Scan, double_sql, literal_sql, route, scan_sql
+from engine.parser import parse_sql, parse_sql_script
 from engine.parser.ast import DateLiteral, OrderDirection
 from engine.parser.errors import SQLParseError, SQLSemanticError, SQLUnsupportedError
 from engine.parser.span import Span
@@ -180,12 +180,25 @@ def test_scan_sql_sin_where():
         ("EXPLAIN SELECT * FROM items", "EXPLAIN"),
         ("SELECT * FROM items JOIN notas ON items.id = notas.codigo", "JOIN"),
         ("SELECT * FROM items; SELECT * FROM items", "una sentencia"),
-        ("DROP TABLE items", "DDL"),
         ("BEGIN TRANSACTION", "transacciones"),
     ],
 )
 def test_fuera_de_la_matriz_v1(catalog, sql, fragment):
     assert fragment in unsupported(catalog, sql).message
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DROP TABLE items",
+        "CREATE INDEX i ON items (nombre) USING HASH",
+        "CREATE TABLE t (id INT PRIMARY KEY) ON n1",
+    ],
+)
+def test_el_ddl_no_va_a_un_fragmento(catalog, sql):
+    target = route(catalog, sql)
+    assert isinstance(target, Ddl)
+    assert target.statement == parse_sql(sql)
 
 
 def test_la_ubicacion_del_error_apunta_a_lo_no_admitido(catalog):

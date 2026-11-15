@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 from engine.distributed.catalog import load_catalog
+from engine.distributed.catalog_store import newest_catalog
 from engine.distributed.client import NodeFailure
 from engine.distributed.coordinator import Coordinator
 from engine.distributed.node_process_support import RunningNode, free_port
@@ -104,3 +105,48 @@ def test_consultas_distribuidas_por_tcp(cluster):
     # Sin n2 sigue respondiendo lo que solo vive en n1; lo que necesita a n2 falla.
     assert solo_n1.rows == [[1], [9999]]
     assert (caido.code, caido.node_id) == ("NODE_UNAVAILABLE", "n2")
+
+
+def test_ddl_por_tcp_sobrevive_a_reiniciar_los_nodos(cluster, tmp_path):
+    """#296: una tabla creada por SQL sigue ahí después de reiniciar todo."""
+
+    nodes, catalog = cluster
+    data_dir = tmp_path / "coordinador"
+    data_dir.mkdir()
+    timeout = httpx.Timeout(5.0, connect=1.0, pool=1.0)
+
+    async def crear():
+        coordinator = Coordinator(catalog, timeout=timeout, data_dir=data_dir)
+        try:
+            await coordinator.query(
+                "CREATE TABLE ventas (id INT PRIMARY KEY, monto DOUBLE) "
+                "PARTITION BY RANGE (id) ("
+                "PARTITION ventas_f0 VALUES LESS THAN (5000) ON n1, "
+                "PARTITION ventas_f1 VALUES LESS THAN (MAXVALUE) ON n2)"
+            )
+            for key in (7, 9000):
+                await coordinator.query(f"INSERT INTO ventas VALUES ({key}, 2.5)")
+        finally:
+            await coordinator.aclose()
+
+    asyncio.run(crear())
+    for node in nodes.values():
+        node.close()
+        node.start()
+
+    async def leer():
+        # Arranca como lo haría main(): catálogo de arranque y el guardado.
+        coordinator = Coordinator(
+            newest_catalog(catalog, data_dir), timeout=timeout, data_dir=data_dir
+        )
+        try:
+            estados = await coordinator.check_nodes()
+            filas = await coordinator.query("SELECT id FROM ventas ORDER BY id")
+            return coordinator.catalog.catalog_version, estados, filas
+        finally:
+            await coordinator.aclose()
+
+    version, estados, filas = asyncio.run(leer())
+    assert version == 2
+    assert [(s.node_id, s.ready) for s in estados] == [("n1", True), ("n2", True)]
+    assert filas.rows == [[7], [9000]]
