@@ -141,12 +141,54 @@ el entorno del proceso: si cambias el destino del motor, exporta también
 QUIPUDB_URL antes de cargar el dataset. Usa la IP local para evitar el intento
 IPv6 de localhost en Windows.
 
+## Dónde están las fotos y cuáles se cargaron
+
+Desde la raíz del repositorio, los originales están en:
+
+```text
+rikuq/datos/lfw/<Nombre_Apellido>/<foto>.jpg
+rikuq/datos/equipo/<Nombre_Apellido>/<foto>.jpg
+```
+
+Por ejemplo, las fotos descargadas de Adrien Brody están en
+`rikuq/datos/lfw/Adrien_Brody/`. El archivo
+`rikuq/dataset/rostros.tsv` es un manifiesto de imágenes disponibles, **no una
+lista de filas insertadas**: una carga con `--limite 200` solo procesa las
+primeras 200 imágenes y las que no dan un rostro utilizable se omiten.
+
+La fuente de verdad es el catálogo abierto por la API del motor. Con el
+motor encendido, estas consultas de solo lectura enumeran personas y rutas:
+
+```bash
+curl -sS http://127.0.0.1:8000/query \
+  -H 'Content-Type: application/json' \
+  -d '{"sql":"SELECT id, nombre, fotos FROM personas ORDER BY nombre;"}' \
+  | python3 -m json.tool
+
+curl -sS http://127.0.0.1:8000/query \
+  -H 'Content-Type: application/json' \
+  -d '{"sql":"SELECT persona_id, ruta FROM rostros ORDER BY persona_id LIMIT 20;"}' \
+  | python3 -m json.tool
+```
+
+Las rutas de `rostros` son relativas a `rikuq/datos/`. Para una persona
+concreta, usa `WHERE persona_id = 2` con el id obtenido en la primera
+consulta; no supongas que siempre tiene ese id. La foto que muestra la UI es
+una referencia de esa persona, no una galería de todas sus fotos ni
+necesariamente el vector que produjo la mejor distancia.
+
+Si `personas` no existe, falta cargar el esquema en ese catálogo; si no hay
+filas, no hay identidades cargadas. Tener una carpeta descargada no hace que
+la aplicación la conozca. Subir una foto desde la interfaz tampoco registra
+personas: solo realiza una consulta. No uses `--rehacer` solo para listar las
+fotos, porque borra las tablas.
+
 ## Usar la demo
 
 1. Confirma que tienes permiso para procesar las imágenes de las personas.
 2. En **Subir imagen**, elige o arrastra un JPEG, PNG o WebP de hasta 8 MiB.
 3. Pulsa **Identificar rostro**. Verás nombre o Desconocido, distancia coseno,
-   margen de confianza y foto de referencia si está en esta máquina.
+   margen al umbral y foto de referencia si está en esta máquina.
 4. En **Cámara en vivo**, pulsa **Encender cámara** y acepta el permiso del
    navegador. No se solicita audio. **Apagar cámara**, cambiar de pestaña o
    retirar el consentimiento cierra la captura.
@@ -164,8 +206,17 @@ acumula cuadros antiguos.
 ## Resultados y límites
 
 El umbral de distancia coseno es **0,55**, calibrado para el modelo ArcFace
-actual: [procedimiento](../docs/rikuq-umbral.md). Confianza es el margen al
-umbral, **no la probabilidad de que el nombre sea correcto**.
+actual: [procedimiento](../docs/rikuq-umbral.md). La interfaz muestra el
+**Margen al umbral**, no una probabilidad ni un porcentaje de acierto. El
+campo `confianza` del API conserva su nombre por compatibilidad.
+
+Ejemplo: distancia 0,4363 y umbral 0,55 dan
+`(0,55 - 0,4363) / 0,55 × 100 ≈ 20,7 %`. Ese porcentaje mide la separación
+normalizada respecto al límite, no significa «20,7 % seguro». Una distancia
+menor tiene más margen. Una coincidencia justo en el límite tiene margen
+cero y puede estar aceptada. Para Desconocido o sin candidatos se muestra
+**No aplica**. El campo aditivo `umbral` viene del servidor, no se fija en
+JavaScript; si un servidor anterior no lo informa, se indica explícitamente.
 
 La interfaz separa **HTTP motor** de **servidor total**. El primero mide la
 consulta vectorial con su ida y vuelta local; el segundo incluye detección,
@@ -204,9 +255,12 @@ npm run build
 
 El job **Probar Rikuq (servidor e interfaz)** ejecuta ambos bloques. Las
 pruebas de API usan PipelineFalso y MockTransport, sin ONNX ni motor real.
-La suite previa también incluye casos reales que se omiten cuando faltan
-modelos, LFW o una API levantada; `-rs` muestra cada omisión. No se afirma que
-todos esos casos se ejecuten en CI.
+La suite también incluye casos reales que se omiten cuando faltan modelos,
+LFW o bindings compatibles; `-rs` muestra cada omisión. Las dos pruebas de
+carga CLI crean su propio proceso de motor con puerto efímero y catálogo
+bajo tmp_path: **no utilizan el servidor ni el catálogo del entorno del
+usuario**, aunque haya un motor encendido (#322). No se afirma que todos
+esos casos se ejecuten en CI.
 
 ## Pendientes de #312: capturas y video
 

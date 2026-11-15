@@ -26,13 +26,22 @@ curl -F 'imagen=@foto.jpg;type=image/jpeg' http://127.0.0.1:8002/identificar
 
 Respuesta: `persona`, `distancia`, `confianza`, `ms_motor`, `ms_total`.
 Adicionalmente: `persona_id`, `foto`, `caja` (`[x,y,ancho,alto]` en pixeles de
-la imagen original), `ancho`, `alto` y `rostros`. Este ultimo contiene una
+la imagen original), `ancho`, `alto`, `umbral` y `rostros`. Este ultimo contiene una
 identificacion y una caja por rostro. Los campos principales describen el
 primer rostro, salvo `ms_motor`, que suma las busquedas vectoriales.
 
 - Desconocido: `persona`, `persona_id` y `foto` son null; confianza es cero.
 - Base vacia: distancia es null, no Infinity. No se inventa una identidad.
 - Confianza es el margen normalizado al umbral 0.55, **no una probabilidad**.
+- `umbral` informa el limite usado para identificar todos los rostros de la
+  respuesta. Es aditivo (#321): un cliente nuevo admite respuestas antiguas
+  sin este campo y no supone un valor. `confianza` conserva su nombre y
+  formula por compatibilidad; se presenta como **Margen al umbral**.
+- Para distancia 0.4363 y umbral 0.55, el margen es
+  `(0.55 - 0.4363) / 0.55 = 0.2067`, mostrado como 20.7 %. No expresa una
+  probabilidad de acertar la identidad. En el limite una coincidencia puede
+  estar aceptada con margen cero. Para desconocido la API conserva confianza
+  cero, pero la interfaz muestra **No aplica**, no una probabilidad de 0 %.
 - `ms_motor`: ida y vuelta HTTP del SELECT vectorial HNSW. Incluye red local
   y procesamiento de la respuesta; excluye extraer rasgos y consultar nombres.
   Es la misma frontera de medicion que la columna ms_motor de #306; no es
