@@ -205,6 +205,8 @@ def test_la_identificacion_se_lee_de_un_vistazo() -> None:
     ajena = Identificacion(None, 0.9, 0.0)
 
     assert "Ana" in str(conocida) and "60%" in str(conocida)
+    assert "margen al umbral" in str(conocida)
+    assert "confianza" not in str(conocida)
     assert "desconocido" in str(ajena)
 
 

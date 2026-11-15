@@ -90,7 +90,10 @@ class Identificacion:
     def __str__(self) -> str:
         if not self.conocido:
             return f"desconocido (el mas cercano a {self.distancia:.4f})"
-        return f"{self.persona} (distancia {self.distancia:.4f}, confianza {self.confianza:.0%})"
+        return (
+            f"{self.persona} (distancia {self.distancia:.4f}, "
+            f"margen al umbral {self.confianza:.0%})"
+        )
 
 
 def confianza_de(distancia: float, umbral: float) -> float:

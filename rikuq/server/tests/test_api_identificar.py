@@ -61,6 +61,7 @@ def test_identifica_y_expone_los_dos_tiempos_y_la_caja() -> None:
     assert cuerpo["persona"] == "Ana"
     assert cuerpo["distancia"] == pytest.approx(0.1)
     assert cuerpo["confianza"] == pytest.approx((0.55 - 0.1) / 0.55)
+    assert cuerpo["umbral"] == 0.55
     assert cuerpo["foto"] == "/personas/7/foto"
     assert cuerpo["caja"] == [10, 20, 80, 90]
     assert (cuerpo["ancho"], cuerpo["alto"]) == (640, 480)
@@ -81,6 +82,28 @@ def test_un_desconocido_no_expone_el_nombre_ni_la_foto_del_vecino() -> None:
     assert cuerpo["persona_id"] is None
     assert cuerpo["confianza"] == 0
     assert cuerpo["distancia"] == pytest.approx(0.9)
+    assert cuerpo["umbral"] == 0.55
+
+
+@pytest.mark.parametrize(
+    ("similitud", "distancia", "margen"),
+    [
+        (0.5637, 0.4363, (0.55 - 0.4363) / 0.55),
+        (1.0, 0.0, 1.0),
+        (0.45, 0.55, 0.0),
+    ],
+)
+def test_el_umbral_reportado_y_la_formula_existente_siguen_coincidiendo(
+    similitud, distancia, margen
+) -> None:
+    with _cliente(similitud=similitud) as client:
+        cuerpo = client.post(
+            "/identificar", content=b"foto", headers={"Content-Type": "image/jpeg"}
+        ).json()
+    assert cuerpo["persona"] == "Ana"
+    assert cuerpo["distancia"] == pytest.approx(distancia)
+    assert cuerpo["confianza"] == pytest.approx(margen)
+    assert cuerpo["umbral"] == 0.55
 
 
 def test_una_base_vacia_no_serializa_infinity() -> None:

@@ -23,6 +23,8 @@ export interface Identificacion extends Rostro {
   ancho: number;
   alto: number;
   ms_total: number;
+  /** Aditivo: un servidor anterior puede no informar el umbral. */
+  umbral?: number;
 }
 
 export class ApiError extends Error {
