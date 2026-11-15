@@ -52,7 +52,8 @@ opcional de la forma `columna op literal` con `=`, `<`, `<=`, `>` o `>=` sobre
 INT, DOUBLE, VARCHAR, BOOL o DATE, `ORDER BY` por la clave primaria en
 cualquier dirección y `LIMIT`. Queda fuera: GROUP BY y agregados, SCORE y
 MATCH, SIMILAR_TO, predicados espaciales, BETWEEN, ORDER BY por otra columna o
-por distancia, JOIN, EXPLAIN, DDL, BEGIN/END y lotes de varias sentencias.
+por distancia, JOIN, EXPLAIN, BEGIN/END y lotes de varias sentencias. El DDL
+no pasa por aquí: tiene su propio destino ([DDL distribuido](ddl-distribuido.md)).
 
 ### El SQL del scan
 

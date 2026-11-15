@@ -5,10 +5,19 @@ from threading import RLock
 
 from engine.api.service import describe_catalog, to_response
 from engine.distributed.admission import validate_sql
+from engine.distributed.catalog_store import save_catalog
+from engine.distributed.ddl import (
+    CatalogChangeError,
+    changes_for_node,
+    create_index_sql,
+    create_table_sql,
+)
 from engine.distributed.node_errors import NodeError, sql_error
 from engine.distributed.node_lease import NodeLease
 from engine.distributed.node_requests import resolve_fragment, validate_request
 from engine.distributed.protocol import (
+    CatalogAppliedResponse,
+    CatalogApplyRequest,
     CatalogResponse,
     ExecutionResponse,
     FragmentInfo,
@@ -166,3 +175,78 @@ class FragmentService:
                 fragment_id=fragment_id,
                 result=result,
             )
+
+    # -- DDL distribuido (#296) ------------------------------------------------
+
+    def apply_catalog(self, data: dict) -> CatalogAppliedResponse:
+        """Pasa al catálogo del cuerpo creando o borrando lo que toca a este nodo.
+
+        Corre bajo el mismo lock que las consultas: ninguna ve el cambio a
+        medias. Si falla una alta, se deshacen las altas ya hechas y el nodo
+        sigue con el catálogo anterior. Una baja que falla a medias deja el
+        nodo sin servir hasta revisarlo, porque una tabla borrada no se puede
+        recuperar.
+        """
+
+        with self._lock:
+            request = validate_request(data, self.catalog, model=CatalogApplyRequest)
+            self._ready()
+            self._audit()
+            new = request.catalog
+            try:
+                changes = changes_for_node(self.catalog, new, self.node_id)
+            except CatalogChangeError as error:
+                raise NodeError("INVALID_REQUEST", str(error)) from error
+            self._create(changes, new)
+            try:
+                for table, index in changes.drop_indexes:
+                    self._database.drop_index(table, index)
+                for table in changes.drop_tables:
+                    self._run(f"DROP TABLE {table}", state="unknown")
+                save_catalog(self.directory, new)
+            except Exception as error:
+                self._failure = NodeError("NODE_NOT_READY", "reiniciar tras fallo de DDL")
+                if isinstance(error, NodeError):
+                    raise
+                raise NodeError("EXECUTION_ERROR", str(error), state="unknown") from error
+            self.catalog = new
+            self._audit()
+            return CatalogAppliedResponse(
+                protocol_version=new.protocol_version,
+                catalog_version=new.catalog_version,
+                request_id=request.request_id,
+                node_id=self.node_id,
+                fragment_ids=[f.fragment_id for f in new.fragments_for_node(self.node_id)],
+            )
+
+    def _create(self, changes, catalog) -> None:
+        created_tables: list[str] = []
+        created_indexes: list[tuple[str, str]] = []
+        try:
+            for table in changes.create_tables:
+                self._run(create_table_sql(table))
+                created_tables.append(table.name)
+            for table, index in changes.create_indexes:
+                self._run(create_index_sql(catalog.table(table), index))
+                created_indexes.append((table, index))
+        except NodeError:
+            try:
+                for table, index in reversed(created_indexes):
+                    if table not in created_tables:
+                        self._database.drop_index(table, index)
+                for table in reversed(created_tables):
+                    self._database.drop_table(table)
+            except Exception as error:
+                self._failure = NodeError("NODE_NOT_READY", "no se pudo deshacer un DDL")
+                raise NodeError(
+                    "EXECUTION_ERROR", f"no se pudo deshacer: {error}", state="unknown"
+                ) from error
+            raise
+
+    def _run(self, sql: str, *, state: str = "not_started") -> None:
+        # El SQL lo generó el nodo desde el catálogo: sus posiciones no son las
+        # de la sentencia del usuario, así que el error va sin ellas.
+        try:
+            self._processor.execute(sql)
+        except SQLError as error:
+            raise NodeError("SQL_ERROR", error.message, state=state) from error

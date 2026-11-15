@@ -15,10 +15,13 @@ Lo que hace en esta etapa:
   nodo necesario se devuelve error, nunca un conteo incompleto.
 
 El enrutamiento de ``POST /query`` y la combinación de resultados son del #279.
+Desde el #296 el catálogo ya no es fijo: ``CREATE TABLE``, ``CREATE INDEX`` y
+``DROP TABLE`` lo cambian en todos los nodos a la vez (``ddl.py``).
 
 Uso, con los nodos ya levantados (``engine.distributed.node_server``)::
 
-    python -m engine.distributed.coordinator --catalog catalogo.json --catalog-version 1
+    python -m engine.distributed.coordinator --catalog catalogo.json --catalog-version 1 \\
+        --data-dir datos/coordinador
 
 Escucha en el puerto 8000, el mismo de la API local, para que el frontend se
 conecte al coordinador sin cambiar su configuración.
@@ -51,12 +54,14 @@ from engine.api.schemas import (
 )
 from engine.api.service import to_error, to_load_response
 from engine.distributed.catalog import DistributedCatalog, load_catalog
+from engine.distributed.catalog_store import newest_catalog, save_catalog
 from engine.distributed.client import DEFAULT_TIMEOUT, NodeClient, NodeFailure
 from engine.distributed.contracts import DistributedTable
 from engine.distributed.csv_load import load_csv, reject_atomic
+from engine.distributed.ddl import DdlStatement, apply_ddl
 from engine.distributed.merge import merge
 from engine.distributed.protocol import CatalogResponse
-from engine.distributed.router import Execute, Scan, route
+from engine.distributed.router import Ddl, Execute, Scan, route
 from engine.executor.bulk_load import CsvLoadError, detect_encoding
 from engine.parser.errors import SQLError
 
@@ -129,9 +134,12 @@ class Coordinator:
         *,
         timeout: httpx.Timeout = DEFAULT_TIMEOUT,
         transports: dict[str, httpx.AsyncBaseTransport] | None = None,
+        data_dir: Path | None = None,
     ) -> None:
         transports = transports or {}
         self.catalog = catalog
+        self.data_dir = data_dir
+        self._ddl_lock = asyncio.Lock()
         self.clients = {
             node.node_id: NodeClient(
                 catalog, node, timeout=timeout, transport=transports.get(node.node_id)
@@ -242,6 +250,8 @@ class Coordinator:
 
         started = perf_counter()
         target = route(self.catalog, sql)
+        if isinstance(target, Ddl):
+            return await self.ddl(target.statement, sql)
         if isinstance(target, Execute):
             response = await self.clients[target.node_id].execute(
                 target.fragment_id, target.table, target.sql, write=target.write
@@ -270,6 +280,103 @@ class Coordinator:
             sql=sql,
             started=started,
         )
+
+    # -- DDL (#296) ------------------------------------------------------------
+
+    async def ddl(self, statement: DdlStatement, sql: str) -> QueryResponse:
+        """Cambia el catálogo en todos los nodos o en ninguno.
+
+        Exige que todos los nodos estén listos: un nodo caído quedaría con
+        otro catálogo. Si un nodo rechaza el cambio, a todos se les entrega el
+        catálogo anterior con una versión nueva, y los que alcanzaron a
+        aplicarlo lo deshacen. Un DDL a la vez; las consultas que lleguen
+        mientras tanto ven el catálogo viejo o el nuevo, y si les toca el
+        cambio a medias el nodo las rechaza por versión (409).
+        """
+
+        async with self._ddl_lock:
+            old = self.catalog
+            new = apply_ddl(old, statement, sql)
+            for status in await self.check_nodes():
+                if not status.ready:
+                    raise NodeFailure(
+                        "NODE_UNAVAILABLE",
+                        f"un DDL distribuido necesita todos los nodos listos: {status.reason}",
+                        503,
+                        "not_started",
+                        status.node_id,
+                    )
+            node_ids = sorted(self.clients)
+            results = await asyncio.gather(
+                *(
+                    self.clients[n].apply_catalog(new, current_version=old.catalog_version)
+                    for n in node_ids
+                ),
+                return_exceptions=True,
+            )
+            failures = {}
+            for node_id, result in zip(node_ids, results, strict=True):
+                if isinstance(result, NodeFailure):
+                    failures[node_id] = result
+                elif isinstance(result, BaseException):
+                    raise result
+            if not failures:
+                self._adopt(new)
+                return QueryResponse(columns=[], column_types=[], rows=[])
+
+            restore = old.model_copy(update={"catalog_version": new.catalog_version + 1})
+            pending = await self._restore(restore, old, new, set(failures))
+            self._adopt(restore)
+            first = failures[min(failures)]
+            if pending:
+                note = (
+                    f"no se pudo deshacer en {', '.join(pending)}; revisar GET /health "
+                    "antes de seguir"
+                )
+            else:
+                note = "el DDL se deshizo en todos los nodos"
+            raise replace(first, message=f"{first.message}; {note}")
+
+    async def _restore(
+        self,
+        restore: DistributedCatalog,
+        old: DistributedCatalog,
+        new: DistributedCatalog,
+        failed: set[str],
+    ) -> list[str]:
+        """Entrega ``restore`` a todos los nodos; devuelve los que no lo aceptaron."""
+
+        async def one(node_id: str) -> bool:
+            # Un nodo que falló sigue en la versión vieja salvo que el fallo
+            # haya sido después de aplicar; se prueba la otra si responde 409.
+            versions = [old.catalog_version, new.catalog_version]
+            if node_id not in failed:
+                versions.reverse()
+            for version in versions:
+                try:
+                    await self.clients[node_id].apply_catalog(restore, current_version=version)
+                    return True
+                except NodeFailure as failure:
+                    if failure.code != "CATALOG_VERSION_MISMATCH":
+                        _LOGGER.error("no se pudo deshacer el DDL en %s: %s", node_id, failure)
+                        return False
+            return False
+
+        node_ids = sorted(self.clients)
+        done = await asyncio.gather(*(one(n) for n in node_ids))
+        return [n for n, ok in zip(node_ids, done, strict=True) if not ok]
+
+    def _adopt(self, catalog: DistributedCatalog) -> None:
+        self.catalog = catalog
+        for client in self.clients.values():
+            client.catalog = catalog
+        if self.data_dir is not None:
+            try:
+                save_catalog(self.data_dir, catalog)
+            except OSError:
+                # Los nodos ya tienen el catálogo nuevo; al reiniciar sin esta
+                # copia el coordinador quedaría desfasado y /health lo diría.
+                _LOGGER.exception("no se pudo guardar el catálogo en %s", self.data_dir)
 
     async def fragments(self) -> list[TableFragments]:
         """Cada tabla con sus fragmentos, nodos, rangos y conteos (#295).
@@ -442,16 +549,24 @@ def main() -> None:
         default=DEFAULT_TIMEOUT.read,
         help="segundos para leer o escribir en un nodo; conectar siempre tiene 3",
     )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        help="dónde guardar el catálogo que cambian los DDL; sin él no sobrevive a un reinicio",
+    )
     args = parser.parse_args()
     import uvicorn
 
     catalog = load_catalog(args.catalog, expected_catalog_version=args.catalog_version)
+    if args.data_dir is not None:
+        args.data_dir.mkdir(parents=True, exist_ok=True)
+        catalog = newest_catalog(catalog, args.data_dir)
     timeout = httpx.Timeout(
         args.timeout, connect=DEFAULT_TIMEOUT.connect, pool=DEFAULT_TIMEOUT.pool
     )
     logging.basicConfig(level=logging.INFO)
     uvicorn.run(
-        create_coordinator_app(Coordinator(catalog, timeout=timeout)),
+        create_coordinator_app(Coordinator(catalog, timeout=timeout, data_dir=args.data_dir)),
         host=args.host,
         port=args.port,
     )

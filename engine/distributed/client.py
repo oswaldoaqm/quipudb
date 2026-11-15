@@ -32,6 +32,7 @@ from pydantic import ValidationError
 from engine.distributed.catalog import DistributedCatalog
 from engine.distributed.contracts import Node
 from engine.distributed.protocol import (
+    CatalogAppliedResponse,
     CatalogResponse,
     ErrorResponse,
     ExecutionResponse,
@@ -151,6 +152,34 @@ class NodeClient:
 
         return await self._fragment("scan", fragment_id, table, sql, write=False)
 
+    async def apply_catalog(
+        self, catalog: DistributedCatalog, *, current_version: int
+    ) -> CatalogAppliedResponse:
+        """``POST /catalog/apply`` (#296): el nodo pasa de ``current_version`` a
+        ``catalog``. Cuenta como escritura: un fallo después de enviar deja el
+        resultado incierto."""
+
+        request_id, response = await self._post(
+            f"{PREFIX}/catalog/apply",
+            {"catalog": catalog.model_dump(mode="json")},
+            write=True,
+            version=current_version,
+        )
+        if response.status_code != 200:
+            raise self._node_error(response, request_id, write=True, fragment=None)
+        result = self._parse(response, CatalogAppliedResponse, write=True, fragment=None)
+        if result.node_id != self.node_id:
+            raise self._invalid(f"respondió el nodo {result.node_id}", write=True)
+        if result.catalog_version != catalog.catalog_version:
+            raise self._invalid(
+                f"quedó en catalog_version {result.catalog_version}, no en "
+                f"{catalog.catalog_version}",
+                write=True,
+            )
+        if result.request_id != request_id:
+            raise self._invalid("respondió a otro request_id", write=True)
+        return result
+
     # -- transporte y validación ----------------------------------------------
 
     async def _fragment(
@@ -172,12 +201,18 @@ class NodeClient:
         return result
 
     async def _post(
-        self, path: str, extra: dict, *, write: bool, fragment: str | None = None
+        self,
+        path: str,
+        extra: dict,
+        *,
+        write: bool,
+        fragment: str | None = None,
+        version: int | None = None,
     ) -> tuple[str, httpx.Response]:
         request_id = str(uuid4())
         body = {
             "protocol_version": self.catalog.protocol_version,
-            "catalog_version": self.catalog.catalog_version,
+            "catalog_version": self.catalog.catalog_version if version is None else version,
             "request_id": request_id,
             **extra,
         }

@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import AfterValidator, ConfigDict, field_validator
 
 from engine.api.schemas import ErrorKind, QueryResponse, TableInfo
+from engine.distributed.catalog import DistributedCatalog
 from engine.distributed.contracts import (
     PROTOCOL_VERSION,
     ContractModel,
@@ -45,6 +46,16 @@ class FragmentRequest(BaseRequest):
     sql: str
 
 
+class CatalogApplyRequest(BaseRequest):
+    """El catálogo completo que debe quedar en el nodo después de un DDL (#296).
+
+    ``catalog_version`` del sobre es la versión que el nodo tiene ahora; la de
+    ``catalog`` es la nueva, siempre mayor.
+    """
+
+    catalog: DistributedCatalog
+
+
 class Response(Versioned):
     model_config = ConfigDict(extra="ignore")
     node_id: EntityId
@@ -70,6 +81,13 @@ class ExecutionResponse(Response):
     request_id: RequestId
     fragment_id: EntityId
     result: QueryResponse
+
+
+class CatalogAppliedResponse(Response):
+    """El nodo ya usa el catálogo nuevo: ``catalog_version`` es la nueva."""
+
+    request_id: RequestId
+    fragment_ids: list[EntityId]
 
 
 class ExecutionError(ContractModel):

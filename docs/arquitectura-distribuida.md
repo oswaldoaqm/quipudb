@@ -97,7 +97,10 @@ esperados, modo de distribución y rangos. Es un documento JSON estático separa
 del catálogo físico C++; el contrato define su forma exacta. Todos los procesos
 cargan la misma versión. El esquema y los índices físicos se preparan fuera del
 tráfico de usuarios, usando las capacidades locales existentes, y se verifican
-antes de habilitar el servicio. No hay endpoints de DDL distribuido.
+antes de habilitar el servicio. Desde el #296 el catálogo también cambia por SQL:
+`CREATE TABLE ... PARTITION BY RANGE`, `CREATE INDEX` y `DROP TABLE` en el
+coordinador producen una versión nueva que se aplica en todos los nodos
+([DDL distribuido](ddl-distribuido.md)).
 
 La configuración debe cubrir todo el dominio INT sin huecos ni solapamientos.
 Una clave determina exactamente un fragmento. La unicidad global de la PK se
@@ -168,7 +171,8 @@ fragmento de una tabla fragmentada.
 | MATCH, SCORE, SIMILAR_TO, radio, polígono y k-NN | Rechazo explícito en v1 | Ejecución local con las capacidades actuales |
 | JOIN | Fuera de alcance | Fuera de alcance del coordinador v1, incluso si están colocadas juntas |
 | EXPLAIN / EXPLAIN ANALYZE | Fuera de alcance | Ejecución local para una sola tabla |
-| DDL, UPDATE SQL, lotes SQL y BEGIN/END | Fuera de alcance del coordinador v1 | Fuera de alcance del coordinador v1 |
+| CREATE TABLE, CREATE INDEX y DROP TABLE | Sí, desde el #296 | Sí, desde el #296 |
+| UPDATE SQL, lotes SQL y BEGIN/END | Fuera de alcance del coordinador v1 | Fuera de alcance del coordinador v1 |
 | Carga CSV y multimedia por API | Fuera de alcance sobre fragmentos | Proxy al propietario, conservando los endpoints existentes |
 
 La v1 `range` admite comparaciones `=`, `<`, `<=`, `>`, `>=` sobre columnas

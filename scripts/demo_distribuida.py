@@ -201,7 +201,11 @@ def levantar(root: Path) -> dict[str, subprocess.Popen]:
         )  # fmt: skip
         esperar(f"http://127.0.0.1:{puerto}/internal/v1/health", procesos[nodo], log)
     log = root / "coordinador.log"
-    procesos["coordinador"] = lanzar(["engine.distributed.coordinator", *comun], log)
+    # Con --data-dir las tablas creadas por SQL (#296) sobreviven al reinicio,
+    # igual que en los nodos.
+    procesos["coordinador"] = lanzar(
+        ["engine.distributed.coordinator", *comun, "--data-dir", str(root / "coordinador")], log
+    )
     esperar("http://127.0.0.1:8000/health", procesos["coordinador"], log)
     return procesos
 

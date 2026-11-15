@@ -1,4 +1,8 @@
-"""Cuatro rutas internas v1. No monta la API pública que eludiría la pertenencia."""
+"""Rutas internas v1. No monta la API pública que eludiría la pertenencia.
+
+Las cuatro del contrato más ``POST /internal/v1/catalog/apply`` (#296), por la
+que el coordinador entrega el catálogo nuevo después de un DDL.
+"""
 
 from contextlib import asynccontextmanager
 
@@ -29,7 +33,7 @@ def create_node_app(service) -> FastAPI:
             result.model_dump(mode="json"), status_code=200 if result.status == "ready" else 503
         )
 
-    async def dispatch(request, fragment_id=None, *, scan=False):
+    async def dispatch(request, fragment_id=None, *, scan=False, apply=False):
         request_id = None
         validated_fragment = None
         try:
@@ -42,7 +46,9 @@ def create_node_app(service) -> FastAPI:
                 raise NodeError("INVALID_REQUEST", "se requiere Content-Type application/json")
             data = decode_body(await request.body())
             request_id = request_id_of(data)
-            if fragment_id is None:
+            if apply:
+                result = await run_in_threadpool(service.apply_catalog, data)
+            elif fragment_id is None:
                 result = await run_in_threadpool(service.describe, data)
             else:
                 result = await run_in_threadpool(service.execute, fragment_id, data, scan=scan)
@@ -61,6 +67,10 @@ def create_node_app(service) -> FastAPI:
     @app.post("/internal/v1/catalog")
     async def catalog(request: Request):
         return await dispatch(request)
+
+    @app.post("/internal/v1/catalog/apply")
+    async def apply_catalog(request: Request):
+        return await dispatch(request, apply=True)
 
     @app.post("/internal/v1/fragments/{fragment_id}/execute")
     async def execute(fragment_id: str, request: Request):
