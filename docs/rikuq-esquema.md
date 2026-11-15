@@ -19,8 +19,8 @@ CREATE TABLE rostros (
   id INT PRIMARY KEY,
   persona_id INT,
   ruta VARCHAR(200),
-  embedding VECTOR(128)
-) USING HEAP;                        -- 720 bytes por registro
+  embedding VECTOR(512)
+) USING HEAP;                        -- 2 256 bytes por registro
 
 CREATE INDEX rostros_por_embedding ON rostros (embedding) USING HNSW WITH METRIC=cosine;
 CREATE INDEX rostros_por_persona   ON rostros (persona_id) USING HASH;
@@ -36,7 +36,7 @@ cuando el esquema cambia.
 |---|---|
 | `personas` y `rostros` separadas | Son los dos tipos de dato que exige el enunciado: lo relacional y lo multimedia. Además una persona tiene varias fotos, y repetir su nombre en cada rostro sería guardarlo 530 veces para George W. Bush |
 | Ambas en HEAP | Los índices secundarios solo funcionan sobre heap, y un archivo secuencial admite como máximo 2 041 bytes por registro: el vector de 512 más la ruta no entrarían con holgura |
-| `VECTOR(128)` | Es la dimensión que devuelve SFace, medida contra el modelo real en #305, no supuesta |
+| `VECTOR(512)` | Es la dimensión que devuelve ArcFace, medida contra el modelo real en #305, no supuesta. El enunciado pide ese modelo por nombre: "modelos preentrenados (FaceNet, ArcFace)" |
 | `ruta VARCHAR(200)` | La ruta relativa del manifiesto (`lfw/Abdullah_Gul/Abdullah_Gul_0001.jpg`) ronda los 40 caracteres; 200 deja sitio para las carpetas del equipo |
 | `nombre VARCHAR(100)` | El nombre más largo de LFW ronda los 35 caracteres |
 | `fotos` en `personas` | Cuántos rostros suyos entraron de verdad, que no es lo mismo que cuántas fotos tenía en el manifiesto: las que no dieron vector no cuentan |
@@ -54,11 +54,16 @@ Las reglas son las del motor, en `engine/parser/semantic.py` y
 | Tabla | Cuenta | Bytes |
 |---|---|---|
 | `personas` | 4 + 100 + 10 + 4 | **118** |
-| `rostros` | 4 + 4 + 200 + 512 | **720** |
+| `rostros` | 4 + 4 + 200 + 2048 | **2 256** |
 
-Los dos entran de sobra. `rostros` es la que aprieta, y aun así caben cinco
-registros por página: 4 324 rostros ocupan unos 3 MB, contra los 40 MB que
-necesita Quipucamayoc para sus chunks, donde cada uno gasta una página entera.
+Los dos entran de sobra. `rostros` es la que aprieta —el vector solo son
+2 048 bytes, la mitad del presupuesto— y aun así caben dos registros por
+página: 4 324 rostros ocupan unos 9 MB.
+
+Vale la pena notar que con ArcFace el margen se achicó bastante: con los 128
+números de SFace el registro eran 720 bytes y ahora son 2 256. Si algún día se
+quisiera un descriptor de 1 024 dimensiones habría que acortar `ruta` o mover
+el vector a su propia tabla.
 
 ## Por qué HNSW y no IVF
 
