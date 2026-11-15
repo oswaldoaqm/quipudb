@@ -13,7 +13,7 @@ import pytest
 
 from app.carga.esquema import PERSONAS, ROSTROS
 from app.config import Settings
-from app.consulta.identificar import VECINOS, consulta_sql, distancia_de, vecinos
+from app.consulta.identificar import VECINOS, consulta_sql, distancia_de, nombres_de, vecinos
 from app.motor import ClienteMotor
 from app.rostros.embedding import DIMENSIONES
 
@@ -92,3 +92,13 @@ def test_los_vecinos_salen_del_mas_parecido_al_menos() -> None:
 
     assert [c.rostro_id for c in encontrados] == [2, 3, 1]
     assert encontrados[0].distancia == pytest.approx(0.1)
+
+
+def test_el_nombre_se_trae_aparte_porque_similar_to_no_admite_join() -> None:
+    vistas: list[str] = []
+
+    with _motor([], {1: "Ana", 2: "Beto"}, vistas) as cliente:
+        assert nombres_de(cliente, [1, 2, 1]) == {1: "Ana", 2: "Beto"}
+
+    # Una consulta por id distinto, sin repetir el 1.
+    assert len(vistas) == 2

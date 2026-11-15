@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from app.carga.esquema import ROSTROS
+from app.carga.esquema import PERSONAS, ROSTROS
 from app.motor import ClienteMotor, literal_vector
 
 VECINOS = 5
@@ -73,4 +73,22 @@ def vecinos(cliente: ClienteMotor, vector: Sequence[float], k: int = VECINOS) ->
     return sorted(candidatos, key=lambda c: c.distancia)
 
 
-__all__ = ["VECINOS", "Candidato", "consulta_sql", "distancia_de", "vecinos"]
+def nombres_de(cliente: ClienteMotor, ids: Sequence[int]) -> dict[int, str]:
+    """El nombre de cada persona, en una consulta por id.
+
+    SIMILAR_TO no admite JOIN (ADR 0008), asi que el nombre se trae aparte.
+    Son a lo sumo `k` ids distintos y el indice hash los resuelve en dos
+    paginas cada uno, igual que hace Quipucamayoc con sus papers.
+    """
+
+    nombres: dict[int, str] = {}
+    for persona_id in dict.fromkeys(ids):
+        filas = cliente.query(
+            f"SELECT id, nombre FROM {PERSONAS} WHERE id = {int(persona_id)}"
+        ).dicts()
+        if filas:
+            nombres[int(persona_id)] = str(filas[0]["nombre"])
+    return nombres
+
+
+__all__ = ["VECINOS", "Candidato", "consulta_sql", "distancia_de", "nombres_de", "vecinos"]
