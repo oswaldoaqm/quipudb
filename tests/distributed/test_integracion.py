@@ -67,7 +67,13 @@ def test_consultas_que_combinan_los_dos_nodos(cluster):
     assert body["columns"] == ["nombre", "id"]
     assert body["column_types"] == ["VARCHAR", "INT"]
     assert body["rows"] == [["tambo", 25000], ["quipu", 10000], ["chasqui", 9999]]
-    assert body["plan"] is None
+    # El plan (#293): pasos del coordinador y, debajo, el de cada nodo.
+    sort = body["plan"]["root"]["children"][0]["children"][0]
+    assert [body["plan"]["root"]["op"], sort["op"]] == ["limit", "sort"]
+    assert [c["detail"].split(":")[0] for c in sort["children"]] == [
+        "n1 · items_f0",
+        "n2 · items_f1",
+    ]
 
     # Valores repetidos en otra columna son datos y se conservan.
     assert ids(cluster.ok("SELECT id FROM items WHERE nombre = 'quipu' ORDER BY id")) == [3, 10000]
