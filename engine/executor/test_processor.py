@@ -10,7 +10,7 @@ from typing import ClassVar
 import pytest
 
 from engine.executor.processor import QueryProcessor
-from engine.parser.errors import SQLParseError, SQLSemanticError
+from engine.parser.errors import SQLParseError, SQLSemanticError, SQLUnsupportedError
 from engine.transactions import TransactionError
 
 
@@ -545,6 +545,27 @@ def test_tabla_duplicada_se_traduce_y_conserva_schema_error(
         processor.execute(sql)
 
     assert isinstance(captured.value.__cause__, _SchemaError)
+
+
+@pytest.mark.parametrize(
+    "distribution",
+    [
+        "ON n1",
+        "PARTITION BY RANGE (id) (PARTITION a VALUES LESS THAN (MAXVALUE) ON n1)",
+    ],
+)
+def test_create_table_distribuido_se_rechaza_sin_tocar_el_core(
+    database: _FakeDatabase,
+    processor: QueryProcessor,
+    distribution: str,
+) -> None:
+    sql = f"CREATE TABLE datos (id INT PRIMARY KEY) {distribution}"
+
+    with pytest.raises(SQLUnsupportedError, match="coordinador distribuido") as captured:
+        processor.execute(sql)
+
+    assert sql[captured.value.span.start : captured.value.span.end] == distribution
+    assert database.create_calls == []
 
 
 def test_insert_en_tabla_inexistente_se_traduce_y_conserva_schema_error(

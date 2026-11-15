@@ -36,12 +36,15 @@ from engine.parser.ast import (
     Limit,
     Literal,
     MatchCondition,
+    NodePlacement,
     OrderBy,
     OrderDirection,
     PointLiteral,
     PolygonCondition,
     PolygonLiteral,
     Projection,
+    RangeDistribution,
+    RangePartition,
     ScoreCall,
     ScoreKind,
     ScoreOrderBy,
@@ -223,12 +226,72 @@ class _Parser:
                 )
             end = self._previous()
 
+        distribution = None
+        if self._match(TokenKind.ON):
+            on = self._previous()
+            node = self._identifier("se esperaba el nombre del nodo despues de ON")
+            distribution = NodePlacement(node, combine_spans(on.span, node.span))
+        elif self._word(self._peek()) == "PARTITION":
+            distribution = self._range_distribution()
+        if distribution is not None:
+            return CreateTableStatement(
+                table=table,
+                columns=tuple(columns),
+                storage=storage,
+                span=combine_spans(start.span, distribution.span),
+                distribution=distribution,
+            )
+
         return CreateTableStatement(
             table=table,
             columns=tuple(columns),
             storage=storage,
             span=combine_spans(start.span, end.span),
         )
+
+    def _range_distribution(self) -> RangeDistribution:
+        # PARTITION, RANGE, LESS, THAN y MAXVALUE se leen como identificadores,
+        # igual que LANGUAGE: volverlos reservadas romperia tablas o columnas
+        # que ya se llamen asi.
+        start = self._contextual("PARTITION", "se esperaba PARTITION")
+        self._expect(TokenKind.BY, "se esperaba BY despues de PARTITION")
+        self._contextual("RANGE", "se esperaba RANGE despues de PARTITION BY")
+        self._expect(TokenKind.LPAREN, "se esperaba '(' despues de RANGE")
+        column = self._identifier("se esperaba la columna de particion")
+        self._expect(TokenKind.RPAREN, "se esperaba ')' despues de la columna de particion")
+        self._expect(TokenKind.LPAREN, "se esperaba '(' antes de la lista de particiones")
+        partitions = [self._range_partition()]
+        while self._match(TokenKind.COMMA):
+            partitions.append(self._range_partition())
+        end = self._expect(TokenKind.RPAREN, "se esperaba ',' o ')' despues de una particion")
+        return RangeDistribution(column, tuple(partitions), combine_spans(start.span, end.span))
+
+    def _range_partition(self) -> RangePartition:
+        start = self._contextual("PARTITION", "se esperaba PARTITION nombre VALUES LESS THAN")
+        name = self._identifier("se esperaba el nombre de la particion")
+        self._expect(TokenKind.VALUES, "se esperaba VALUES LESS THAN despues del nombre")
+        self._contextual("LESS", "se esperaba LESS THAN despues de VALUES")
+        self._contextual("THAN", "se esperaba THAN despues de LESS")
+        self._expect(TokenKind.LPAREN, "se esperaba '(' despues de LESS THAN")
+        token = self._peek()
+        if token.kind is TokenKind.INTEGER:
+            self._advance()
+            upper = IntegerLiteral(int(token.value), token.span)
+        elif self._word(token) == "MAXVALUE":
+            self._advance()
+            upper = None
+        else:
+            raise self._error(token, "el limite de una particion es un entero o MAXVALUE")
+        self._expect(TokenKind.RPAREN, "se esperaba ')' despues del limite de la particion")
+        self._expect(TokenKind.ON, "se esperaba ON nodo despues del limite de la particion")
+        node = self._identifier("se esperaba el nombre del nodo despues de ON")
+        return RangePartition(name, upper, node, combine_spans(start.span, node.span))
+
+    def _contextual(self, word: str, message: str) -> Token:
+        token = self._peek()
+        if token.kind is not TokenKind.IDENTIFIER or self._word(token) != word:
+            raise self._error(token, message)
+        return self._advance()
 
     def _create_index(self, start: Token) -> CreateIndexStatement:
         index = self._identifier("se esperaba el nombre del indice")

@@ -52,6 +52,7 @@ from engine.parser import (
     JoinRef,
     SelectStatement,
     SQLSemanticError,
+    SQLUnsupportedError,
     Statement,
     TableRef,
     TextLanguage,
@@ -452,6 +453,13 @@ class QueryProcessor:
     ) -> QueryResult:
         if self._transaction is not None:
             raise TransactionError("CREATE TABLE no se puede ejecutar dentro de una transaccion")
+        if statement.distribution is not None:
+            # Un motor local no tiene nodos donde repartir la tabla (#296).
+            raise SQLUnsupportedError(
+                "PARTITION BY RANGE y ON nodo solo se admiten en el coordinador distribuido",
+                statement.distribution.span,
+                source,
+            )
         bound = bind_create_table(statement, source)
         schema = to_native_schema(bound.schema, self._native)
         storage = {

@@ -337,11 +337,44 @@ class GroupBy:
 
 
 @dataclass(frozen=True, slots=True)
+class RangePartition:
+    """``PARTITION nombre VALUES LESS THAN (n | MAXVALUE) ON nodo`` (#296).
+
+    ``upper`` es el limite exclusivo; ``None`` significa ``MAXVALUE``. El
+    limite inferior es el superior de la particion anterior.
+    """
+
+    name: Identifier
+    upper: IntegerLiteral | None
+    node: Identifier
+    span: Span
+
+
+@dataclass(frozen=True, slots=True)
+class RangeDistribution:
+    """``PARTITION BY RANGE (columna) (PARTITION ..., ...)`` (#296)."""
+
+    column: Identifier
+    partitions: tuple[RangePartition, ...]
+    span: Span
+
+
+@dataclass(frozen=True, slots=True)
+class NodePlacement:
+    """``ON nodo``: la tabla entera vive en un solo nodo (#296)."""
+
+    node: Identifier
+    span: Span
+
+
+@dataclass(frozen=True, slots=True)
 class CreateTableStatement:
     table: Identifier
     columns: tuple[ColumnDefinition, ...]
     storage: StorageKind
     span: Span
+    distribution: RangeDistribution | NodePlacement | None = None
+    """Solo la entiende el coordinador distribuido; el motor local la rechaza."""
 
 
 @dataclass(frozen=True, slots=True)
