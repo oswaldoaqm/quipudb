@@ -50,7 +50,7 @@ sequenceDiagram
     N1-->>C: filas completas de items_f0
     N2-->>C: filas completas de items_f1
     Note over C: revisa columnas y rangos,<br/>ordena por id DESC, proyecta, toma 3
-    C-->>F: 3 filas, plan null
+    C-->>F: 3 filas y el plan combinado
 ```
 
 Una búsqueda `WHERE id = 10000`, un INSERT o un DELETE por id van a un solo
@@ -111,8 +111,13 @@ sumado de los dos nodos.
 ![Consulta combinada en el frontend](informe/capturas/distribuido/frontend-combinada.png)
 
 La consulta ordena y limita sobre filas de los dos nodos: 25000 y 10000 vienen
-de n2, 9999 de n1. El panel del plan queda vacío porque una consulta
-distribuida devuelve `plan: null`.
+de n2, 9999 de n1. Esta captura es anterior al #293, cuando una consulta
+distribuida devolvía `plan: null`; ahora el panel muestra el plan distribuido:
+
+![Plan de una consulta distribuida](informe/capturas/distribuido/frontend-plan-distribuido.png)
+
+Los tres pasos de arriba son del coordinador. Los de abajo son los planes de n1
+y n2: cada nodo resolvió `id >= 100` con su B+ y leyó sus filas del heap.
 
 ![Consulta no admitida en el frontend](informe/capturas/distribuido/frontend-no-admitida.png)
 
