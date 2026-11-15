@@ -1,7 +1,7 @@
 # Esquema de Rikuq en QuipuDB
 
 Cómo guarda Rikuq las caras, y por qué así (#302). El ADR de la aplicación es
-[0011](adr/0011-aplicacion-rikuq.md) cuando exista; esto es el detalle
+[0011](adr/0011-aplicacion-rikuq.md); esto es el detalle
 reproducible del esquema, como
 [consultas-multimedia.md](consultas-multimedia.md) lo es de la Parte 4.
 
@@ -57,13 +57,16 @@ Las reglas son las del motor, en `engine/parser/semantic.py` y
 | `rostros` | 4 + 4 + 200 + 2048 | **2 256** |
 
 Los dos entran de sobra. `rostros` es la que aprieta —el vector solo son
-2 048 bytes, la mitad del presupuesto— y aun así caben dos registros por
-página: 4 324 rostros ocupan unos 9 MB.
+2 048 bytes, la mitad del presupuesto—. Cabe **un registro por página**:
+dos necesitarían 4 512 bytes, más que los 4 087 disponibles. Solo las páginas
+de datos de 4 324 rostros requieren aproximadamente 16,89 MiB, sin contar
+cabeceras adicionales ni los índices. No son 9 MB.
 
 Vale la pena notar que con ArcFace el margen se achicó bastante: con los 128
 números de SFace el registro eran 720 bytes y ahora son 2 256. Si algún día se
-quisiera un descriptor de 1 024 dimensiones habría que acortar `ruta` o mover
-el vector a su propia tabla.
+quisiera un descriptor de 1 024 dimensiones, el vector solo ya ocuparía
+4 096 bytes: acortar `ruta` o moverlo a otra tabla con las mismas páginas no
+alcanzaría. Harían falta páginas mayores o almacenamiento fuera del registro.
 
 ## Por qué HNSW y no IVF
 
@@ -86,7 +89,7 @@ que publica SFace.
 
 Importa que la normalización ocurra **antes de insertar** y no al consultar:
 `cv2.match` normaliza por dentro, pero QuipuDB no. Insertar el vector crudo
-—cuyas normas rondan 4 y 5— y pedir distancia por producto punto no daría el
+—que no es unitario— y pedir distancia por producto punto no daría el
 coseno, y el umbral de #303 dejaría de significar lo que midió #306.
 
 ## La carga

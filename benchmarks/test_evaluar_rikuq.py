@@ -142,6 +142,8 @@ def test_el_informe_trae_las_dos_latencias_y_las_graficas() -> None:
 
     assert "Busqueda en el motor" in texto
     assert "Vuelta completa" in texto
+    assert "vectores precalculados" in texto
+    assert "No incluye detectar ni extraer" in texto
     assert "graficas/rikuq_latencia.png" in texto
     assert "graficas/rikuq_distancias.png" in texto
 

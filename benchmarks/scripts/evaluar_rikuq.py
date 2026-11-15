@@ -371,10 +371,12 @@ Por eso el umbral se eligio hacia el lado estricto (ver
 El enunciado pide "busquedas en menos de 100 ms". Eso es la **busqueda en el
 motor**, que {cumple} con {resumen["ms_motor_mediana"]:.2f} ms.
 
-La **vuelta completa** incluye detectar el rostro y sacar su vector, que son
-unos 15 ms que no dependen de la base de datos. Es lo que de verdad espera
-quien usa la camara, y por eso se reporta aparte en vez de esconderlo dentro
-de un solo numero.
+**Frontera de medición:** el código de #306 usa vectores precalculados.
+`ms_motor` mide la ida/vuelta HTTP de un SELECT vectorial; la columna
+histórica **Vuelta completa** incluye ese SELECT y después `identificar`,
+que vuelve a buscar y consulta los nombres. No incluye detectar ni extraer
+el vector, y no es la latencia de cámara o POST /identificar. Se conservan
+las cifras originales, corrigiendo su interpretación, no el experimento.
 
 Se reporta la **mediana de 5 corridas** por consulta, con 3 de calentamiento
 tiradas antes: la primera consulta carga el indice y el catalogo, y medirla
