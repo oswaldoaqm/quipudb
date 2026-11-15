@@ -39,8 +39,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from app.rostros.deteccion import LADO_ALINEADO, alinear, crear_detector, detectar
 from app.rostros.constantes import DIMENSIONES
+from app.rostros.deteccion import LADO_ALINEADO, alinear, crear_detector, detectar
 from app.rostros.errores import EmptyObjectError
 from app.rostros.lectura import leer_color
 from app.rostros.modelos import ARCFACE, MODELOS, traer
