@@ -120,8 +120,10 @@ escritura incierto; no se reintentó". El coordinador no reintenta nada.
 
 El contrato prevé que las cargas CSV y multimedia de una tabla `single` pasen
 por el coordinador hacia su dueño. El servidor de nodo v1 solo expone las
-cuatro rutas internas, así que el coordinador no tiene a dónde reenviarlas; las
-cargas siguen haciéndose en cada nodo, antes de levantarlo.
+cuatro rutas internas, así que no hay a dónde reenviar el archivo. La carga CSV
+se resolvió después sin tocar el nodo, con un `INSERT` por fila (#292, en
+[Integración distribuida](integracion-distribuida.md)); la carga multimedia
+sigue fuera.
 
 ## Probarlo
 

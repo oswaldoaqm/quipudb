@@ -63,6 +63,7 @@ incompleto.
 | `GET /health` | 200 si todos los nodos están listos, 503 si no; el estado y el motivo de cada nodo. |
 | `GET /tables` | La misma forma de `GET /tables` de la API local, con las tablas lógicas. |
 | `POST /query` | La misma forma de la API local; ver [enrutamiento](enrutamiento-distribuido.md). |
+| `POST /tables/{tabla}/load` | La carga CSV de la API local, con cada fila en el nodo dueño de su clave (#292). No admite `atomic`. |
 | `GET /fragments` | Cada tabla con sus fragmentos: nodo, rango de la clave, filas y si el nodo responde (#295). Un nodo caído no hace fallar la respuesta. |
 
 Los errores usan el `QueryErrorResponse` de siempre, así que el frontend los
