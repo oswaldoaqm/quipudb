@@ -46,6 +46,7 @@ class Servicio:
                             else None,
                             "confianza": respuesta.confianza if respuesta.conocido else 0.0,
                             "caja": list(rostro.caja),
+                            "fiable": rostro.fiable,
                             "ms_motor": respuesta.ms_motor,
                         }
                     )

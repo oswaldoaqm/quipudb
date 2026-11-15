@@ -24,7 +24,7 @@ def test_usa_la_misma_deteccion_alineacion_y_descripcion_del_pipeline(monkeypatc
         assert imagen.shape == (30, 40, 3)
         assert detector is pipeline._detector
         vistos.append("detectar")
-        return (SimpleNamespace(caja=(1, 2, 10, 12)),)
+        return (SimpleNamespace(caja=(1, 2, 10, 12), fiable=True),)
 
     def alinear(imagen, rostro):
         vistos.append("alinear")

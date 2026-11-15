@@ -48,6 +48,20 @@ Antes era 0.9, con el argumento de que YuNet "marca manchas" si se afloja.
 0.6 queda muy por encima del 0.182 de lo que no es una cara y por debajo de
 lo que puntua un rostro pequeno o de perfil.
 
+Ojo: que un rostro se detecte no quiere decir que su vector sirva. Ver
+``LADO_FIABLE``.
+"""
+
+LADO_FIABLE = 80
+"""Lado minimo, en pixeles, para fiarse del vector de un rostro.
+
+El descriptor se degrada con la resolucion aunque la deteccion acierte.
+Medido contra la misma foto a distintos tamanos, la distancia a su propio
+vector de referencia crece asi: 0.05 a 150 px, 0.06 a 100 px, 0.15 a 70 px,
+0.27 a 50 px y 0.50 a 35 px -- esto ultimo ya roza el umbral de #303.
+
+No se descarta el rostro: se marca, para que la interfaz pueda avisar que el
+resultado es poco fiable en vez de dar un nombre dudoso como si fuera seguro.
 """
 
 LADO_ALINEADO = 112
@@ -87,6 +101,23 @@ class RostroDetectado:
     # tal cual: convertirla a tuplas y volver a armarla solo agrega una
     # oportunidad de equivocarse en el orden de los puntos.
     fila: np.ndarray = field(repr=False)
+
+    @property
+    def lado(self) -> int:
+        """El lado menor de la caja: cuanta cara hay de verdad."""
+
+        return min(self.caja[2], self.caja[3])
+
+    @property
+    def fiable(self) -> bool:
+        """Si el rostro es lo bastante grande para fiarse de su vector.
+
+        Un rostro chico se detecta bien pero se describe mal, asi que la
+        respuesta puede traer un nombre con poco fundamento. Quien consulte
+        esto puede avisarlo en vez de presentarlo como seguro.
+        """
+
+        return self.lado >= LADO_FIABLE
 
 
 def crear_detector(
@@ -205,6 +236,7 @@ def main(argv: list[str] | None = None) -> int:
 
 __all__ = [
     "LADO_ALINEADO",
+    "LADO_FIABLE",
     "PLANTILLA",
     "UMBRAL_CONFIANZA",
     "RostroDetectado",

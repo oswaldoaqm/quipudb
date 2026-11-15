@@ -15,6 +15,13 @@ class ModeloNoDisponible(RuntimeError):
 class RostroEntrada:
     caja: tuple[int, int, int, int]
     vector: tuple[float, ...]
+    fiable: bool = True
+    """Si el rostro es lo bastante grande para fiarse de su vector.
+
+    Un rostro chico se detecta bien pero se describe mal (ver ``LADO_FIABLE``
+    en ``app.rostros.deteccion``). No se descarta: se marca, para poder
+    avisarlo en vez de dar un nombre dudoso como si fuera seguro.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +83,7 @@ class PipelineArcFace:
             RostroEntrada(
                 rostro.caja,
                 tuple(float(v) for v in describir(alinear(imagen, rostro), self._descriptor)),
+                rostro.fiable,
             )
             for rostro in rostros
         )
