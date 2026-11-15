@@ -219,4 +219,42 @@ def medir(reparto: Reparto, pasos: Sequence[float] = PASOS) -> list[Punto]:
     return curva
 
 
-__all__ = ["MINIMO_FOTOS", "PASOS", "Punto", "Reparto", "acotar", "medir", "repartir"]
+def elegir(curva: Sequence[Punto]) -> Punto:
+    """El umbral con mejor balance; ante un empate, el mas estricto.
+
+    El empate se rompe hacia abajo porque equivocarse de persona es peor que
+    no reconocerla: un "no se quien es" se vuelve a intentar, y un nombre
+    equivocado no se nota.
+    """
+
+    if not curva:
+        raise ValueError("la curva esta vacia")
+    return min(curva, key=lambda p: (-p.balance, p.umbral))
+
+
+def tabla(curva: Sequence[Punto]) -> str:
+    cabecera = (
+        f"{'umbral':>7} {'aciertos':>9} {'confunde':>9} {'rechaza':>8} "
+        f"{'falsos+':>8} {'precision':>10} {'balance':>8}"
+    )
+    lineas = [cabecera]
+    for punto in curva:
+        lineas.append(
+            f"{punto.umbral:7.2f} {punto.aciertos:9d} {punto.confusiones:9d} "
+            f"{punto.rechazos:8d} {punto.falsos_positivos:8d} "
+            f"{punto.precision:9.1%} {punto.balance:7.1%}"
+        )
+    return "\n".join(lineas)
+
+
+__all__ = [
+    "MINIMO_FOTOS",
+    "PASOS",
+    "Punto",
+    "Reparto",
+    "acotar",
+    "elegir",
+    "medir",
+    "repartir",
+    "tabla",
+]

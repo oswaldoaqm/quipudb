@@ -8,7 +8,16 @@ que es lo que mide `python -m app.consulta.umbral` sobre LFW.
 import numpy as np
 import pytest
 
-from app.consulta.umbral import MINIMO_FOTOS, PASOS, Punto, acotar, medir, repartir
+from app.consulta.umbral import (
+    MINIMO_FOTOS,
+    PASOS,
+    Punto,
+    acotar,
+    elegir,
+    medir,
+    repartir,
+    tabla,
+)
 from app.dataset.lfw import Rostro
 
 
@@ -146,6 +155,19 @@ def test_un_umbral_enorme_acepta_hasta_a_los_intrusos() -> None:
     assert punto.tasa_falsos_positivos == pytest.approx(1.0)
 
 
+def test_con_vectores_separables_hay_un_umbral_que_acierta_todo() -> None:
+    """Si no lo hubiera, el metodo no serviria para elegir nada."""
+
+    rostros = _rostros({f"P{i}": 4 for i in range(8)})
+    reparto = repartir(rostros, _vectores(rostros, ruido=0.05))
+
+    curva = medir(reparto)
+    mejor = elegir(curva)
+
+    assert mejor.precision == pytest.approx(1.0)
+    assert mejor.falsos_positivos == 0
+
+
 def test_el_balance_castiga_al_umbral_que_acepta_todo() -> None:
     """Un umbral con precision alta y cero rechazo de intrusos no sirve."""
 
@@ -159,8 +181,37 @@ def test_el_balance_castiga_al_umbral_que_acepta_todo() -> None:
     assert equilibrado.balance > acepta_todo.balance
 
 
+def test_ante_un_empate_se_elige_el_umbral_mas_estricto() -> None:
+    """Equivocarse de persona es peor que no reconocerla."""
+
+    flojo = Punto(
+        0.9, aciertos=10, confusiones=0, rechazos=0, intrusos_rechazados=10, falsos_positivos=0
+    )
+    estricto = Punto(
+        0.4, aciertos=10, confusiones=0, rechazos=0, intrusos_rechazados=10, falsos_positivos=0
+    )
+
+    assert elegir([flojo, estricto]).umbral == 0.4
+
+
+def test_elegir_una_curva_vacia_es_un_error() -> None:
+    with pytest.raises(ValueError, match="vacia"):
+        elegir([])
+
+
 def test_el_barrido_llega_hasta_donde_se_acepta_a_cualquiera() -> None:
     """Entre personas distintas la distancia ronda 0.95-1.06."""
 
     assert max(PASOS) >= 1.1
     assert min(PASOS) <= 0.05
+
+
+def test_la_tabla_trae_una_fila_por_umbral() -> None:
+    rostros = _rostros({f"P{i}": 4 for i in range(4)})
+    curva = medir(repartir(rostros, _vectores(rostros)), [0.3, 0.6])
+
+    lineas = tabla(curva).splitlines()
+
+    assert len(lineas) == 3  # cabecera y dos umbrales
+    assert "umbral" in lineas[0]
+    assert lineas[1].strip().startswith("0.30")
