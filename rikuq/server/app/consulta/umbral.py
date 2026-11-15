@@ -28,6 +28,10 @@ import numpy as np
 
 from app.dataset.lfw import Rostro
 
+# Hasta donde barrer. Mas alla de 1.0 el umbral acepta a casi cualquiera:
+# entre personas distintas la distancia ronda 0.95-1.06.
+PASOS = tuple(round(0.05 * i, 2) for i in range(1, 25))
+
 MINIMO_FOTOS = 3
 """Fotos minimas por identidad para que entre al experimento.
 
@@ -48,6 +52,49 @@ class Reparto:
 
     intrusos: list[tuple[str, np.ndarray]]
     """``(persona, vector)`` de alguien que **no** esta: tiene que salir desconocido."""
+
+
+@dataclass(frozen=True, slots=True)
+class Punto:
+    """Como le fue al sistema con un umbral concreto."""
+
+    umbral: float
+    aciertos: int
+    confusiones: int
+    """Estaba en la base, pero se le puso el nombre de otra persona."""
+    rechazos: int
+    """Estaba en la base y salio desconocido."""
+    intrusos_rechazados: int
+    falsos_positivos: int
+    """No estaba en la base y se le puso un nombre."""
+
+    @property
+    def consultas(self) -> int:
+        return self.aciertos + self.confusiones + self.rechazos
+
+    @property
+    def intrusos(self) -> int:
+        return self.intrusos_rechazados + self.falsos_positivos
+
+    @property
+    def precision(self) -> float:
+        return self.aciertos / self.consultas if self.consultas else 0.0
+
+    @property
+    def tasa_falsos_positivos(self) -> float:
+        return self.falsos_positivos / self.intrusos if self.intrusos else 0.0
+
+    @property
+    def balance(self) -> float:
+        """Precision y rechazo de intrusos pesan igual.
+
+        Promediar las dos y no sumar aciertos a secas evita el umbral que
+        acierta mucho porque acepta todo: ese tiene precision alta y rechazo
+        de intrusos nulo.
+        """
+
+        correcto_intrusos = 1.0 - self.tasa_falsos_positivos
+        return (self.precision + correcto_intrusos) / 2
 
 
 def repartir(
@@ -127,4 +174,49 @@ def acotar(
     return [rostro for rostro in rostros if rostro.persona in elegidas]
 
 
-__all__ = ["MINIMO_FOTOS", "Reparto", "acotar", "repartir"]
+def _mas_cercano(base: dict[str, list[np.ndarray]], vector: np.ndarray) -> tuple[str, float]:
+    """El nombre mas cercano y su distancia coseno, a fuerza bruta."""
+
+    mejor_nombre, mejor = "", float("inf")
+    for persona, suyos in base.items():
+        distancias = 1.0 - np.asarray(suyos, dtype=np.float32) @ vector
+        minima = float(distancias.min())
+        if minima < mejor:
+            mejor_nombre, mejor = persona, minima
+    return mejor_nombre, mejor
+
+
+def medir(reparto: Reparto, pasos: Sequence[float] = PASOS) -> list[Punto]:
+    """La curva: como le va al sistema con cada umbral."""
+
+    # Las distancias se calculan una vez y se reutilizan en todo el barrido.
+    conocidos = [
+        (persona, *_mas_cercano(reparto.base, vector)) for persona, vector in reparto.consultas
+    ]
+    ajenos = [_mas_cercano(reparto.base, vector)[1] for _, vector in reparto.intrusos]
+
+    curva = []
+    for umbral in pasos:
+        aciertos = confusiones = rechazos = 0
+        for esperado, propuesto, distancia in conocidos:
+            if distancia > umbral:
+                rechazos += 1
+            elif propuesto == esperado:
+                aciertos += 1
+            else:
+                confusiones += 1
+        falsos = sum(1 for distancia in ajenos if distancia <= umbral)
+        curva.append(
+            Punto(
+                umbral=umbral,
+                aciertos=aciertos,
+                confusiones=confusiones,
+                rechazos=rechazos,
+                intrusos_rechazados=len(ajenos) - falsos,
+                falsos_positivos=falsos,
+            )
+        )
+    return curva
+
+
+__all__ = ["MINIMO_FOTOS", "PASOS", "Punto", "Reparto", "acotar", "medir", "repartir"]

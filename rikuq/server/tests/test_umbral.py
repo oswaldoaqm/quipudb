@@ -8,7 +8,7 @@ que es lo que mide `python -m app.consulta.umbral` sobre LFW.
 import numpy as np
 import pytest
 
-from app.consulta.umbral import MINIMO_FOTOS, acotar, repartir
+from app.consulta.umbral import MINIMO_FOTOS, PASOS, Punto, acotar, medir, repartir
 from app.dataset.lfw import Rostro
 
 
@@ -119,3 +119,48 @@ def test_repartir_salta_las_imagenes_sin_vector() -> None:
     guardados = sum(len(v) for v in reparto.base.values()) + len(reparto.consultas)
     assert guardados == len(rostros) - 1
     assert reparto.intrusos == []
+
+
+# --- la curva -----------------------------------------------------------------
+
+
+def test_un_umbral_de_cero_no_reconoce_a_nadie() -> None:
+    rostros = _rostros({f"P{i}": 4 for i in range(6)})
+    reparto = repartir(rostros, _vectores(rostros))
+
+    punto = medir(reparto, [0.0])[0]
+
+    assert punto.aciertos == 0
+    assert punto.rechazos == punto.consultas
+    assert punto.falsos_positivos == 0
+
+
+def test_un_umbral_enorme_acepta_hasta_a_los_intrusos() -> None:
+    rostros = _rostros({f"P{i}": 4 for i in range(6)})
+    reparto = repartir(rostros, _vectores(rostros))
+
+    punto = medir(reparto, [99.0])[0]
+
+    assert punto.rechazos == 0
+    assert punto.falsos_positivos == punto.intrusos
+    assert punto.tasa_falsos_positivos == pytest.approx(1.0)
+
+
+def test_el_balance_castiga_al_umbral_que_acepta_todo() -> None:
+    """Un umbral con precision alta y cero rechazo de intrusos no sirve."""
+
+    acepta_todo = Punto(
+        99.0, aciertos=10, confusiones=0, rechazos=0, intrusos_rechazados=0, falsos_positivos=10
+    )
+    equilibrado = Punto(
+        0.5, aciertos=9, confusiones=1, rechazos=0, intrusos_rechazados=10, falsos_positivos=0
+    )
+
+    assert equilibrado.balance > acepta_todo.balance
+
+
+def test_el_barrido_llega_hasta_donde_se_acepta_a_cualquiera() -> None:
+    """Entre personas distintas la distancia ronda 0.95-1.06."""
+
+    assert max(PASOS) >= 1.1
+    assert min(PASOS) <= 0.05
