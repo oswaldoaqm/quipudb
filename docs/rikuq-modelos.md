@@ -24,13 +24,14 @@ que trae OpenCV, así que cumple sin agregar dependencias. Devuelve caja,
 confianza y los cinco landmarks que el paso siguiente necesita; MTCNN habría
 obligado a traer otro marco entero para lo mismo.
 
-El umbral de confianza por omisión es **0.6**. Empezó en 0.9 con el argumento
+El umbral de confianza por omisión es **0.7**. Empezó en 0.9 con el argumento
 de que aflojarlo haría que YuNet marcara manchas, y **ese argumento era falso
 y costaba rostros de verdad**:
 
 | | |
 |---|---|
-| Confianza máxima en imágenes **sin ninguna cara** (ruido, degradado, damero, textura) | **0.182** |
+| Confianza máxima en imágenes sintéticas sin caras (ruido, degradado, damero) | 0.182 |
+| Confianza de un rostro **inexistente** en el fondo real de una foto de dos personas | **0.617** |
 | De 120 fotos de LFW, cuántas no detectaban nada con 0.9 | **1** |
 | Con 0.8 o menos | 0 |
 
@@ -39,8 +40,13 @@ La confianza cae con el tamaño del rostro: 0.93 con la cara a 150 px, 0.90 a
 con 0.9 se descartaban casi todas — y en una foto con dos personas la segunda
 se perdía.
 
-0.6 queda muy por encima del 0.182 de lo que no es una cara, y por debajo de
-lo que puntúa un rostro pequeño o de perfil.
+El primer intento fue 0.6, con el 0.182 de las imágenes sintéticas como
+argumento. **Fue un error medir solo con fondos sintéticos**: un fondo real
+tiene estructuras que puntúan mucho más, y con 0.6 aparecía un rostro
+inventado entre dos personas.
+
+**0.7 separa los dos casos observados**: deja fuera ese falso de 0.617 y
+conserva los rostros pequeños de verdad, que puntúan 0.785 incluso a 35 px.
 
 ### Detectarlo no es describirlo bien
 
