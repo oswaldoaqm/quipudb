@@ -139,6 +139,34 @@ def _preparar_importaciones() -> None:
         sys.path.insert(0, ruta)
 
 
+def _cargar_la_base(cliente, reparto) -> None:
+    """Deja en el motor exactamente las personas de ``reparto.base``.
+
+    Es lo que vuelve honesta la medicion. Si el motor tuviera cargado a
+    alguien que el reparto considera intruso, sus fotos saldrian
+    identificadas y se contarian como falsos positivos cuando en realidad el
+    sistema acerto. Por eso la evaluacion no se fia de lo que hubiera: borra
+    y carga su propia base.
+    """
+
+    from app.carga.dataset import crear_esquema, insertar_persona, insertar_rostro
+    from app.carga.esquema import PERSONAS, ROSTROS
+
+    existentes = cliente.table_names()
+    for tabla in (ROSTROS, PERSONAS):
+        if tabla in existentes:
+            cliente.query(f"DROP TABLE {tabla}")
+    crear_esquema(cliente)
+
+    siguiente = 1
+    for persona_id, (nombre, suyos) in enumerate(reparto.base.items(), start=1):
+        cliente.query(insertar_persona(persona_id, nombre, "lfw", len(suyos)))
+        for vector in suyos:
+            cliente.query(insertar_rostro(siguiente, persona_id, f"base/{siguiente}.jpg", vector))
+            siguiente += 1
+    print(f"cargadas {len(reparto.base)} personas y {siguiente - 1} rostros en el motor")
+
+
 def paso_medir(identidades: int, repeticiones: int) -> Path:
     """Corre el reconocimiento contra el motor y guarda cada consulta."""
 
@@ -170,6 +198,7 @@ def paso_medir(identidades: int, repeticiones: int) -> Path:
 
     mediciones: list[Medicion] = []
     with ClienteMotor.desde(Settings.del_entorno()) as cliente:
+        _cargar_la_base(cliente, reparto)
         for _ in range(CALENTAMIENTO):
             cliente.query(consulta_sql(casos[0][1]))
 
