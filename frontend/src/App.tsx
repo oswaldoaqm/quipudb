@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import {
+  clusterHealth,
   executeQuery,
+  listFragments,
   listTables,
   listVocabularies,
   loadCsv,
@@ -16,8 +18,9 @@ import {
 import { MotorError } from "@/api/errors";
 import { CONSULTA_DE_PRUEBA } from "@/api/mock";
 import { efectoDe, type Efecto } from "@/api/sentencia";
-import type { TableInfo } from "@/api/types";
+import type { ClusterHealth, TableFragments, TableInfo } from "@/api/types";
 import { useSpatialContext } from "@/hooks/useSpatialContext";
+import { cabeceraDe } from "@/lib/cluster";
 import {
   cargarCarpeta as cargarCarpetaEn,
   subirArchivoDeConsulta,
@@ -57,8 +60,22 @@ export default function App() {
   const base = useSpatialContext(resultado, tablas, baseRevision);
   const [efecto, setEfecto] = useState<Efecto>({ clase: "otra" });
 
+  // Solo con el coordinador distribuido; contra la API local queda en null (#295).
+  const [fragmentos, setFragmentos] = useState<TableFragments[] | null>(null);
+  // Igual que los fragmentos: solo existe con el coordinador (#294).
+  const [salud, setSalud] = useState<ClusterHealth | null>(null);
+
   const recargarCatalogo = useCallback(
-    () => listTables().then(setTablas).catch(() => setTablas([])),
+    () =>
+      Promise.all([
+        // Si el catalogo no responde se conserva el anterior: con un nodo
+        // caido, `GET /tables` del coordinador responde 503 (no hay conteo
+        // parcial) y vaciar la lista escondia justo los fragmentos que
+        // explican la caida (#295).
+        listTables().then(setTablas).catch(() => undefined),
+        listFragments().then(setFragmentos),
+        clusterHealth().then(setSalud),
+      ]),
     [],
   );
 
@@ -79,9 +96,15 @@ export default function App() {
         }
         if (id !== requestId.current) return;
         // Tambien en lotes cuya ultima sentencia es SELECT: la tabla puede ser nueva.
-        const catalogo = await listTables().catch(() => [] as TableInfo[]);
+        const [catalogo, particiones, estado] = await Promise.all([
+          listTables().catch(() => null),
+          listFragments(),
+          clusterHealth(),
+        ]);
         if (id !== requestId.current) return;
-        setTablas(catalogo);
+        if (catalogo !== null) setTablas(catalogo);
+        setFragmentos(particiones);
+        setSalud(estado);
         setEfecto(efectoNuevo);
         dispatch({ type: "complete", id, result });
       } catch (fallo) {
@@ -95,6 +118,12 @@ export default function App() {
           ),
         });
         setEfecto({ clase: "otra" });
+        // Una consulta que falla porque se cayo un nodo es justo cuando la
+        // cabecera y los fragmentos tienen que enterarse.
+        const [particiones, estado] = await Promise.all([listFragments(), clusterHealth()]);
+        if (id !== requestId.current) return;
+        setFragmentos(particiones);
+        setSalud(estado);
       }
     },
     [],
@@ -135,6 +164,8 @@ export default function App() {
     void ejecutar(CONSULTA_DE_PRUEBA);
   }, [ejecutar, recargarCatalogo]);
 
+  const cabecera = cabeceraDe(USA_DATOS_FALSOS, salud);
+
   return (
     <div className="flex h-screen flex-col gap-2 bg-background p-2 text-foreground">
       <header className="flex shrink-0 items-baseline gap-3 px-1">
@@ -142,8 +173,15 @@ export default function App() {
         <span className="text-xs text-muted-foreground">
           Motor de base de datos multimodal
         </span>
-        <span className="ml-auto rounded bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-          {USA_DATOS_FALSOS ? "datos falsos" : "motor conectado"}
+        <span
+          title={cabecera.detalle ?? undefined}
+          className={
+            cabecera.completo
+              ? "ml-auto rounded bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"
+              : "ml-auto rounded bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-800 dark:text-amber-300"
+          }
+        >
+          {cabecera.texto}
         </span>
       </header>
 
@@ -151,6 +189,7 @@ export default function App() {
         <FilesPanel
           tablas={tablas}
           cargando={cargandoTablas}
+          fragmentos={fragmentos}
           onCargarCsv={cargarCsv}
           onCargarCarpeta={cargarCarpeta}
           onListarVocabularios={listVocabularies}

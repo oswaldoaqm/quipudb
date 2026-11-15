@@ -246,3 +246,35 @@ def test_errores_de_sql_con_la_forma_de_la_api_local(cluster, sql):
     assert response.status_code == 400
     assert set(response.json()) == {"error", "kind", "line", "column", "end_line", "end_column"}
     assert response.json()["line"] == 1
+
+
+def test_la_fragmentacion_se_ve_por_http(cluster):
+    """#295: lo que el frontend muestra en el panel de Archivos."""
+
+    for key in (1, 2, 10000):
+        cluster.ok(insert(key))
+
+    def estado():
+        response = cluster.get("/fragments")
+        assert response.status_code == 200
+        return {
+            (t["table"], f["fragment_id"]): (
+                f["node_id"],
+                f["lower"],
+                f["upper"],
+                f["available"],
+                f["record_count"],
+            )
+            for t in response.json()
+            for f in t["fragments"]
+        }
+
+    assert estado() == {
+        ("items", "items_f0"): ("n1", None, 10000, True, 2),
+        ("items", "items_f1"): ("n2", 10000, None, True, 1),
+        ("notas", "notas_f0"): ("n2", None, None, True, 0),
+    }
+    cluster.nodes["n2"].stop()
+    caido = estado()
+    assert caido[("items", "items_f0")] == ("n1", None, 10000, True, 2)
+    assert caido[("items", "items_f1")][3:] == (False, None)

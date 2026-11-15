@@ -119,6 +119,36 @@ distribuida devuelve `plan: null`.
 Un ORDER BY por otra columna se rechaza en el coordinador y el editor subraya la
 parte no admitida, con la misma posición que mandaría la API local.
 
+### Estado de los nodos (#294)
+
+Contra el coordinador, la etiqueta de la esquina superior derecha dice
+"coordinador · 2 de 2 nodos listos" en vez de "motor conectado". Al pasar el
+cursor muestra cada nodo con su dirección y sus fragmentos, o el motivo si no
+está listo. Sale de `GET /health` del coordinador, se vuelve a pedir al abrir y
+después de cada consulta, también cuando la consulta falla: si n2 se cae, la
+siguiente consulta que lo necesita responde `[NODE_UNAVAILABLE]` y la etiqueta
+pasa a "1 de 2 nodos listos", en ámbar. Contra la API local, que no tiene
+`/health`, la etiqueta queda como siempre.
+
+![Etiqueta con n2 caído](informe/capturas/distribuido/frontend-estado-nodos.png)
+
+### Ver la fragmentación (#295)
+
+Con el frontend conectado al coordinador, el panel de Archivos muestra debajo
+de cada tabla sus fragmentos: nombre, nodo, rango de la clave y cuántas filas
+guarda, por ejemplo `items_f0 · n1 · id < 10,000 · 3 filas`. Los conteos salen
+de `GET /fragments` del coordinador y se actualizan después de cada consulta,
+así un INSERT con id 10000 se ve sumar en `items_f1`. Contra la API local esa
+ruta no existe y la sección no aparece.
+
+Si un nodo se cae, sus fragmentos dicen "nodo no disponible" (el motivo sale al
+pasar el cursor) y los del otro nodo siguen con su conteo. `GET /tables`
+responde 503 en ese caso, porque no da conteos parciales; el panel conserva
+entonces la última lista de tablas en vez de vaciarse, así que el total de
+registros de la tabla es el de antes de la caída.
+
+![Fragmentos con n2 caído](informe/capturas/distribuido/frontend-fragmentos.png)
+
 ## Pruebas integradas
 
 [`tests/distributed/test_integracion.py`](../tests/distributed/test_integracion.py)

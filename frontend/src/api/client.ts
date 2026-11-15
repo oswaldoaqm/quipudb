@@ -9,10 +9,12 @@
 import { MotorError } from "@/api/errors";
 import { mockExecuteQuery, mockListTables, mockLoadCsv } from "@/api/mock";
 import type {
+  ClusterHealth,
   LoadResult,
   MediaJob,
   QueryError,
   QueryResult,
+  TableFragments,
   TableInfo,
   UploadResult,
   VocabularyInfo,
@@ -174,4 +176,38 @@ export function mediaJob(tabla: string, id: string): Promise<MediaJob> {
   return pedir<MediaJob>(
     `/tables/${encodeURIComponent(tabla)}/load-media/${encodeURIComponent(id)}`,
   );
+}
+
+/**
+ * Como esta partida cada tabla, si el frontend habla con el coordinador
+ * distribuido (#295). Contra la API local la ruta no existe y se devuelve
+ * null: no es un error, es que no hay fragmentos que mostrar.
+ */
+export async function listFragments(): Promise<TableFragments[] | null> {
+  if (USA_DATOS_FALSOS) return null;
+  try {
+    const respuesta = await fetch(`${URL_API}/fragments`);
+    if (respuesta.status === 404) return null;
+    if (!respuesta.ok) return null;
+    return (await respuesta.json()) as TableFragments[];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * El estado de los nodos, si el frontend habla con el coordinador (#294).
+ * El coordinador responde 503 cuando falta un nodo, con el mismo cuerpo, asi
+ * que se lee igual. Contra la API local, o si no responde, devuelve null.
+ */
+export async function clusterHealth(): Promise<ClusterHealth | null> {
+  if (USA_DATOS_FALSOS) return null;
+  try {
+    const respuesta = await fetch(`${URL_API}/health`);
+    if (respuesta.status !== 200 && respuesta.status !== 503) return null;
+    const cuerpo = (await respuesta.json()) as Partial<ClusterHealth>;
+    return Array.isArray(cuerpo.nodes) ? (cuerpo as ClusterHealth) : null;
+  } catch {
+    return null;
+  }
 }
