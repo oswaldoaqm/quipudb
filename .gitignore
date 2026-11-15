@@ -36,6 +36,11 @@ env/
 benchmarks/datasets/*
 !benchmarks/datasets/.gitkeep
 benchmarks/results/*.csv
+benchmarks/results/*.json
+# La base que escribe el motor cuando se levanta desde la raiz
+# (``QUIPUDB_CATALOG`` por omision es ``datos/catalogo.txt``). Anclado a la
+# raiz a proposito: ``engine/multimedia/datos/`` si se versiona.
+/datos/
 data/
 *.dat
 *.idx
