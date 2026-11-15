@@ -17,16 +17,21 @@ indice aproximado pueda o no encontrar. HNSW tiene Recall@10 de 0.99, asi que
 el umbral elegido aqui vale igual al consultar con el indice, y si alguna vez
 dejara de valer conviene saber cual de las dos cosas cambio.
 
+Uso, desde ``rikuq/server``::
+
+    python -m app.consulta.umbral --identidades 40
 """
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
-from app.dataset.lfw import Rostro
+from app.dataset.lfw import DATOS, MANIFIESTO, Rostro, leer
 
 # Hasta donde barrer. Mas alla de 1.0 el umbral acepta a casi cualquiera:
 # entre personas distintas la distancia ronda 0.95-1.06.
@@ -247,6 +252,64 @@ def tabla(curva: Sequence[Punto]) -> str:
     return "\n".join(lineas)
 
 
+def vectores_del_manifiesto(
+    rostros: Sequence[Rostro],
+    datos: Path = DATOS,
+    log=lambda _: None,
+) -> dict[str, np.ndarray]:
+    """Saca el vector de cada imagen del manifiesto. Las que fallan se saltan."""
+
+    from app.rostros.deteccion import crear_detector
+    from app.rostros.embedding import crear_descriptor, vectores_de
+    from app.rostros.errores import FeatureExtractionError
+
+    detector, descriptor = crear_detector(), crear_descriptor()
+    sacados: dict[str, np.ndarray] = {}
+    for numero, rostro in enumerate(rostros, start=1):
+        if numero % 100 == 0:
+            log(f"  {numero}/{len(rostros)}")
+        try:
+            sacados[rostro.ruta] = vectores_de(rostro.archivo(datos), detector, descriptor)[0]
+        except FeatureExtractionError:
+            continue
+    return sacados
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
+    parser.add_argument("--manifiesto", type=Path, default=MANIFIESTO)
+    parser.add_argument("--datos", type=Path, default=DATOS)
+    parser.add_argument(
+        "--identidades",
+        type=int,
+        default=40,
+        help="cuantas identidades usar (por omision: %(default)s)",
+    )
+    args = parser.parse_args(argv)
+
+    rostros = acotar(leer(args.manifiesto), args.identidades)
+    print(f"sacando vectores de {len(rostros)} imagenes...")
+    vectores = vectores_del_manifiesto(rostros, args.datos, log=print)
+
+    reparto = repartir(rostros, vectores, identidades=args.identidades)
+    print(
+        f"{len(reparto.base)} identidades en la base, "
+        f"{len(reparto.consultas)} consultas, {len(reparto.intrusos)} de intrusos"
+    )
+
+    curva = medir(reparto)
+    print(tabla(curva))
+
+    mejor = elegir(curva)
+    print(
+        f"\numbral elegido: {mejor.umbral:.2f} "
+        f"(precision {mejor.precision:.1%}, falsos positivos {mejor.tasa_falsos_positivos:.1%})"
+    )
+    return 0
+
+
 __all__ = [
     "MINIMO_FOTOS",
     "PASOS",
@@ -254,7 +317,13 @@ __all__ = [
     "Reparto",
     "acotar",
     "elegir",
+    "main",
     "medir",
     "repartir",
     "tabla",
+    "vectores_del_manifiesto",
 ]
+
+
+if __name__ == "__main__":
+    sys.exit(main())
