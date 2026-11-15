@@ -72,15 +72,18 @@ def test_lectura_multinodo_combinada(node_catalog):
             "/query", json={"sql": "SELECT nombre, id FROM items ORDER BY id DESC LIMIT 4"}
         )
     assert response.status_code == 200
-    assert response.json() == {
+    body = response.json()
+    plan = body.pop("plan")
+    assert body == {
         "columns": ["nombre", "id"],
         "column_types": ["VARCHAR", "INT"],
         "rows": [["m", 20000], ["k", 10000], ["z", 9999], ["c", 3]],
         "affected_rows": 0,
-        "plan": None,
         "spatial_context": None,
         "is_explain": False,
     }
+    assert plan["query"] == "SELECT nombre, id FROM items ORDER BY id DESC LIMIT 4"
+    assert plan["root"]["op"] == "limit"
     assert len(fragment_calls(nodes["n1"])) == len(fragment_calls(nodes["n2"])) == 1
 
 
@@ -336,7 +339,58 @@ def test_mismo_resultado_que_el_motor_local(clusters):
         expected = local_json(local, sql)
         for field in ("columns", "column_types", "rows"):
             assert distributed[field] == expected[field], (sql, field)
-        assert distributed["plan"] is None
+        assert distributed["plan"]["query"] == sql
+
+
+def steps(step):
+    """Los pasos en orden de ejecución: hijos antes que el padre."""
+
+    return [s for child in step["children"] for s in steps(child)] + [step]
+
+
+def test_el_plan_junta_los_pasos_del_coordinador_y_los_planes_de_los_nodos(clusters):
+    coordinator, _, _ = clusters
+    for row in FILAS:
+        run(coordinator.query(insert_sql(row)))
+
+    sql = "SELECT nombre FROM items WHERE nombre = 'quipu' ORDER BY id DESC LIMIT 1"
+    plan = run(coordinator.query(sql)).plan
+    limit = plan["root"]
+    (project,) = limit["children"]
+    (sort,) = project["children"]
+    assert [s["op"] for s in (limit, project, sort)] == ["limit", "project", "sort"]
+    assert {s["structure"] for s in (limit, project, sort)} == {"memory"}
+    assert (limit["stats"]["records_examined"], limit["stats"]["records_returned"]) == (2, 1)
+    assert sort["detail"].startswith("id DESC; ordena en el coordinador las filas de 2 fragmentos")
+
+    # Debajo, el plan real de cada nodo: los dos resolvieron el WHERE con su hash.
+    n1, n2 = sort["children"]
+    assert n1["detail"].startswith("n1 · items_f0: ")
+    assert n2["detail"].startswith("n2 · items_f1: ")
+    for nodo in (n1, n2):
+        search = next(s for s in steps(nodo) if s["op"] == "index_search")
+        assert (search["structure"], search["column"]) == ("extendible_hash", "nombre")
+    # Los totales suman lo que leyó cada nodo.
+    assert plan["totals"]["pages_read"] == sum(
+        s["stats"]["pages_read"] for s in steps(plan["root"])
+    )
+    assert plan["totals"]["pages_read"] > 0
+    assert plan["time_ms"] > 0
+
+
+def test_el_plan_de_una_busqueda_por_clave_tiene_un_solo_fragmento(clusters):
+    coordinator, _, _ = clusters
+    for row in FILAS:
+        run(coordinator.query(insert_sql(row)))
+    plan = run(coordinator.query("SELECT * FROM items WHERE id = 10000")).plan
+    assert plan["root"]["op"] == "project"
+    (fragmento,) = plan["root"]["children"]
+    assert fragmento["detail"].startswith("n2 · items_f1: ")
+    assert "combina 1 fragmento en el coordinador" in plan["root"]["detail"]
+
+    vacio = run(coordinator.query("SELECT id FROM items WHERE id > 2147483647")).plan
+    assert vacio["root"]["children"] == []
+    assert "no se consultó ningún nodo" in vacio["root"]["detail"]
 
 
 def test_cada_fila_queda_en_su_nodo_y_se_borra_por_clave(clusters):
