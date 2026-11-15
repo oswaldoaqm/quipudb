@@ -249,8 +249,16 @@ es `["id", "nombre"]`, `column_types` es `["INT", "VARCHAR"]` y una posible
 fila es `[42, "Quipu"]`; una tabla vacía conserva esas columnas y tipos con
 `rows: []`. `affected_rows` es 0. El coordinador exige esquemas coincidentes,
 ordena por id, proyecta nombre y toma diez filas globalmente. En la respuesta
-pública distribuida usa `plan: null`, `spatial_context: null`, `is_explain: false`.
-No devuelve el plan de un solo nodo como si describiera la consulta completa.
+pública distribuida usa `spatial_context: null` e `is_explain: false`.
+No devuelve el plan de un solo nodo como si describiera la consulta completa:
+desde el #293 arma un plan propio con la forma de `Plan.to_dict()`, cuyos pasos
+superiores son los del coordinador (`sort`, `project`, `limit`, estructura
+`memory`) y cuyos hijos son las raíces de los planes que devolvió cada `scan`,
+con `nodo · fragmento:` antepuesto a su `detail`. `totals` suma los contadores
+de todo el árbol y `time_ms` es el tiempo de la consulta en el coordinador. Un
+conjunto de fragmentos vacío da un plan sin hijos. Este cambio reemplaza la
+regla anterior (`plan: null`) con acuerdo de los dos responsables; no modifica
+campos, rutas ni el sobre interno.
 
 Para borrar la fila, `execute` recibe el mismo sobre con un UUID nuevo y
 `sql: "DELETE FROM items WHERE id = 42;"`. Devuelve el mismo tipo de resultado

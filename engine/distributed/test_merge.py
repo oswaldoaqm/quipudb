@@ -27,7 +27,45 @@ def test_order_by_y_limit_son_globales(node_catalog):
     )
     assert response.rows == [["e"], ["d"], ["b"]]
     assert (response.columns, response.column_types) == (["nombre"], ["VARCHAR"])
-    assert (response.plan, response.spatial_context, response.is_explain) == (None, None, False)
+    assert (response.spatial_context, response.is_explain) == (None, False)
+
+
+def test_el_plan_describe_los_pasos_y_marca_un_nodo_sin_plan(node_catalog):
+    scan = route(node_catalog, "SELECT nombre FROM items ORDER BY id LIMIT 2")
+    f0, f1 = scan.fragments
+    con_plan = result([[1, "a"]]).model_copy(
+        update={
+            "plan": {
+                "query": scan.sql,
+                "time_ms": 0.5,
+                "totals": {},
+                "root": {
+                    "op": "scan",
+                    "structure": "heap",
+                    "table": "items",
+                    "column": None,
+                    "detail": "recorre la tabla",
+                    "stats": {"pages_read": 3, "records_examined": 1, "records_returned": 1},
+                    "time_ms": 0.4,
+                    "children": [],
+                },
+            }
+        }
+    )
+    plan = merge(scan, [(f0, con_plan), (f1, result([[10000, "b"]]))], sql="consulta").plan
+    assert plan["query"] == "consulta"
+    limit = plan["root"]
+    sort = limit["children"][0]["children"][0]
+    assert [limit["op"], limit["children"][0]["op"], sort["op"]] == ["limit", "project", "sort"]
+    assert limit["detail"] == "primeras 2 filas del total combinado"
+    n1, n2 = sort["children"]
+    assert (n1["detail"], n1["stats"]["pages_read"], n1["time_ms"]) == (
+        "n1 · items_f0: recorre la tabla",
+        3,
+        0.4,
+    )
+    assert n2["detail"] == "n2 · items_f1: el nodo no devolvió su plan"
+    assert plan["totals"]["pages_read"] == 3
 
 
 def test_sin_order_by_se_concatena_en_orden_de_rango(node_catalog):

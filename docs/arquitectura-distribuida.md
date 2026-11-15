@@ -228,11 +228,11 @@ conteo de sus fragmentos y se exige coincidencia del esquema y los índices
 declarados; para `single`, se conserva la descripción local. Si un nodo
 necesario no responde, se devuelve error en lugar de conteos incompletos.
 
-Las consultas distribuidas devuelven `plan: null` en v1. No se inventan pasos
-remotos dentro de la enumeración actual de operaciones del frontend; los planes
-locales viajan en el protocolo interno para diagnóstico. Las consultas `single`
-conservan su plan original. Un plan distribuido visible requerirá otra ampliación
-coordinada del contrato frontend/API.
+Las lecturas sobre tablas `range` devuelven un plan armado por el coordinador
+(#293): sus pasos de combinación (`sort`, `project`, `limit`, en `memory`) y,
+como hijos, el plan real que devolvió cada nodo para su fragmento, con el nodo y
+el fragmento en `detail`. Usa solo operaciones que el frontend ya dibuja; no se
+inventan pasos remotos. Las consultas `single` conservan su plan original.
 
 [`engine/transactions/transaction.py`](../engine/transactions/transaction.py)
 usa undo en memoria y no WAL. No hay recuperación distribuida, 2PC ni garantía

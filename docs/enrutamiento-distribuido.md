@@ -84,8 +84,18 @@ puede ser un error del nodo, que se rechaza en vez de ocultarse.
 
 Después se concatenan las filas en el orden de los rangos, se ordenan por la
 clave si hubo ORDER BY, se proyectan las columnas pedidas y se aplica el LIMIT
-sobre el total. La respuesta lleva `plan: null`, `spatial_context: null` y
-`is_explain: false`: el plan de un nodo no describe la consulta completa.
+sobre el total. La respuesta lleva `spatial_context: null` e
+`is_explain: false`.
+
+El plan de un nodo no describe la consulta completa, así que el coordinador
+arma el suyo (#293). Arriba van sus pasos, en `memory`: `sort` si hubo ORDER
+BY, `project` siempre y `limit` si hubo LIMIT, cada uno con cuántas filas
+recibió y cuántas entregó. Debajo, como hijos, va el plan real que devolvió
+cada nodo para su fragmento, sin recalcular nada: páginas, registros y tiempo
+son los que midió su motor, y su `detail` empieza con `n1 · items_f0:`. Así se
+ve qué fragmentos se consultaron y si cada nodo usó un índice. Una búsqueda por
+id muestra un solo fragmento; si ningún fragmento puede tener filas, el plan
+no tiene hijos y lo dice.
 
 Para `SELECT nombre FROM items WHERE id >= 42 ORDER BY id DESC LIMIT 2`:
 
