@@ -13,6 +13,7 @@ from benchmarks.scripts.evaluar_rikuq import (
     _percentil,
     resumir,
     tabla_resumen,
+    texto_informe,
 )
 
 
@@ -134,3 +135,21 @@ def test_el_resumen_dice_si_cumple_los_100_ms() -> None:
 
     assert "cumple los 100 ms: si" in rapido
     assert "cumple los 100 ms: NO" in lento
+
+
+def test_el_informe_trae_las_dos_latencias_y_las_graficas() -> None:
+    texto = texto_informe(resumir([_m("Ana", "Ana"), _m("", "")]))
+
+    assert "Busqueda en el motor" in texto
+    assert "Vuelta completa" in texto
+    assert "graficas/rikuq_latencia.png" in texto
+    assert "graficas/rikuq_distancias.png" in texto
+
+
+def test_el_informe_declara_que_las_cifras_son_locales() -> None:
+    """No son de un servidor ni comparables con numeros publicados."""
+
+    texto = texto_informe(resumir([_m("Ana", "Ana")]))
+
+    assert "no en un servidor" in texto
+    assert "LFW" in texto

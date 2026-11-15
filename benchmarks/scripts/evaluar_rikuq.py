@@ -10,13 +10,15 @@ Mide dos cosas que suelen confundirse y tiran en direcciones opuestas:
   quien usa la camara. Son numeros distintos y mezclarlos no dice nada. Es la
   misma separacion que reporta el informe del RAG con su "5 ms (motor 1 ms)".
 
-Se corre desde el servidor de Rikuq::
+Dos pasos, cada uno deja lo que produce para el siguiente::
 
     cd rikuq/server
     python ../../benchmarks/scripts/evaluar_rikuq.py medir
+    python ../../benchmarks/scripts/evaluar_rikuq.py informe    # pide matplotlib
 
-Necesita QuipuDB levantado con el dataset cargado (#302) y los modelos
-bajados (``python -m app.rostros.modelos``).
+``medir`` necesita QuipuDB levantado con el dataset cargado (#302) y los
+modelos bajados (``python -m app.rostros.modelos``). ``informe`` solo lee lo
+que dejo el paso anterior, asi que se puede correr sin motor.
 
 Las cifras son de una maquina concreta y no de un servidor: se declaran como
 locales en el informe y no se comparan contra numeros publicados de otros
@@ -37,6 +39,8 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[2]
 RESULTADOS = RAIZ / "benchmarks" / "results"
+INFORME = RAIZ / "docs" / "informe" / "rikuq_evaluacion.md"
+GRAFICAS = RAIZ / "docs" / "informe" / "graficas"
 
 # El enunciado: "optimiza para busquedas en menos de 100 ms".
 LIMITE_MS = 100.0
@@ -230,14 +234,162 @@ def tabla_resumen(resumen: dict[str, float]) -> str:
     )
 
 
+def _ultimo(patron: str) -> Path:
+    candidatos = sorted(RESULTADOS.glob(patron))
+    if not candidatos:
+        raise SystemExit(f"no hay resultados que cumplan {patron}: corre primero `medir`")
+    return candidatos[-1]
+
+
+def paso_informe() -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    _preparar_importaciones()
+    from app.consulta.identificar import UMBRAL_POR_DEFECTO
+
+    with _ultimo("*_rikuq_evaluacion.csv").open(encoding="utf-8") as archivo:
+        filas = list(csv.DictReader(archivo))
+    mediciones = [
+        Medicion(
+            ruta=fila["ruta"],
+            esperado=fila["esperado"],
+            obtenido=fila["obtenido"],
+            distancia=float(fila["distancia"]),
+            ms_motor=float(fila["ms_motor"]),
+            ms_total=float(fila["ms_total"]),
+        )
+        for fila in filas
+    ]
+    resumen = resumir(mediciones)
+    GRAFICAS.mkdir(parents=True, exist_ok=True)
+
+    # Grafica 1: las dos latencias, en la misma escala y con el limite marcado.
+    figura, eje = plt.subplots(figsize=(7, 4))
+    eje.boxplot(
+        [[m.ms_motor for m in mediciones], [m.ms_total for m in mediciones]],
+        tick_labels=["busqueda en el motor", "vuelta completa"],
+        showfliers=False,
+    )
+    eje.axhline(
+        LIMITE_MS, color="crimson", linestyle="--", label=f"{LIMITE_MS:.0f} ms del enunciado"
+    )
+    eje.set_ylabel("milisegundos")
+    eje.set_title("Latencia de Rikuq (mediana de 5 corridas por consulta)")
+    eje.legend()
+    figura.tight_layout()
+    figura.savefig(GRAFICAS / "rikuq_latencia.png", dpi=150)
+    plt.close(figura)
+
+    # Grafica 2: por que el umbral separa, con las dos poblaciones encima.
+    figura, eje = plt.subplots(figsize=(7, 4))
+    propias = [m.distancia for m in mediciones if not m.es_intruso]
+    ajenas = [m.distancia for m in mediciones if m.es_intruso]
+    eje.hist(propias, bins=25, alpha=0.7, label="esta en la base")
+    eje.hist(ajenas, bins=25, alpha=0.7, label="no esta (intruso)")
+    eje.axvline(UMBRAL_POR_DEFECTO, color="crimson", linestyle="--", label="umbral")
+    eje.set_xlabel("distancia coseno al vecino mas cercano")
+    eje.set_ylabel("consultas")
+    eje.set_title("Por que el umbral separa")
+    eje.legend()
+    figura.tight_layout()
+    figura.savefig(GRAFICAS / "rikuq_distancias.png", dpi=150)
+    plt.close(figura)
+
+    INFORME.parent.mkdir(parents=True, exist_ok=True)
+    INFORME.write_text(texto_informe(resumen), encoding="utf-8")
+    print(f"{INFORME}\n{GRAFICAS / 'rikuq_latencia.png'}\n{GRAFICAS / 'rikuq_distancias.png'}")
+
+
+def texto_informe(resumen: dict[str, float]) -> str:
+    cumple = "cumple" if resumen["ms_motor_mediana"] < LIMITE_MS else "NO cumple"
+    return f"""# Evaluacion de Rikuq
+
+Cifras medidas en una maquina del equipo, no en un servidor. Se reproducen con:
+
+```
+cd rikuq/server
+python ../../benchmarks/scripts/evaluar_rikuq.py medir
+python ../../benchmarks/scripts/evaluar_rikuq.py informe
+```
+
+## Que tan bien reconoce
+
+| | |
+|---|---|
+| Consultas (personas en la base) | {int(resumen["consultas"])} |
+| Aciertos | {int(resumen["aciertos"])} |
+| **Precision** | **{resumen["precision"]:.1%}** |
+| Rechazados (salieron desconocidos) | {int(resumen["rechazados"])} |
+| Confundidos (otro nombre) | {int(resumen["confundidos"])} |
+| Intrusos (no estan en la base) | {int(resumen["intrusos"])} |
+| **Falsos positivos** | **{int(resumen["falsos_positivos"])} ({resumen["tasa_falsos_positivos"]:.1%})** |
+
+Un **rechazo** y una **confusion** no cuestan lo mismo. Que alguien salga
+desconocido se vuelve a intentar; que salga con el nombre de otro no se nota.
+Por eso el umbral se eligio hacia el lado estricto (ver
+[rikuq-umbral.md](../rikuq-umbral.md)).
+
+## Que tan rapido
+
+| | mediana | p95 |
+|---|---|---|
+| **Busqueda en el motor** | **{resumen["ms_motor_mediana"]:.2f} ms** | {resumen["ms_motor_p95"]:.2f} ms |
+| Vuelta completa | {resumen["ms_total_mediana"]:.2f} ms | {resumen["ms_total_p95"]:.2f} ms |
+
+El enunciado pide "busquedas en menos de 100 ms". Eso es la **busqueda en el
+motor**, que {cumple} con {resumen["ms_motor_mediana"]:.2f} ms.
+
+La **vuelta completa** incluye detectar el rostro y sacar su vector, que son
+unos 15 ms que no dependen de la base de datos. Es lo que de verdad espera
+quien usa la camara, y por eso se reporta aparte en vez de esconderlo dentro
+de un solo numero.
+
+Se reporta la **mediana de 5 corridas** por consulta, con 3 de calentamiento
+tiradas antes: la primera consulta carga el indice y el catalogo, y medirla
+contamina el resultado con un costo que no se vuelve a pagar.
+
+![Latencia](graficas/rikuq_latencia.png)
+
+## Por que el umbral separa
+
+![Distancias](graficas/rikuq_distancias.png)
+
+Las dos poblaciones -- quien esta en la base y quien no -- caen en rangos
+distintos, y el umbral vive en el hueco. Si se solaparan, ningun valor podria
+separar bien y el sistema tendria que elegir entre perder aciertos o aceptar
+intrusos.
+
+## Limites de estas cifras
+
+- Son de **LFW**, fotos de prensa bien iluminadas y frontales, y con un sesgo
+  conocido hacia rostros de hombres blancos. La precision sobre las fotos del
+  equipo, tomadas con un celular, puede ser distinta.
+- Son de **una maquina**, sin nadie mas consultando. No dicen como se comporta
+  con varios usuarios a la vez.
+- La busqueda usa **HNSW**, que es aproximado: con Recall@10 de 0.99 puede
+  perder un vecino de vez en cuando, y eso se cuenta aqui como un error de
+  reconocimiento aunque el vector estuviera bien.
+"""
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
     sub = parser.add_subparsers(dest="paso", required=True)
+
     medir = sub.add_parser("medir", help="corre el reconocimiento contra el motor")
     medir.add_argument("--identidades", type=int, default=40)
     medir.add_argument("--repeticiones", type=int, default=REPETICIONES)
+
+    sub.add_parser("informe", help="tablas y graficas a docs/informe")
+
     args = parser.parse_args(argv)
-    paso_medir(args.identidades, args.repeticiones)
+    if args.paso == "medir":
+        paso_medir(args.identidades, args.repeticiones)
+    else:
+        paso_informe()
     return 0
 
 
