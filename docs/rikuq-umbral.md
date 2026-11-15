@@ -13,7 +13,7 @@ La lámina de la clase 10 lo separa en dos cosas, y conviene no mezclarlas:
 
 | | decide | dónde vive |
 |---|---|---|
-| Umbral de confianza de la **detección** | si hay una cara | `app/rostros/deteccion.py`, 0.9 |
+| Umbral de confianza de la **detección** | si hay una cara | `app/rostros/deteccion.py`, 0.6 |
 | Umbral de **identificación** | de quién es esa cara | `app/consulta/identificar.py`, 0.55 |
 
 ## Cómo se midió

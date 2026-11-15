@@ -24,10 +24,41 @@ que trae OpenCV, así que cumple sin agregar dependencias. Devuelve caja,
 confianza y los cinco landmarks que el paso siguiente necesita; MTCNN habría
 obligado a traer otro marco entero para lo mismo.
 
-El umbral de confianza por omisión es **0.9**, que es estricto. Las fotos de
-LFW salen entre 0.92 y 0.93, o sea justo encima. Con el umbral bajo YuNet
-marca manchas que no son caras, y cada falso rostro entraría al dataset como
-una identidad más.
+El umbral de confianza por omisión es **0.6**. Empezó en 0.9 con el argumento
+de que aflojarlo haría que YuNet marcara manchas, y **ese argumento era falso
+y costaba rostros de verdad**:
+
+| | |
+|---|---|
+| Confianza máxima en imágenes **sin ninguna cara** (ruido, degradado, damero, textura) | **0.182** |
+| De 120 fotos de LFW, cuántas no detectaban nada con 0.9 | **1** |
+| Con 0.8 o menos | 0 |
+
+La confianza cae con el tamaño del rostro: 0.93 con la cara a 150 px, 0.90 a
+50 px y 0.79 a 35 px. En una foto cualquiera una cara mide 60–150 px, así que
+con 0.9 se descartaban casi todas — y en una foto con dos personas la segunda
+se perdía.
+
+0.6 queda muy por encima del 0.182 de lo que no es una cara, y por debajo de
+lo que puntúa un rostro pequeño o de perfil.
+
+### Detectarlo no es describirlo bien
+
+Que un rostro se detecte no quiere decir que su vector sirva. Medido sobre la
+misma foto a distintos tamaños, la distancia a su propio vector de referencia:
+
+| cara de | distancia |
+|---|---|
+| 150 px | 0.05 |
+| 100 px | 0.06 |
+| 70 px | 0.15 |
+| 50 px | 0.27 |
+| 35 px | **0.50** — ya roza el umbral de 0.55 |
+
+Por eso `RostroDetectado` expone `fiable`, cierto cuando el lado menor de la
+caja llega a 80 px. El rostro no se descarta: se marca, para que la interfaz
+avise que el resultado es poco fiable en vez de dar un nombre dudoso como si
+fuera seguro.
 
 ## Descriptor: ArcFace, no SFace
 
