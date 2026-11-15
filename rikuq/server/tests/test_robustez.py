@@ -105,3 +105,50 @@ def test_el_ruido_no_pierde_a_la_persona(foto, pipeline) -> None:
     sucia = np.clip(foto.astype(np.int16) + rng.normal(0, 25, foto.shape), 0, 255)
 
     assert _se_mantiene(foto, sucia.astype(np.uint8), pipeline) < UMBRAL_POR_DEFECTO
+
+
+# --- luz y color --------------------------------------------------------------
+
+
+@pytest.mark.parametrize("factor", [0.3, 1.8])
+def test_la_luz_no_pierde_a_la_persona(foto, pipeline, factor) -> None:
+    """Un salon oscuro y una ventana a contraluz."""
+
+    cambiada = np.clip(foto.astype(np.float32) * factor, 0, 255).astype(np.uint8)
+
+    assert _se_mantiene(foto, cambiada, pipeline) < UMBRAL_POR_DEFECTO
+
+
+def test_el_blanco_y_negro_no_pierde_a_la_persona(foto, pipeline) -> None:
+    """ArcFace mira estructura, no color."""
+
+    gris = cv2.cvtColor(cv2.cvtColor(foto, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+
+    assert _se_mantiene(foto, gris, pipeline) < UMBRAL_POR_DEFECTO
+
+
+# --- donde si se rompe --------------------------------------------------------
+
+
+def test_una_foto_destruida_no_se_detecta_en_vez_de_inventar(foto, pipeline) -> None:
+    """Con JPEG de calidad 2 no queda cara; mejor no detectar que adivinar."""
+
+    from app.rostros.errores import EmptyObjectError
+
+    datos = cv2.imencode(".jpg", foto, [cv2.IMWRITE_JPEG_QUALITY, 2])[1]
+    destruida = cv2.imdecode(datos, cv2.IMREAD_COLOR)
+
+    with pytest.raises(EmptyObjectError):
+        _vector(destruida, pipeline)
+
+
+def test_otra_persona_queda_lejos(pipeline) -> None:
+    """El contraste que hace util al umbral: lo propio cerca, lo ajeno lejos."""
+
+    from app.rostros.lectura import leer_color
+
+    carpetas = sorted(p for p in LFW.iterdir() if p.is_dir())
+    una = _vector(leer_color(min(carpetas[0].glob("*.jpg"))), pipeline)
+    otra = _vector(leer_color(min(carpetas[1].glob("*.jpg"))), pipeline)
+
+    assert distancia(una, otra) > UMBRAL_POR_DEFECTO
