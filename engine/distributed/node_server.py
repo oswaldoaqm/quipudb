@@ -1,4 +1,8 @@
-"""Arranque explícito de un nodo, sin crear tablas ni modificar topología."""
+"""Arranque explícito de un nodo, sin crear tablas ni modificar topología.
+
+Si el directorio de datos guarda un catálogo más nuevo que ``--catalog``
+(lo dejó un DDL distribuido, #296), el nodo arranca con ese.
+"""
 
 import argparse
 import json
@@ -7,6 +11,7 @@ from pathlib import Path
 import uvicorn
 
 from engine.distributed.catalog import load_catalog
+from engine.distributed.catalog_store import newest_catalog
 from engine.distributed.fragments import FragmentService
 from engine.distributed.node_api import create_node_app
 
@@ -32,6 +37,7 @@ def main():
     ):
         parser.error("media-vocabularies requiere un objeto de cadenas")
     catalog = load_catalog(args.catalog, expected_catalog_version=args.catalog_version)
+    catalog = newest_catalog(catalog, args.data_dir)
     service = FragmentService(
         catalog,
         args.node_id,

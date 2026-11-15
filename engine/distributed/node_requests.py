@@ -39,7 +39,7 @@ def decode_body(body: bytes) -> dict:
         raise NodeError("INVALID_REQUEST", str(error)) from error
 
 
-def validate_request(data: dict, catalog, *, fragment: bool = False):
+def validate_request(data: dict, catalog, *, fragment: bool = False, model=None):
     # El modelo v1 rechaza versiones distintas; discriminarlas antes para
     # devolver el 409 contractual en vez de un 422 genérico de Pydantic.
     for field, code, expected in (
@@ -51,7 +51,8 @@ def validate_request(data: dict, catalog, *, fragment: bool = False):
             raise NodeError("INVALID_REQUEST", f"{field} requiere un entero positivo")
         if value != expected:
             raise NodeError(code, f"se recibió {field}={value}; el nodo requiere {expected}")
-    model = FragmentRequest if fragment else BaseRequest
+    if model is None:
+        model = FragmentRequest if fragment else BaseRequest
     try:
         return model.model_validate(data)
     except ValidationError as error:
