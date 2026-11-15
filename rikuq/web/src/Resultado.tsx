@@ -1,4 +1,5 @@
 import { fotoUrl, type Identificacion, type Rostro } from "./api.ts";
+import { useEffect, useState } from "react";
 
 export function Cajas({ resultado, rostros = resultado.rostros }: { resultado: Identificacion; rostros?: Rostro[] }) {
   return <svg className="overlay" viewBox={`0 0 ${resultado.ancho} ${resultado.alto}`} aria-hidden="true">
@@ -39,5 +40,8 @@ export function Resultado({ resultado }: { resultado: Identificacion | null }) {
 }
 
 function Foto({ ruta, nombre }: { ruta: string; nombre: string }) {
-  return <img className="reference" src={fotoUrl(ruta)} alt={`Foto registrada de ${nombre}`} onError={e => { e.currentTarget.hidden = true; }} />;
+  const [fallo, setFallo] = useState(false);
+  useEffect(() => { setFallo(false); }, [ruta]);
+  return fallo ? <p>Foto de referencia no disponible en esta máquina.</p>
+    : <img className="reference" src={fotoUrl(ruta)} alt={`Foto registrada de ${nombre}`} onError={() => setFallo(true)} />;
 }
