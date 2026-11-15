@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.rostros.embedding import DIMENSIONES
+from app.rostros.constantes import DIMENSIONES
 
 PERSONAS = "personas"
 ROSTROS = "rostros"

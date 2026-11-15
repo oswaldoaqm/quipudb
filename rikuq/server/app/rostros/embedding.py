@@ -40,12 +40,10 @@ import cv2
 import numpy as np
 
 from app.rostros.deteccion import LADO_ALINEADO, alinear, crear_detector, detectar
+from app.rostros.constantes import DIMENSIONES
 from app.rostros.errores import EmptyObjectError
 from app.rostros.lectura import leer_color
 from app.rostros.modelos import ARCFACE, MODELOS, traer
-
-DIMENSIONES = 512
-"""Largo del vector que devuelve ArcFace. Medido, no supuesto."""
 
 # ArcFace espera los pixeles centrados en 0 y escalados a [-1, 1], y en RGB
 # aunque OpenCV lea en BGR. Son los valores con los que se entreno; cambiarlos
