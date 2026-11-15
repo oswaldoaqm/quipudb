@@ -723,6 +723,10 @@ python -m scripts.demo_distribuida --root /tmp/quipudb-demo                  # l
 docker compose -f docker-compose.distribuido.yml up -d --build               # en Docker
 ```
 
+Las tablas fragmentadas también se crean por SQL desde el editor, con
+`CREATE TABLE ... PARTITION BY RANGE (id) (PARTITION ... VALUES LESS THAN (n) ON n1, ...)`
+o `CREATE TABLE ... ON n2`; ver [`docs/ddl-distribuido.md`](docs/ddl-distribuido.md).
+
 Arquitectura, pruebas y evidencias en
 [`docs/integracion-distribuida.md`](docs/integracion-distribuida.md).
 
@@ -809,6 +813,7 @@ real y las imágenes de demostración autorizadas siguen pendientes en #312.
 | [`docs/ingesta-multimedia.md`](docs/ingesta-multimedia.md) | Ingesta de carpetas de imágenes/audio, trabajos REST y ejemplo reproducible |
 | [`docs/consultas-multimedia.md`](docs/consultas-multimedia.md) | SIMILAR_TO, creación SQL de IVF/HNSW, métricas y vocabularios |
 | [`docs/integracion-distribuida.md`](docs/integracion-distribuida.md) | Modo distribuido: arquitectura, cómo levantarlo, pruebas integradas y evidencias |
+| [`docs/ddl-distribuido.md`](docs/ddl-distribuido.md) | CREATE TABLE fragmentado, CREATE INDEX y DROP TABLE por SQL en el coordinador |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Ramas, commits y pull requests |
 
 ## Equipo
