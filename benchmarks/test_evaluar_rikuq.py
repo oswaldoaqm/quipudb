@@ -12,6 +12,7 @@ from benchmarks.scripts.evaluar_rikuq import (
     Medicion,
     _percentil,
     resumir,
+    tabla_resumen,
 )
 
 
@@ -122,3 +123,14 @@ def test_el_limite_es_el_que_pide_el_enunciado() -> None:
     """ "optimiza para busquedas en menos de 100 ms"."""
 
     assert LIMITE_MS == 100.0
+
+
+# --- lo que se imprime y se escribe -----------------------------------------
+
+
+def test_el_resumen_dice_si_cumple_los_100_ms() -> None:
+    rapido = tabla_resumen(resumir([_m("Ana", "Ana", ms_motor=3.0)]))
+    lento = tabla_resumen(resumir([_m("Ana", "Ana", ms_motor=250.0)]))
+
+    assert "cumple los 100 ms: si" in rapido
+    assert "cumple los 100 ms: NO" in lento
