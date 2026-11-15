@@ -28,25 +28,35 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import io
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
+from typing import Annotated
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, File, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from engine.api.schemas import QueryErrorResponse, QueryRequest, QueryResponse, TableInfo
-from engine.api.service import to_error
+from engine.api.schemas import (
+    LoadResponse,
+    QueryErrorResponse,
+    QueryRequest,
+    QueryResponse,
+    TableInfo,
+)
+from engine.api.service import to_error, to_load_response
 from engine.distributed.catalog import DistributedCatalog, load_catalog
 from engine.distributed.client import DEFAULT_TIMEOUT, NodeClient, NodeFailure
 from engine.distributed.contracts import DistributedTable
+from engine.distributed.csv_load import load_csv, reject_atomic
 from engine.distributed.merge import merge
 from engine.distributed.protocol import CatalogResponse
 from engine.distributed.router import Execute, Scan, route
+from engine.executor.bulk_load import CsvLoadError, detect_encoding
 from engine.parser.errors import SQLError
 
 _LOGGER = logging.getLogger(__name__)
@@ -369,6 +379,41 @@ def create_coordinator_app(coordinator: Coordinator) -> FastAPI:
     @app.get("/tables", response_model=list[TableInfo])
     async def tables() -> list[TableInfo]:
         return await coordinator.tables()
+
+    @app.exception_handler(CsvLoadError)
+    async def _csv_error(_, error: CsvLoadError) -> JSONResponse:
+        body = QueryErrorResponse(error=error.message, line=error.line)
+        return JSONResponse(status_code=400, content=body.model_dump())
+
+    @app.post(
+        "/tables/{tabla}/load",
+        response_model=LoadResponse,
+        responses={400: {"model": QueryErrorResponse}, 404: {"model": QueryErrorResponse}},
+    )
+    async def cargar_csv(
+        tabla: str,
+        file: Annotated[UploadFile, File(description="CSV con cabecera, en UTF-8 o cp1252")],
+        atomic: Annotated[bool, Query(description="No se admite en modo distribuido")] = False,
+    ) -> LoadResponse | JSONResponse:
+        """La carga CSV de la API local, con cada fila en su nodo (#292)."""
+
+        try:
+            table = coordinator.catalog.table(tabla)
+        except KeyError:
+            body = QueryErrorResponse(error=f"la tabla {tabla!r} no existe")
+            return JSONResponse(status_code=404, content=body.model_dump())
+        if atomic:
+            raise reject_atomic()
+        encoding = detect_encoding(file.file)
+        text = io.TextIOWrapper(
+            file.file, encoding="utf-8-sig" if encoding == "utf-8" else encoding, newline=""
+        )
+        try:
+            report = await load_csv(coordinator, table, text)
+        finally:
+            # Sin detach, cerrar el envoltorio cerraría el archivo de Starlette.
+            text.detach()
+        return to_load_response(report, encoding)
 
     @app.get("/fragments", response_model=list[TableFragments])
     async def fragments() -> list[TableFragments]:

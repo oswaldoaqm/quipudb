@@ -119,6 +119,30 @@ distribuida devuelve `plan: null`.
 Un ORDER BY por otra columna se rechaza en el coordinador y el editor subraya la
 parte no admitida, con la misma posición que mandaría la API local.
 
+### Cargar un CSV (#292)
+
+"Cargar CSV" funciona igual contra el coordinador: `POST /tables/{tabla}/load`
+tiene la misma forma de entrada y de respuesta que en la API local. El
+coordinador lee el archivo con las mismas funciones (separador, cabecera en
+cualquier orden, conversiones por tipo, UTF-8 o cp1252) y manda cada fila como
+un `INSERT` al fragmento dueño de su clave. Las filas que no convierten no
+llegan a ningún nodo; las que un nodo rechaza, como una clave duplicada, se
+informan en su línea con el nodo y el fragmento, y la carga sigue.
+
+```bash
+curl -F "file=@items.csv" http://localhost:8000/tables/items/load
+```
+
+Es una petición por fila: en la prueba integrada, 1 000 filas repartidas entre
+dos nodos locales cargan en unos 3 segundos. Si un nodo deja de responder, sus
+filas siguientes fallan sin volver a esperarlo ("el nodo n2 dejó de responder en
+la línea 3; no se envió") y las del otro nodo siguen entrando; `inserted` dice
+cuántas quedaron.
+
+`?atomic=true` responde 400 `[UNSUPPORTED_DISTRIBUTED]` antes de enviar nada:
+deshacer filas ya insertadas en dos nodos no se puede garantizar sin
+transacciones distribuidas, y es mejor rechazarlo que dejar filas a medias.
+
 ### Estado de los nodos (#294)
 
 Contra el coordinador, la etiqueta de la esquina superior derecha dice
@@ -298,8 +322,9 @@ todo lo que lo necesita; no hay réplicas. El catálogo es estático: cambiar
 nodos o rangos exige parar, preparar y subir `catalog_version`. Sobre tablas
 `range` solo se admite el SELECT de la matriz v1; las búsquedas de texto,
 multimedia y espaciales siguen disponibles en tablas `single`, que su dueño
-ejecuta completas. Las cargas CSV y multimedia no pasan por el coordinador,
-porque el nodo v1 no expone esas rutas.
+ejecuta completas. La carga CSV pasa por el coordinador fila por fila (#292) y
+no admite `atomic`; la carga de carpetas multimedia no pasa, porque el nodo v1
+no expone esa ruta.
 
 El 409 de clave duplicada dice "resultado de escritura incierto" porque el nodo
 lo reporta con `execution_state: unknown`: el contrato usa ese estado cuando el

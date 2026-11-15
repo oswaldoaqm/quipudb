@@ -8,6 +8,7 @@ directamente a los nodos por sus rutas internas.
 import signal
 import time
 
+import httpx
 import pytest
 
 INT_MIN = -2147483648
@@ -278,3 +279,29 @@ def test_la_fragmentacion_se_ve_por_http(cluster):
     caido = estado()
     assert caido[("items", "items_f0")] == ("n1", None, 10000, True, 2)
     assert caido[("items", "items_f1")][3:] == (False, None)
+
+
+def test_carga_csv_de_mil_filas_repartida_en_los_dos_nodos(cluster):
+    """#292: el botón "Cargar CSV" del frontend, contra el coordinador."""
+
+    # 500 claves a cada lado de la frontera, intercaladas, más una fila mala.
+    claves = [k for par in zip(range(1, 501), range(10000, 10500), strict=True) for k in par]
+    texto = "id,nombre,precio,fecha\n" + "".join(
+        f"{k},item {k},{k / 4},2026-11-14\n" for k in claves
+    )
+    texto += "abc,mala,1.0,2026-11-14\n"
+
+    started = time.monotonic()
+    response = httpx.post(
+        cluster.coordinator.url + "/tables/items/load",
+        files={"file": ("items.csv", texto.encode(), "text/csv")},
+        timeout=120,
+    )
+    elapsed = time.monotonic() - started
+    assert response.status_code == 200, response.json()
+    body = response.json()
+    assert (body["inserted"], body["failed"]) == (1000, 1)
+    assert body["errors"][0]["line"] == 1002
+    assert len(cluster.keys("n1", "items_f0")) == len(cluster.keys("n2", "items_f1")) == 500
+    assert cluster.ok("SELECT id, precio FROM items WHERE id = 10499")["rows"] == [[10499, 2624.75]]
+    assert elapsed < 60, f"la carga tardó {elapsed:.1f} s"
