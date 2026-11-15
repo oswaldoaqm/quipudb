@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
@@ -6,13 +9,19 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createServer } from "vite";
 
 // Renderizar el componente real con Vite: sin navegador, camara ni modelos.
-const server = await createServer({
+const cache = await mkdtemp(join(tmpdir(), "rikuq-render-"));
+let server;
+after(async () => {
+  await server?.close();
+  await rm(cache, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+});
+server = await createServer({
   root: fileURLToPath(new URL("..", import.meta.url)),
+  cacheDir: cache,
   envDir: false,
   server: { middlewareMode: true, hmr: false, ws: false, watch: null },
   appType: "custom",
 });
-after(() => server.close());
 const { Resultado } = await server.ssrLoadModule("/src/Resultado.tsx");
 
 function resultado(cambios = {}) {
@@ -30,6 +39,7 @@ const render = datos => renderToStaticMarkup(createElement(Resultado, { resultad
 test("el renderizado de pruebas no escucha HTTP ni WebSocket", () => {
   assert.equal(server.httpServer, null);
   assert.equal(server.config.server.ws, false);
+  assert.equal(resolve(server.config.cacheDir), resolve(cache));
 });
 
 test("el caso 0.4363 explica el 20.7 por ciento de forma visible", () => {
