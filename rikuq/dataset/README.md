@@ -72,7 +72,7 @@ este trabajo del curso, sabiendo que:
 
 - las fotos se guardan en la maquina de cada quien, nunca en el repositorio ni
   en ningun servicio externo;
-- de cada foto se extrae un vector de 128 numeros que se guarda en QuipuDB;
+- de cada foto se extrae un vector de 512 numeros que se guarda en QuipuDB;
 - al terminar el curso las fotos se borran, y quien quiera puede pedir que se
   borren antes, sin dar explicaciones.
 
