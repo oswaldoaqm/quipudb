@@ -56,6 +56,19 @@ Ojo: que un rostro se detecte no quiere decir que su vector sirva. Ver
 ``LADO_FIABLE``.
 """
 
+LADO_MAXIMO_DETECCION = 1280
+"""Lado mayor con el que se le pasa la imagen a YuNet.
+
+**YuNet se degrada y despues falla con imagenes grandes.** Medido con la misma
+cara ocupando toda la imagen: 0.909 de confianza a 1000 px, 0.865 a 1200,
+0.762 a 1400, 0.701 a 1600 y **ninguna deteccion desde 1800**. Una foto de
+celular ronda los 3000-4000 px, asi que sin esto el caso mas comun -- subir
+una foto recien tomada -- devolvia "no hay ningun rostro".
+
+La imagen se reduce solo para detectar; las coordenadas vuelven a la original
+y el recorte se hace a resolucion completa, que es lo que ArcFace necesita.
+"""
+
 LADO_FIABLE = 80
 """Lado minimo, en pixeles, para fiarse del vector de un rostro.
 
@@ -147,11 +160,28 @@ def detectar(
     """
 
     alto, ancho = imagen.shape[:2]
-    detector.setInputSize((ancho, alto))
-    _, caras = detector.detect(imagen)
+    mayor = max(alto, ancho)
+    if mayor > LADO_MAXIMO_DETECCION:
+        escala = LADO_MAXIMO_DETECCION / mayor
+        chica = cv2.resize(
+            imagen,
+            (max(1, round(ancho * escala)), max(1, round(alto * escala))),
+            interpolation=cv2.INTER_AREA,
+        )
+    else:
+        escala, chica = 1.0, imagen
+
+    detector.setInputSize((chica.shape[1], chica.shape[0]))
+    _, caras = detector.detect(chica)
     if caras is None or len(caras) == 0:
         nombre = ruta.name if ruta is not None else "la imagen"
         raise EmptyObjectError(f"no hay ningun rostro en {nombre}", ruta)
+
+    if escala != 1.0:
+        # Las coordenadas vuelven a la imagen original para que el recorte se
+        # haga a resolucion completa; la confianza (indice 14) no se escala.
+        caras = caras.copy()
+        caras[:, :14] /= escala
 
     rostros = []
     for fila in caras:
@@ -241,6 +271,7 @@ def main(argv: list[str] | None = None) -> int:
 __all__ = [
     "LADO_ALINEADO",
     "LADO_FIABLE",
+    "LADO_MAXIMO_DETECCION",
     "PLANTILLA",
     "UMBRAL_CONFIANZA",
     "RostroDetectado",

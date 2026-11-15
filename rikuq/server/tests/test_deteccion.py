@@ -8,11 +8,13 @@ esta bajado, porque LFW no se versiona (#301).
 
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
 
 from app.rostros.deteccion import (
     LADO_ALINEADO,
+    LADO_MAXIMO_DETECCION,
     UMBRAL_CONFIANZA,
     RostroDetectado,
     alinear,
@@ -30,6 +32,14 @@ sin_modelos = pytest.mark.skipif(
     reason="faltan los modelos ONNX: corre `python -m app.rostros.modelos`",
 )
 sin_dataset = pytest.mark.skipif(not LFW.is_dir(), reason="LFW no esta bajado (#301)")
+
+
+def _imagen_de_lfw() -> np.ndarray:
+    """Una cara real del dataset; las pruebas que la usan ya piden modelos."""
+
+    from app.rostros.lectura import leer_color
+
+    return leer_color(next(iter(sorted(LFW.glob("*/*.jpg")))))
 
 
 def _fila(x=10, y=20, w=30, h=40, confianza=0.99) -> np.ndarray:
@@ -193,3 +203,51 @@ def test_main_anota_la_imagen_sin_rostros_y_sigue_con_las_demas(tmp_path, capsys
     salida = capsys.readouterr()
     assert "no hay ningun rostro en plana.png" in salida.err
     assert "no es una imagen" in salida.err
+
+
+def test_el_tope_de_deteccion_esta_donde_yunet_todavia_funciona() -> None:
+    """Medido: 0.70 de confianza a 1600 px y ninguna deteccion desde 1800."""
+
+    assert LADO_MAXIMO_DETECCION == 1280
+
+
+@sin_modelos
+def test_una_foto_de_celular_se_detecta() -> None:
+    """Sin reducir, YuNet no encuentra nada desde 1800 px: el caso mas comun."""
+
+    grande = cv2.resize(_imagen_de_lfw(), (3000, 3000))
+
+    rostros = detectar(grande, crear_detector())
+
+    assert len(rostros) >= 1
+
+
+@sin_modelos
+def test_las_cajas_vuelven_a_las_coordenadas_de_la_imagen_original() -> None:
+    """Se detecta sobre una copia reducida, pero el recorte va a resolucion plena."""
+
+    base = _imagen_de_lfw()
+    detector = crear_detector()
+
+    chica = detectar(cv2.resize(base, (600, 600)), detector)[0]
+    grande = detectar(cv2.resize(base, (3000, 3000)), detector)[0]
+
+    x, y, w, h = grande.caja
+    assert 0 <= x < 3000 and 0 <= y < 3000
+    assert x + w <= 3000 and y + h <= 3000
+    # La foto es cinco veces mas grande, asi que la caja tambien. Sin escalar
+    # de vuelta se quedaria en las coordenadas de la copia reducida.
+    assert grande.lado == pytest.approx(chica.lado * 5, rel=0.15)
+
+
+@sin_modelos
+def test_ampliar_la_foto_no_cambia_a_quien_describe() -> None:
+    from app.rostros.embedding import crear_descriptor, describir, distancia
+
+    base = _imagen_de_lfw()
+    detector, descriptor = crear_detector(), crear_descriptor()
+
+    def vector(img):
+        return describir(alinear(img, detectar(img, detector)[0]), descriptor)
+
+    assert distancia(vector(base), vector(cv2.resize(base, (3000, 3000)))) < 0.2
