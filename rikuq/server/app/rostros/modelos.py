@@ -1,13 +1,13 @@
 """Los modelos ONNX del pipeline de rostros (#304, #305).
 
-OpenCV trae el codigo de YuNet y de SFace, pero no sus pesos. Son dos
-archivos: 230 KB el detector y 37 MB el descriptor. No se versionan en git --
+Son dos archivos: 230 KB el detector YuNet, cuyo codigo trae OpenCV pero no
+sus pesos, y 14 MB el descriptor ArcFace, que se corre con ``cv2.dnn``. No se versionan en git --
 un binario de 37 MB no tiene por que vivir en la historia del repositorio --
 pero si se versiona su SHA-256, que es lo que permite afirmar que todos
 corremos el mismo modelo. Un modelo distinto da vectores distintos, y los
 umbrales de #303 dejarian de significar lo que midio #306.
 
-Se bajan del zoo oficial de OpenCV y quedan en ``rikuq/datos/modelos/``.
+Quedan en ``rikuq/datos/modelos/``.
 
 Para traerlos los dos de una vez, desde ``rikuq/server``::
 
@@ -31,6 +31,10 @@ USER_AGENT = "rikuq/0.1 (proyecto academico, UTEC)"
 TROZO = 1 << 20
 
 ZOO = "https://github.com/opencv/opencv_zoo/raw/main/models"
+
+# insightface -- los autores de ArcFace -- publica sus modelos en paquetes
+# comprimidos; immich-app espeja el ONNX suelto, que es lo que hace falta.
+BUFFALO = "https://huggingface.co/immich-app/buffalo_s/resolve/main"
 
 
 class ModeloError(RuntimeError):
@@ -56,10 +60,14 @@ YUNET = Modelo(
     sha256="8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",
 )
 
-SFACE = Modelo(
-    archivo="face_recognition_sface_2021dec.onnx",
-    url=f"{ZOO}/face_recognition_sface/face_recognition_sface_2021dec.onnx",
-    sha256="0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+# El descriptor que nombra el enunciado: "extrae embeddings faciales con
+# modelos preentrenados (FaceNet, ArcFace)". Es ArcFace sobre MobileFaceNet y
+# no sobre ResNet100: la red grande son 261 MB y tarda el triple en CPU, y
+# medida contra SFace esta sale en 11,4 ms por rostro contra 13,3 ms.
+ARCFACE = Modelo(
+    archivo="arcface_w600k_mbf.onnx",
+    url=f"{BUFFALO}/recognition/model.onnx",
+    sha256="9cc6e4a75f0e2bf0b1aed94578f144d15175f357bdc05e815e5c4a02b319eb4f",
 )
 
 
@@ -142,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        for modelo in (YUNET, SFACE):
+        for modelo in (YUNET, ARCFACE):
             ruta = traer(modelo, args.carpeta, log=print)
             print(f"{ruta} ({ruta.stat().st_size} bytes)")
     except ModeloError as error:
@@ -151,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-__all__ = ["MODELOS", "SFACE", "YUNET", "Modelo", "ModeloError", "main", "traer"]
+__all__ = ["ARCFACE", "MODELOS", "YUNET", "Modelo", "ModeloError", "main", "traer"]
 
 
 if __name__ == "__main__":

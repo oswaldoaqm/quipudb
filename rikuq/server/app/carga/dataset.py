@@ -72,15 +72,18 @@ def esquema_existe(cliente: ClienteMotor) -> bool:
 
 
 def insertar_persona(persona_id: int, nombre: str, origen: str, fotos: int) -> str:
+    """El motor no acepta la lista de columnas: los valores van en el orden
+    del esquema (``COLUMNAS[PERSONAS]``)."""
+
     return (
-        f"INSERT INTO {PERSONAS} (id, nombre, origen, fotos) VALUES "
+        f"INSERT INTO {PERSONAS} VALUES "
         f"({persona_id}, {literal(nombre)}, {literal(origen)}, {fotos})"
     )
 
 
 def insertar_rostro(rostro_id: int, persona_id: int, ruta: str, vector: Iterable[float]) -> str:
     return (
-        f"INSERT INTO {ROSTROS} (id, persona_id, ruta, embedding) VALUES "
+        f"INSERT INTO {ROSTROS} VALUES "
         f"({rostro_id}, {persona_id}, {literal(ruta)}, {literal_vector(list(vector))})"
     )
 
@@ -180,8 +183,13 @@ def main(argv: list[str] | None = None) -> int:
     with ClienteMotor.desde(Settings.del_entorno()) as cliente:
         try:
             if args.rehacer:
+                # Solo las que estan: el motor rechaza un DROP de una tabla
+                # que no existe, y `--rehacer` sobre una base limpia es lo
+                # normal la primera vez.
+                existentes = cliente.table_names()
                 for tabla in (ROSTROS, PERSONAS):
-                    cliente.query(f"DROP TABLE {tabla}")
+                    if tabla in existentes:
+                        cliente.query(f"DROP TABLE {tabla}")
             if not esquema_existe(cliente):
                 crear_esquema(cliente)
             informe = cargar(cliente, rostros, datos=args.datos, log=print)

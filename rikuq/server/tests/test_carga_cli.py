@@ -122,13 +122,46 @@ def test_main_respeta_el_limite(tmp_path: Path, motor_falso, capsys) -> None:
     assert "1 personas y 2 rostros cargados" in capsys.readouterr().out
 
 
-def test_main_rehacer_borra_las_tablas_primero(tmp_path: Path, motor_falso) -> None:
+def test_main_rehacer_no_borra_lo_que_no_existe(tmp_path: Path, motor_falso) -> None:
+    """El motor rechaza un DROP de una tabla ausente, y `--rehacer` sobre una
+    base limpia es lo normal la primera vez."""
+
     ruta = _manifiesto(tmp_path, cuantas=1)
 
     main(["--manifiesto", str(ruta), "--datos", str(tmp_path), "--rehacer"])
 
-    assert motor_falso[0] == f"DROP TABLE {ROSTROS}"
-    assert motor_falso[1] == f"DROP TABLE {PERSONAS}"
+    assert not any(sql.startswith("DROP TABLE") for sql in motor_falso)
+
+
+def test_main_rehacer_borra_las_tablas_que_si_estan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recibidas: list[str] = []
+
+    def handler(peticion: httpx.Request) -> httpx.Response:
+        if peticion.url.path == "/tables":
+            return httpx.Response(200, json=[{"name": PERSONAS}, {"name": ROSTROS}])
+        recibidas.append(json.loads(peticion.read())["sql"])
+        return httpx.Response(200, json={"affected_rows": 1})
+
+    original = ClienteMotor.desde
+
+    @classmethod
+    def desde(cls, settings, transport=None):
+        return original.__func__(cls, settings, httpx.MockTransport(handler))
+
+    monkeypatch.setattr(ClienteMotor, "desde", desde)
+    monkeypatch.setattr(
+        "app.carga.dataset.vectores_de",
+        lambda *_: (np.full(DIMENSIONES, 0.5, dtype=np.float32),),
+    )
+    monkeypatch.setattr("app.carga.dataset.crear_detector", lambda *_, **__: object())
+    monkeypatch.setattr("app.carga.dataset.crear_descriptor", lambda *_, **__: object())
+
+    main(["--manifiesto", str(_manifiesto(tmp_path, 1)), "--datos", str(tmp_path), "--rehacer"])
+
+    assert recibidas[0] == f"DROP TABLE {ROSTROS}"
+    assert recibidas[1] == f"DROP TABLE {PERSONAS}"
 
 
 def test_main_no_recrea_un_esquema_que_ya_esta(

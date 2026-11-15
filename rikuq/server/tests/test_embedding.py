@@ -1,4 +1,4 @@
-"""El vector de 128 numeros que describe un rostro (#305).
+"""El vector de 512 numeros que describe un rostro (#305).
 
 Las pruebas que miran caras de verdad usan LFW, que no se versiona: se saltan
 solas si el dataset no esta bajado (#301).
@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from app.rostros.deteccion import crear_alineador, crear_detector
+from app.rostros.deteccion import crear_detector
 from app.rostros.embedding import (
     DIMENSIONES,
     crear_descriptor,
@@ -19,24 +19,28 @@ from app.rostros.embedding import (
     vectores_de,
 )
 from app.rostros.errores import EmptyObjectError
-from app.rostros.modelos import SFACE, YUNET
+from app.rostros.modelos import ARCFACE, YUNET
 
 LFW = Path(__file__).resolve().parents[2] / "datos" / "lfw"
 
 sin_modelos = pytest.mark.skipif(
-    not (YUNET.ruta().is_file() and SFACE.ruta().is_file()),
+    not (YUNET.ruta().is_file() and ARCFACE.ruta().is_file()),
     reason="faltan los modelos ONNX: corre `python -m app.rostros.modelos`",
 )
 sin_dataset = pytest.mark.skipif(not LFW.is_dir(), reason="LFW no esta bajado (#301)")
 
 
 class _DescriptorFalso:
-    """Devuelve un vector fijo, para probar lo que hace `describir` con el."""
+    """Imita lo que `describir` usa de `cv2.dnn.Net`: setInput y forward."""
 
     def __init__(self, vector: np.ndarray) -> None:
         self._vector = vector
+        self.entrada = None
 
-    def feature(self, _recorte: np.ndarray) -> np.ndarray:
+    def setInput(self, blob: np.ndarray) -> None:
+        self.entrada = blob
+
+    def forward(self) -> np.ndarray:
         return self._vector.reshape(1, -1)
 
 
@@ -45,7 +49,7 @@ def _recorte() -> np.ndarray:
 
 
 def test_el_vector_sale_con_norma_1() -> None:
-    """SFace devuelve normas de 4 a 5; QuipuDB no normaliza al consultar."""
+    """ArcFace devuelve normas cerca de 10; QuipuDB no normaliza al consultar."""
 
     crudo = np.full(DIMENSIONES, 3.0, dtype=np.float32)
 
@@ -98,23 +102,18 @@ def test_la_distancia_crece_cuando_los_vectores_se_separan() -> None:
     assert distancia(uno, -uno) == pytest.approx(2.0, abs=1e-6)
 
 
-def test_la_dimension_medida_es_128() -> None:
-    assert DIMENSIONES == 128
+def test_la_dimension_medida_es_512() -> None:
+    """ArcFace devuelve 512; es lo que fija VECTOR(512) en #302."""
+
+    assert DIMENSIONES == 512
 
 
 # --- con los modelos y las caras de verdad ------------------------------------
 
 
 @sin_modelos
-def test_el_descriptor_y_el_alineador_son_el_mismo_sface() -> None:
-    """SFace hace las dos cosas; crear dos cargaria 37 MB dos veces."""
-
-    assert type(crear_descriptor()) is type(crear_alineador())
-
-
-@sin_modelos
 @sin_dataset
-def test_sface_devuelve_de_verdad_128_numeros() -> None:
+def test_arcface_devuelve_de_verdad_512_numeros() -> None:
     foto = min(LFW.glob("*/*.jpg"))
 
     vectores = vectores_de(foto, crear_detector(), crear_descriptor())

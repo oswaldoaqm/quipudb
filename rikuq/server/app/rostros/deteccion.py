@@ -29,7 +29,7 @@ import numpy as np
 
 from app.rostros.errores import EmptyObjectError
 from app.rostros.lectura import leer_color
-from app.rostros.modelos import MODELOS, SFACE, YUNET, traer
+from app.rostros.modelos import MODELOS, YUNET, traer
 
 UMBRAL_CONFIANZA = 0.9
 """Confianza minima para dar un rostro por bueno.
@@ -40,7 +40,28 @@ proposito; se afloja desde el parametro cuando una foto cuesta.
 """
 
 LADO_ALINEADO = 112
-"""Lado del recorte alineado, en pixeles. Es el tamano de entrada de SFace."""
+"""Lado del recorte alineado, en pixeles. Es el tamano de entrada de ArcFace."""
+
+PLANTILLA = np.array(
+    [
+        [38.2946, 51.6963],  # ojo derecho de la persona (izquierda de la imagen)
+        [73.5318, 51.5014],  # ojo izquierdo
+        [56.0252, 71.7366],  # nariz
+        [41.5493, 92.3655],  # comisura derecha
+        [70.7299, 92.2041],  # comisura izquierda
+    ],
+    dtype=np.float32,
+)
+"""Donde tienen que caer los cinco landmarks en el recorte de 112x112.
+
+Es la plantilla publicada de ArcFace (`arcface_src` de insightface). No se
+inventa: el recorte tiene que caer exactamente donde el modelo fue entrenado
+a esperarlo, y unos pixeles de corrimiento empeoran el vector sin que nada
+avise.
+
+Comprobado: alinear con esta plantilla da un recorte identico pixel a pixel
+al que devolvia ``FaceRecognizerSF.alignCrop``, que usaba la misma.
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,18 +85,6 @@ def crear_detector(
     """Carga YuNet. El tamano de entrada se fija despues, por imagen."""
 
     return cv2.FaceDetectorYN.create(str(traer(YUNET, carpeta)), "", (320, 320), umbral)
-
-
-def crear_alineador(carpeta: Path = MODELOS) -> cv2.FaceRecognizerSF:
-    """Carga SFace, que ademas de describir sabe alinear.
-
-    Se usa su ``alignCrop`` en vez de calcular la transformacion a mano porque
-    el recorte tiene que caer exactamente donde SFace fue entrenado a
-    esperarlo. Una alineacion propia, aunque sea razonable, desplazaria los
-    rasgos unos pixeles y empeoraria el descriptor sin que nada avise.
-    """
-
-    return cv2.FaceRecognizerSF.create(str(traer(SFACE, carpeta)), "")
 
 
 def detectar(
@@ -113,28 +122,30 @@ def detectar(
     return tuple(sorted(rostros, key=lambda r: r.confianza, reverse=True))
 
 
-def alinear(
-    imagen: np.ndarray,
-    rostro: RostroDetectado,
-    alineador: cv2.FaceRecognizerSF,
-) -> np.ndarray:
-    """Devuelve el recorte alineado de 112x112 en BGR."""
+def alinear(imagen: np.ndarray, rostro: RostroDetectado) -> np.ndarray:
+    """Devuelve el recorte alineado de 112x112 en BGR.
 
-    return alineador.alignCrop(imagen, rostro.fila)
+    Lleva los cinco landmarks a su sitio en la plantilla con una transformada
+    de semejanza -- rotacion, escala y traslacion, sin deformar la cara -- que
+    es lo que la lamina de la clase 10 llama *Geometric Alignment*.
+    """
+
+    # Los landmarks crudos y no `rostro.landmarks`, que vienen redondeados a
+    # entero para mostrarlos: la precision sub-pixel mueve el recorte lo
+    # suficiente para que el vector cambie.
+    puntos = np.asarray(rostro.fila[4:14], dtype=np.float32).reshape(5, 2)
+    matriz, _ = cv2.estimateAffinePartial2D(puntos, PLANTILLA, method=cv2.LMEDS)
+    if matriz is None:
+        raise EmptyObjectError("no se pudo alinear el rostro con sus landmarks")
+    return cv2.warpAffine(imagen, matriz, (LADO_ALINEADO, LADO_ALINEADO), borderValue=0.0)
 
 
-def rostros_de(
-    ruta: str | Path,
-    detector: cv2.FaceDetectorYN,
-    alineador: cv2.FaceRecognizerSF,
-) -> tuple[np.ndarray, ...]:
+def rostros_de(ruta: str | Path, detector: cv2.FaceDetectorYN) -> tuple[np.ndarray, ...]:
     """Lee la imagen y devuelve un recorte alineado por cada rostro."""
 
     archivo = Path(ruta)
     imagen = leer_color(archivo)
-    return tuple(
-        alinear(imagen, rostro, alineador) for rostro in detectar(imagen, detector, ruta=archivo)
-    )
+    return tuple(alinear(imagen, rostro) for rostro in detectar(imagen, detector, ruta=archivo))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -156,7 +167,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     detector = crear_detector(args.umbral)
-    alineador = crear_alineador()
     if args.guardar is not None:
         args.guardar.mkdir(parents=True, exist_ok=True)
 
@@ -176,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         for numero, rostro in enumerate(rostros, start=1):
             destino = args.guardar / f"{ruta.stem}_{numero:02d}.png"
-            destino.write_bytes(cv2.imencode(".png", alinear(imagen, rostro, alineador))[1])
+            destino.write_bytes(cv2.imencode(".png", alinear(imagen, rostro))[1])
             print(f"  -> {destino}")
 
     return 1 if problemas else 0
@@ -184,10 +194,10 @@ def main(argv: list[str] | None = None) -> int:
 
 __all__ = [
     "LADO_ALINEADO",
+    "PLANTILLA",
     "UMBRAL_CONFIANZA",
     "RostroDetectado",
     "alinear",
-    "crear_alineador",
     "crear_detector",
     "detectar",
     "main",

@@ -24,11 +24,11 @@ def test_el_maximo_del_heap_es_el_del_motor() -> None:
     assert MAX_BYTES_HEAP == 4096 - 8 - 1
 
 
-def test_un_vector_de_128_ocupa_512_bytes() -> None:
+def test_un_vector_de_512_ocupa_2048_bytes() -> None:
     """Cada componente es un float de 32 bits."""
 
     assert Columna("embedding", "VECTOR", DIMENSIONES).bytes == DIMENSIONES * BYTES_POR_COMPONENTE
-    assert Columna("embedding", "VECTOR", DIMENSIONES).bytes == 512
+    assert Columna("embedding", "VECTOR", DIMENSIONES).bytes == 2048
 
 
 def test_un_varchar_ocupa_su_largo_y_un_int_cuatro() -> None:
@@ -43,10 +43,10 @@ def test_las_dos_tablas_caben_en_un_registro_de_heap() -> None:
         assert bytes_por_registro(tabla) < MAX_BYTES_HEAP, tabla
 
 
-def test_el_registro_de_rostros_son_720_bytes() -> None:
-    """4 + 4 + 200 + 512. Entra cuatro veces en una pagina."""
+def test_el_registro_de_rostros_son_2256_bytes() -> None:
+    """4 + 4 + 200 + 2048. Sigue entrando en los 4087 de una pagina."""
 
-    assert bytes_por_registro(ROSTROS) == 720
+    assert bytes_por_registro(ROSTROS) == 2256
 
 
 def test_el_registro_de_personas_son_118_bytes() -> None:
