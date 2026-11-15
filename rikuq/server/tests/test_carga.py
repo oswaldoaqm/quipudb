@@ -232,3 +232,19 @@ def test_los_insert_se_mandan_en_lotes(pipeline) -> None:
 
     assert len(recibidas) == 2
     assert recibidas[0].count("INSERT") == LOTE
+
+
+def test_los_insert_van_sin_lista_de_columnas() -> None:
+    """El parser del motor solo acepta `INSERT INTO tabla VALUES (...)`."""
+
+    assert f"INSERT INTO {PERSONAS} VALUES" in insertar_persona(1, "Ana", "lfw", 2)
+    assert f"INSERT INTO {ROSTROS} VALUES" in insertar_rostro(1, 1, "a.jpg", [0.5])
+
+
+def test_los_valores_van_en_el_orden_del_esquema() -> None:
+    """Sin lista de columnas, el orden es lo unico que los ubica."""
+
+    from app.carga.esquema import COLUMNAS
+
+    assert [c.nombre for c in COLUMNAS[PERSONAS]] == ["id", "nombre", "origen", "fotos"]
+    assert [c.nombre for c in COLUMNAS[ROSTROS]] == ["id", "persona_id", "ruta", "embedding"]
