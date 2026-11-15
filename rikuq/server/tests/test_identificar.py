@@ -16,6 +16,9 @@ from app.config import Settings
 from app.consulta.identificar import (
     UMBRAL_POR_DEFECTO,
     VECINOS,
+    Candidato,
+    Identificacion,
+    confianza_de,
     consulta_sql,
     distancia_de,
     identificar,
@@ -157,13 +160,52 @@ def test_una_base_vacia_no_revienta() -> None:
         respuesta = identificar(cliente, _vector())
 
     assert not respuesta.conocido
-    assert respuesta.candidatos == ()
+    assert respuesta.confianza == 0.0
 
 
 def test_el_umbral_por_defecto_cae_en_el_hueco_medido() -> None:
     """Con ArcFace: misma persona 0.19-0.37, personas distintas 0.90-1.06."""
 
     assert 0.37 < UMBRAL_POR_DEFECTO < 0.90
+
+
+# --- la confianza -------------------------------------------------------------
+
+
+def test_la_confianza_es_1_cuando_el_vector_es_identico() -> None:
+    assert confianza_de(0.0, 0.5) == pytest.approx(1.0)
+
+
+def test_la_confianza_es_0_justo_en_el_umbral() -> None:
+    assert confianza_de(0.5, 0.5) == pytest.approx(0.0)
+
+
+def test_la_confianza_no_se_sale_de_cero_y_uno() -> None:
+    assert confianza_de(10.0, 0.5) == 0.0
+    assert confianza_de(-1.0, 0.5) == 1.0
+
+
+def test_la_respuesta_trae_confianza_y_no_solo_el_nombre() -> None:
+    """Una identificacion al 5% hay que mirarla aunque haya pasado."""
+
+    with _motor([_fila(1, 7, 0.6)], {7: "Ana"}) as cliente:
+        respuesta = identificar(cliente, _vector(), umbral=0.5)
+
+    assert respuesta.conocido
+    assert 0.0 < respuesta.confianza < 0.3
+
+
+def test_el_desconocido_no_reporta_confianza() -> None:
+    with _motor([_fila(1, 7, 0.0)], {7: "Ana"}) as cliente:
+        assert identificar(cliente, _vector(), umbral=0.5).confianza == 0.0
+
+
+def test_la_identificacion_se_lee_de_un_vistazo() -> None:
+    conocida = Identificacion("Ana", 0.2, 0.6, (Candidato(1, 1, "a.jpg", 0.2, "Ana"),))
+    ajena = Identificacion(None, 0.9, 0.0)
+
+    assert "Ana" in str(conocida) and "60%" in str(conocida)
+    assert "desconocido" in str(ajena)
 
 
 def test_el_umbral_por_defecto_es_el_que_midio_el_barrido() -> None:

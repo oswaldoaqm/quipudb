@@ -13,9 +13,6 @@ falta aqui: el vector lo produce ArcFace en #305, no el vocabulario visual
 de la Parte 4. Si se le pasara el archivo, el motor extraeria SIFT y
 compararia manzanas con naranjas.
 
-Uso, desde ``rikuq/server``::
-
-    python -m app.consulta.identificar foto.jpg
 """
 
 from __future__ import annotations
@@ -75,11 +72,31 @@ class Identificacion:
 
     persona: str | None
     distancia: float
+    confianza: float
     candidatos: tuple[Candidato, ...] = ()
 
     @property
     def conocido(self) -> bool:
         return self.persona is not None
+
+    def __str__(self) -> str:
+        if not self.conocido:
+            return f"desconocido (el mas cercano a {self.distancia:.4f})"
+        return f"{self.persona} (distancia {self.distancia:.4f}, confianza {self.confianza:.0%})"
+
+
+def confianza_de(distancia: float, umbral: float) -> float:
+    """Que tan adentro del umbral cayo, de 0 a 1.
+
+    **No es una probabilidad.** Es una lectura del margen: 1 cuando el vector
+    es identico al guardado y 0 justo en el umbral. Se expone porque el issue
+    pide que la respuesta traiga confianza y no solo el nombre, y porque una
+    identificacion al 5% hay que mirarla aunque haya pasado.
+    """
+
+    if umbral <= 0:
+        return 0.0
+    return max(0.0, min(1.0, (umbral - distancia) / umbral))
 
 
 def consulta_sql(vector: Sequence[float], k: int = VECINOS) -> str:
@@ -151,7 +168,7 @@ def identificar(
 
     candidatos = vecinos(cliente, vector, k)
     if not candidatos:
-        return Identificacion(persona=None, distancia=float("inf"))
+        return Identificacion(persona=None, distancia=float("inf"), confianza=0.0)
 
     nombres = nombres_de(cliente, [c.persona_id for c in candidatos])
     candidatos = [
@@ -165,12 +182,14 @@ def identificar(
         return Identificacion(
             persona=None,
             distancia=mejor.distancia,
+            confianza=0.0,
             candidatos=tuple(candidatos),
         )
 
     return Identificacion(
         persona=mejor.persona,
         distancia=mejor.distancia,
+        confianza=confianza_de(mejor.distancia, umbral),
         candidatos=tuple(candidatos),
     )
 
@@ -180,6 +199,7 @@ __all__ = [
     "VECINOS",
     "Candidato",
     "Identificacion",
+    "confianza_de",
     "consulta_sql",
     "distancia_de",
     "identificar",
