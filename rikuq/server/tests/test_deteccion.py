@@ -97,14 +97,17 @@ def test_una_imagen_sin_rostros_no_es_un_archivo_roto(tmp_path: Path) -> None:
 
 
 def test_el_umbral_por_omision_deja_pasar_rostros_pequenos() -> None:
-    """Con 0.9 se perdian: una cara de 50 px puntua 0.90 y una de 35 px, 0.79.
+    """Entre dos extremos observados, y por eso 0.7.
 
-    En imagenes sin ninguna cara YuNet no pasa de 0.182, asi que 0.6 tiene
-    margen de sobra sin inventar rostros.
+    - Con 0.9 se perdian rostros de verdad: una cara de 50 px puntua 0.90 y
+      una de 35 px, 0.785.
+    - Con 0.6 aparecia un rostro inexistente en el fondo de una foto de dos
+      personas, con 0.617.
     """
 
-    assert UMBRAL_CONFIANZA == 0.6
-    assert UMBRAL_CONFIANZA > 0.182
+    assert UMBRAL_CONFIANZA == 0.7
+    assert UMBRAL_CONFIANZA > 0.617
+    assert UMBRAL_CONFIANZA < 0.785
 
 
 def test_un_rostro_chico_se_detecta_pero_se_marca_como_poco_fiable() -> None:
