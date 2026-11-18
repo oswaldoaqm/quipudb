@@ -72,6 +72,11 @@
 //   El grafo vive en memoria y las paginas son su copia en disco: al abrir se
 //   lee entero, y cada insercion reescribe solo las paginas de los nodos que
 //   cambiaron. `build` escribe cada pagina una sola vez al final.
+//   Al terminar create, insert, build y remove se vacian paginas y metadatos
+//   al sistema operativo: una operacion completa no depende de ejecutar el
+//   destructor para que la cabecera incluya los ultimos nodos y enlaces.
+//   Esto no es un WAL ni garantiza atomicidad si se interrumpe una operacion
+//   a la mitad, ni persistencia ante un corte de energia (no se usa fsync).
 //
 //   pagina 0   cabecera del DiskManager; el area meta guarda la version, la
 //              dimension, la metrica, M, efConstruction, la semilla, cuantos
