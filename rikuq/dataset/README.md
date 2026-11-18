@@ -78,7 +78,7 @@ este trabajo del curso, sabiendo que:
 
 | Persona | Fotos | Consentimiento | Fecha |
 |---|---|---|---|
-| | | | |
+|Sebastian Cangalaya|1 | Si| 17/11/2026|
 
 > Llenar una fila por integrante antes de agregar sus fotos a
 > `rikuq/datos/equipo/`.
