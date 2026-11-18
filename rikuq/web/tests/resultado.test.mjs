@@ -23,6 +23,9 @@ server = await createServer({
   appType: "custom",
 });
 const { Resultado } = await server.ssrLoadModule("/src/Resultado.tsx");
+const { default: App } = await server.ssrLoadModule("/src/App.tsx");
+const { default: Subida } = await server.ssrLoadModule("/src/Subida.tsx");
+const { default: Camara } = await server.ssrLoadModule("/src/Camara.tsx");
 
 function resultado(cambios = {}) {
   const { umbral = 0.55, ...rostro } = cambios;
@@ -91,4 +94,75 @@ test("una base sin candidatos distingue ausencia de comparacion", () => {
   const html = render(resultado({ persona: null, persona_id: null, distancia: null, confianza: 0 }));
   assert.match(html, /Sin candidatos para comparar/);
   assert.match(html, /No aplica/);
+});
+
+test("la interfaz empieza sin consentimiento y ofrece pestañas accesibles", () => {
+  const html = renderToStaticMarkup(createElement(App));
+  assert.match(html, /role="tablist"/);
+  assert.match(html, /id="tab-imagen"[^>]*aria-selected="true"/);
+  assert.match(html, /id="tab-camara"[^>]*aria-selected="false"/);
+  assert.match(html, /role="tabpanel"[^>]*aria-labelledby="tab-imagen"/);
+  assert.match(html, /Saltar al reconocimiento/);
+  assert.match(html, /type="checkbox"/);
+  assert.doesNotMatch(html, /checked=""/);
+});
+
+test("la subida explica el permiso y conserva el selector accesible por boton", () => {
+  const html = renderToStaticMarkup(createElement(Subida, { permiso: false }));
+  assert.match(html, /Confirma el permiso de arriba/);
+  assert.match(html, /Elegir imagen/);
+  assert.match(html, /aria-label="Seleccionar imagen para identificar"/);
+  assert.match(html, /<input[^>]*hidden=""[^>]*type="file"/);
+  assert.match(html, /<button[^>]*disabled=""[^>]*>[\s\S]*?Identificar rostro/);
+});
+
+test("con permiso pero sin archivo la ayuda pide seleccionar una imagen", () => {
+  const html = renderToStaticMarkup(createElement(Subida, { permiso: true }));
+  assert.match(html, /Selecciona una imagen para activar el análisis/);
+  assert.doesNotMatch(html, /Confirma el permiso de arriba/);
+});
+
+test("la camara no arranca automaticamente y explica el permiso pendiente", () => {
+  const html = renderToStaticMarkup(createElement(Camara, { permiso: false }));
+  assert.match(html, /Tu cámara está apagada/);
+  assert.match(html, /Confirma el permiso de arriba para encender la cámara/);
+  assert.match(html, /<button[^>]*disabled=""[^>]*>[\s\S]*?Encender cámara/);
+  assert.match(html, /<video[^>]*hidden=""/);
+});
+
+test("el estado de analisis es real y no muestra resultados ni tiempos inventados", () => {
+  const html = renderToStaticMarkup(createElement(Resultado, { resultado: null, analizando: true }));
+  assert.match(html, /aria-busy="true"/);
+  assert.match(html, /Analizando tu imagen/);
+  assert.doesNotMatch(html, /<dd>/);
+});
+
+test("una distancia mayor que uno se conserva y no se presenta como porcentaje", () => {
+  const html = render(resultado({ persona: null, persona_id: null, distancia: 1.2, confianza: 0 }));
+  assert.match(html, /1\.2000/);
+  assert.match(html, /Desconocido/);
+  assert.match(html, /No aplica/);
+});
+
+test("el aviso de baja resolucion depende del dato recibido del servidor", () => {
+  assert.match(render(resultado({ fiable: false })), /Rostro pequeño/);
+  assert.doesNotMatch(render(resultado()), /Rostro pequeño/);
+});
+
+test("la camara evita anunciar todas las metricas en cada cuadro", () => {
+  const html = renderToStaticMarkup(createElement(Resultado, { resultado: resultado(), vivo: true }));
+  assert.match(html, /aria-live="off"/);
+  assert.match(render(resultado()), /aria-live="polite"/);
+});
+
+test("un desconocido no expone una foto de referencia aunque la respuesta la traiga", () => {
+  const html = render(resultado({ persona: null, persona_id: null, foto: "/personas/1/foto", distancia: 0.9 }));
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /La referencia más cercana no pasa el umbral/);
+});
+
+test("el nombre recibido se escapa como texto, no como codigo HTML", () => {
+  const html = render(resultado({ persona: '<img src=x onerror="alert(1)">' }));
+  assert.match(html, /&lt;img/);
+  assert.doesNotMatch(html, /<img src=x/);
 });

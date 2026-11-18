@@ -193,6 +193,17 @@ fotos, porque borra las tablas.
    navegador. No se solicita audio. **Apagar cámara**, cambiar de pestaña o
    retirar el consentimiento cierra la captura.
 
+El permiso empieza desmarcado en cada sesión. La interfaz explica por qué
+una acción está deshabilitada; puedes **Cambiar imagen**, **Quitar imagen**
+o **Cancelar análisis** sin esperar la respuesta anterior. Las pestañas
+admiten las flechas izquierda/derecha y las teclas Inicio/Fin; los controles
+mantienen foco visible y el diseño apila entrada y resultado en móvil.
+
+El indicador **API de Rikuq disponible** solo comprueba `/health`: no
+certifica que el motor, el dataset o los modelos estén listos. Si falla,
+ofrece **Reintentar conexión**. Un aviso de rostro pequeño se muestra solo
+cuando el servidor informa `fiable: false`; no modifica el umbral.
+
 La cámara necesita localhost o HTTPS. Si se niega el permiso o no existe una
 cámara, puedes seguir usando la subida. El envío se limita a tres cuadros/s,
 sin peticiones solapadas. Un nombre nuevo se confirma durante tres cuadros
@@ -252,6 +263,11 @@ Interfaz, desde rikuq/web:
 npm test
 npm run build
 ```
+
+Las pruebas de renderizado verifican los componentes reales sin cámara ni
+modelos: consentimiento, estados vacíos y de análisis, etiquetas accesibles,
+distancias, umbral y ausencia de una referencia para Desconocido. La revisión
+visual y sus límites están en [QA de la interfaz #335](../docs/rikuq-interfaz-qa.md).
 
 El job **Probar Rikuq (servidor e interfaz)** ejecuta ambos bloques. Las
 pruebas de API usan PipelineFalso y MockTransport, sin ONNX ni motor real.

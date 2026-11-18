@@ -1,5 +1,6 @@
 import { fotoUrl, type Identificacion, type Rostro } from "./api.ts";
 import { useEffect, useState } from "react";
+import { Icon, ScanFrame } from "./UI.tsx";
 
 export function Cajas({ resultado, rostros = resultado.rostros }: { resultado: Identificacion; rostros?: Rostro[] }) {
   return <svg className="overlay" viewBox={`0 0 ${resultado.ancho} ${resultado.alto}`} aria-hidden="true">
@@ -16,27 +17,33 @@ export function Cajas({ resultado, rostros = resultado.rostros }: { resultado: I
   </svg>;
 }
 
-export function Resultado({ resultado }: { resultado: Identificacion | null }) {
+export function Resultado({ resultado, analizando = false, vivo = false }: {
+  resultado: Identificacion | null; analizando?: boolean; vivo?: boolean;
+}) {
   const umbral = typeof resultado?.umbral === "number" && Number.isFinite(resultado.umbral)
     && resultado.umbral > 0 ? resultado.umbral : null;
-  return <aside className="result-panel" aria-label="Resultado del reconocimiento" aria-live="polite">
-    <p className="eyebrow">Resultado</p>
-    {!resultado ? <><h2>Primero, una imagen.</h2><p>Si el rostro está registrado y supera la verificación, verás su nombre aquí. Si no, diremos «Desconocido».</p>
-      <div className="empty-portrait" aria-hidden="true">⌜ &nbsp; ⌝<br />⌞ &nbsp; ⌟</div></> : <>
+  return <aside className="result-panel" aria-label="Resultado del reconocimiento" aria-live={vivo ? "off" : "polite"} aria-busy={analizando}>
+    <div className="result-heading"><span className="section-label">Resultado del análisis</span><span className="result-state">{analizando ? "En proceso" : resultado ? `${resultado.rostros.length} ${resultado.rostros.length === 1 ? "rostro" : "rostros"}` : "En espera"}</span></div>
+    {!resultado ? <div className="empty-result"><ScanFrame camera={vivo} /><h2>{analizando ? "Analizando tu imagen" : "El resultado aparecerá aquí"}</h2>
+      <p>{analizando ? "Rikuq está procesando la imagen y consultando las referencias en QuipuDB." : vivo ? "Enciende la cámara para comparar los rostros del encuadre con las referencias registradas." : "Selecciona una foto y pulsa Identificar rostro para comparar con las referencias registradas."}</p>
+      <div className="result-legend"><span><i className="legend-dot positive" />Coincidencia aceptada</span><span><i className="legend-dot neutral" />Desconocido</span></div>
+      <p className="empty-note">Si no hay una coincidencia dentro del umbral, el rostro se muestra como Desconocido.</p>
+    </div> : <>
       {resultado.rostros.map((r, i) => <article className="identity" key={i}>
-        {r.foto && <Foto ruta={r.foto} nombre={r.persona || ""} />}
+        {r.persona && r.foto && <Foto ruta={r.foto} nombre={r.persona} />}
         <div><span className={`badge ${r.persona ? "positive" : "neutral"}`}>{r.persona ? "Coincidencia" : "Sin coincidencia"}</span>
           <h2>{r.persona || "Desconocido"}</h2>
-          <p>{r.persona ? "Foto de referencia registrada" : "No hay una identidad confirmada dentro del umbral."}</p>
+          <p>{r.persona ? "Foto de referencia registrada" : r.distancia === null ? "No hay referencias disponibles para comparar." : "La referencia más cercana no pasa el umbral de aceptación."}</p>
         </div>
         <dl className="metrics"><div><dt>Distancia coseno ↓</dt><dd>{r.distancia?.toFixed(4) ?? "Sin candidatos"}</dd></div>
           <div><dt>Margen al umbral</dt><dd>{r.persona ? `${(r.confianza * 100).toFixed(1)} %` : "No aplica"}</dd></div></dl>
-        <p>{umbral === null ? "Umbral de aceptación no informado por el servidor."
+        <p className="threshold-note">{umbral === null ? "Umbral de aceptación no informado por el servidor."
           : <>Umbral de aceptación: <strong>{umbral.toFixed(4)}</strong>. Menor distancia indica mayor parecido.</>}</p>
-        <p>El margen mide la separación respecto al límite de aceptación. <strong>No es una probabilidad ni un porcentaje de acierto.</strong></p>
+        <p className="metric-explanation">El margen mide la separación respecto al límite de aceptación. <strong>No es una probabilidad ni un porcentaje de acierto.</strong></p>
+        {r.fiable === false && <p className="quality-warning">Rostro pequeño: acércate a la cámara o usa una imagen de mayor resolución para una comparación más fiable.</p>}
         {!r.persona && <p>{r.distancia === null ? "Sin candidatos para comparar." : "No hay una coincidencia aceptada; el margen no aplica."}</p>}
       </article>)}
-      <div className="timings"><h3>Dos tiempos, sin mezclarlos</h3>
+      <div className="timings"><h3><Icon name="clock" />Tiempos del análisis</h3>
         <dl className="metrics"><div><dt>Búsqueda · HTTP motor</dt><dd>{resultado.ms_motor.toFixed(2)} <small>ms</small></dd></div>
           <div><dt>Servidor · total</dt><dd>{resultado.ms_total.toFixed(2)} <small>ms</small></dd></div></dl>
         <p>El total incluye detectar y describir el rostro. El tiempo del motor incluye la ida y vuelta local.</p>
@@ -49,5 +56,5 @@ function Foto({ ruta, nombre }: { ruta: string; nombre: string }) {
   const [fallo, setFallo] = useState(false);
   useEffect(() => { setFallo(false); }, [ruta]);
   return fallo ? <p>Foto de referencia no disponible en esta máquina.</p>
-    : <img className="reference" src={fotoUrl(ruta)} alt={`Foto registrada de ${nombre}`} onError={() => setFallo(true)} />;
+    : <img className="reference" src={fotoUrl(ruta)} alt={`Foto registrada de ${nombre}`} width="80" height="96" onError={() => setFallo(true)} />;
 }
