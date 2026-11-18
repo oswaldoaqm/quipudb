@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError, identificar, mensajeError, type Identificacion } from "./api.ts";
 import { apagarStream, BucleCamara, errorCamara, Estabilizador } from "./camara.ts";
 import { Cajas, Resultado } from "./Resultado.tsx";
+import { Icon, ScanFrame } from "./UI.tsx";
 
 export default function Camara({ permiso }: { permiso: boolean }) {
   const video = useRef<HTMLVideoElement>(null);
@@ -74,18 +75,20 @@ export default function Camara({ permiso }: { permiso: boolean }) {
   }
 
   return <div className="recognition-grid">
-    <section className="input-panel">
-      <div className="dropzone"><div className="stage">
+    <section className="input-panel" aria-labelledby="camera-title">
+      <div className="panel-heading"><div><span className="section-label">Captura de cámara</span><h2 id="camera-title">Reconocimiento en vivo</h2></div><span className={`camera-indicator ${stream ? "is-live" : ""}`}><span className="status-dot" />{stream ? "Cámara activa" : "Apagada"}</span></div>
+      <div className="dropzone"><div className={`stage ${stream ? "" : "is-empty"}`}>
         <video ref={video} muted playsInline aria-label="Cámara de reconocimiento facial" hidden={!stream} />
-        {!stream && <div className="stage-empty"><span className="frame-mark" aria-hidden="true">⌜ ⌝<br />⌞ ⌟</span><h2>Tu cámara, solo cuando decidas.</h2><p>El navegador te pedirá permiso antes de encenderla.</p></div>}
+        {!stream && <div className="stage-empty"><ScanFrame camera /><p className="stage-title">Tu cámara está apagada</p><p>Enciéndela cuando estés listo. El navegador te pedirá permiso.</p><span className="file-types">Sin audio ni grabación</span></div>}
         {resultado && <Cajas resultado={resultado} />}
       </div></div>
-      <div className="camera-actions"><button className="button primary" disabled={!permiso || iniciando || !!stream} onClick={encender}>{iniciando ? "Esperando permiso…" : "Encender cámara"}</button>
-        <button className="button secondary" disabled={!stream && !iniciando} onClick={apagar}>Apagar cámara</button></div>
-      <p className="hint" role="status">{estado}</p>
-      {error && <p role="alert" className="error">{error}</p>}
-      <p className="hint">Una sola petición a la vez. Sin audio ni grabación. Los cuadros se descartan tras analizarlos. Los cambios de nombre se confirman durante tres cuadros; «Desconocido» aparece de inmediato.</p>
+      <div className="camera-actions"><button type="button" className="btn btn--primary button primary" aria-describedby="camera-guidance" disabled={!permiso || iniciando || !!stream} onClick={encender}><Icon name="camera" />{iniciando ? "Esperando permiso…" : "Encender cámara"}</button>
+        <button type="button" className="btn btn--secondary button secondary" disabled={!stream && !iniciando} onClick={apagar}><Icon name="close" />Apagar cámara</button></div>
+      <p id="camera-guidance" className="action-guidance" role="status">{!permiso ? "Confirma el permiso de arriba para encender la cámara." : estado}</p>
+      {error && <div role="alert" className="error"><strong>{stream ? "No se pudo analizar el cuadro" : "Revisa la cámara"}</strong><p>{error}</p></div>}
+      <div className="input-tip"><Icon name="camera" /><p>Mira a la cámara con el rostro bien iluminado. Se analizan hasta 3 cuadros por segundo, con una sola consulta a la vez.</p></div>
+      <p className="privacy-note">Apagar la cámara o retirar el permiso detiene la captura. Los cuadros se descartan tras analizarlos.</p>
     </section>
-    <Resultado resultado={resultado} />
+    <Resultado resultado={resultado} vivo />
   </div>;
 }

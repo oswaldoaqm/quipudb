@@ -16,6 +16,8 @@ export interface Rostro {
   confianza: number;
   caja: [number, number, number, number];
   ms_motor: number;
+  /** Aviso opcional del servidor sobre rostros pequenos. */
+  fiable?: boolean;
 }
 
 export interface Identificacion extends Rostro {
