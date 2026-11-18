@@ -73,7 +73,7 @@ std::unique_ptr<Hnsw> Hnsw::create(const std::filesystem::path& path, std::size_
                       " bytes y no cabe en una pagina de " + std::to_string(page_size) +
                       "; crea el indice con paginas mas grandes");
   }
-  h->save_meta();
+  h->flush();
   return h;
 }
 
@@ -519,7 +519,7 @@ void Hnsw::insert(RID rid, std::span<const float> vector) {
   }
   add_node(rid, vector);
   connect_components();
-  write_dirty();
+  flush();
 }
 
 void Hnsw::build(std::span<const RID> rids, std::span<const float> vectors) {
@@ -534,7 +534,7 @@ void Hnsw::build(std::span<const RID> rids, std::span<const float> vectors) {
   const auto inicio = std::chrono::steady_clock::now();
   for (std::size_t i = 0; i < rids.size(); ++i) add_node(rids[i], vectors.subspan(i * dim_, dim_));
   connect_components();
-  write_dirty();
+  flush();
   last_build_ms_ =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - inicio)
           .count();
@@ -587,7 +587,7 @@ bool Hnsw::remove(RID rid, std::span<const float> v) {
     mark_dirty(*n, 0);
     nodos.erase(n);
     if (nodos.empty()) por_rid_.erase(it);
-    write_dirty();
+    flush();
     return true;
   }
   return false;

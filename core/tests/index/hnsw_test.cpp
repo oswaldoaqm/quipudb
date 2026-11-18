@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <iomanip>
@@ -305,6 +306,66 @@ TEST_F(HnswTest, SeReabreConElMismoGrafoYParametros) {
   }
   EXPECT_GT(h->stats().pages_read, 0U);
 }
+
+#if GTEST_HAS_DEATH_TEST
+TEST_F(HnswTest, CrearPersisteAntesDeTerminarElProceso) {
+  const fs::path ruta = dir_ / "crear_sin_destructores.hnsw";
+  ASSERT_EXIT(
+      {
+        auto h = Hnsw::create(ruta, 512, VectorMetric::kCosine);
+        // Simula que el proceso termina DESPUES de completar la operacion,
+        // sin ejecutar destructores ni vaciar los buffers de std::fstream.
+        std::_Exit(0);
+      },
+      ::testing::ExitedWithCode(0), "");
+
+  const auto h = Hnsw::open(ruta);
+  EXPECT_TRUE(h->empty());
+  EXPECT_EQ(h->dim(), 512U);
+  EXPECT_EQ(h->metric(), VectorMetric::kCosine);
+  EXPECT_EQ(h->check_invariants(), "");
+}
+
+TEST_F(HnswTest, BuildPersisteAntesDeTerminarElProceso) {
+  const fs::path ruta = dir_ / "build_sin_destructores.hnsw";
+  ASSERT_EXIT(
+      {
+        auto h = Hnsw::create(ruta, 512, VectorMetric::kCosine);
+        h->build(rids_de(199), al_azar(199, 512, 330));
+        std::_Exit(0);
+      },
+      ::testing::ExitedWithCode(0), "");
+
+  const auto h = Hnsw::open(ruta);
+  EXPECT_EQ(h->size(), 199U);
+  EXPECT_EQ(h->check_invariants(), "");
+}
+
+TEST_F(HnswTest, InsertarPersisteLaCabeceraConLosUltimosEnlaces) {
+  const fs::path ruta = dir_ / "insertar_sin_destructores.hnsw";
+  const auto datos = al_azar(199, 512, 330);
+  const auto rids = rids_de(199);
+  ASSERT_EXIT(
+      {
+        auto h = Hnsw::create(ruta, 512, VectorMetric::kCosine);
+        h->build(std::span(rids).first(198), std::span(datos).first(198 * 512));
+        h->insert(rids[198], std::span(datos).subspan(198 * 512, 512));
+        std::_Exit(0);
+      },
+      ::testing::ExitedWithCode(0), "");
+
+  // Antes del fix quedaban enlaces al nodo 198, pero la cabecera aun
+  // declaraba 198 nodos: reabrir lanzaba "arista a un nodo que no existe".
+  auto h = Hnsw::open(ruta);
+  ASSERT_EQ(h->size(), 199U);
+  EXPECT_EQ(h->check_invariants(), "");
+  const auto encontrados = h->search(std::span(datos).subspan(198 * 512, 512), 1,
+                                    VectorMetric::kCosine, 199);
+  ASSERT_EQ(encontrados.size(), 1U);
+  EXPECT_EQ(encontrados[0].rid, rids[198]);
+  EXPECT_NEAR(encontrados[0].distance, 0.0, 1e-12);
+}
+#endif
 
 TEST_F(HnswTest, ReabrirEInsertarDaLoMismoQueNoCerrar) {
   const HnswParams p{.m = 4, .ef_construction = 24, .seed = 5};
