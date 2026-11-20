@@ -199,6 +199,15 @@ def test_api_publica_health_y_tables(node_catalog):
         assert tables.headers["access-control-allow-origin"] == "http://localhost:5173"
 
 
+def test_acepta_el_frontend_de_npm_run_dev_distribuido(node_catalog):
+    """5176 es el puerto del frontend cuando corre a la vez que el de 5173."""
+
+    app = create_coordinator_app(coordinator_with(node_catalog, fakes(node_catalog)))
+    with TestClient(app) as client:
+        tables = client.get("/tables", headers={"Origin": "http://localhost:5176"})
+        assert tables.headers["access-control-allow-origin"] == "http://localhost:5176"
+
+
 def test_api_publica_con_un_nodo_caido(node_catalog):
     app = create_coordinator_app(coordinator_with(node_catalog, fakes(node_catalog, n2=down)))
     with TestClient(app) as client:
