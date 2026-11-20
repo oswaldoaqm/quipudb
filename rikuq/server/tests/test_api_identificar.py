@@ -332,3 +332,62 @@ def test_no_expone_rutas_fuera_del_dataset(tmp_path, ruta) -> None:
         create_app(datos=tmp_path, engine_transport=httpx.MockTransport(motor))
     ) as client:
         assert client.get("/personas/7/foto").status_code == 404
+
+
+# --- todas las fotos de la persona que coinciden (#344) ------------------------
+
+
+def _motor_vecinos(filas, nombres):
+    """Responde el SELECT vectorial con ``filas`` y cada nombre por id."""
+
+    def handler(request):
+        sql = json.loads(request.content)["sql"]
+        if "SIMILAR_TO" in sql:
+            return httpx.Response(
+                200, json={"columns": ["id", "persona_id", "ruta", "puntaje"], "rows": filas}
+            )
+        persona_id = int(sql.rsplit("=", 1)[1])
+        return httpx.Response(
+            200, json={"columns": ["id", "nombre"], "rows": [[persona_id, nombres[persona_id]]]}
+        )
+
+    return httpx.MockTransport(handler)
+
+
+def _identificar_con(filas, nombres):
+    app = create_app(pipeline=PipelineFalso(), engine_transport=_motor_vecinos(filas, nombres))
+    with TestClient(app) as client:
+        return client.post(
+            "/identificar", files={"imagen": ("foto.jpg", b"foto", "image/jpeg")}
+        ).json()
+
+
+def test_devuelve_todas_las_fotos_de_la_persona_dentro_del_umbral() -> None:
+    filas = [
+        [202, 10, "subidas/202-b.jpg", 0.60],  # distancia 0.40
+        [201, 10, "subidas/201-a.jpg", 0.70],  # distancia 0.30, la mejor
+        [55, 3, "lfw/Otro/Otro_0001.jpg", 0.50],  # otra persona
+        [203, 10, "subidas/203-c.jpg", 0.30],  # misma persona, fuera del umbral
+    ]
+    cuerpo = _identificar_con(filas, {10: "Colin_Powell", 3: "Otro"})
+    assert cuerpo["persona"] == "Colin_Powell"
+    assert [(c["rostro_id"], c["foto"]) for c in cuerpo["coincidencias"]] == [
+        (201, "/rostros/201/foto"),
+        (202, "/rostros/202/foto"),
+    ]
+    assert cuerpo["coincidencias"][0]["distancia"] == pytest.approx(0.30)
+    assert cuerpo["rostros"][0]["coincidencias"] == cuerpo["coincidencias"]
+    # Aditivo: la foto de referencia de siempre no cambia.
+    assert cuerpo["foto"] == "/personas/10/foto"
+
+
+def test_un_desconocido_no_expone_coincidencias() -> None:
+    cuerpo = _identificar_con([[201, 10, "subidas/201-a.jpg", 0.2]], {10: "Colin_Powell"})
+    assert cuerpo["persona"] is None
+    assert cuerpo["coincidencias"] == []
+
+
+def test_una_base_vacia_no_tiene_coincidencias() -> None:
+    cuerpo = _identificar_con([], {})
+    assert cuerpo["distancia"] is None
+    assert cuerpo["coincidencias"] == []
