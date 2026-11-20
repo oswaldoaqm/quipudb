@@ -5,7 +5,7 @@ Arranque, desde ``quipucamayoc/server``::
     uvicorn app.main:app --reload --port 8001
 
 Necesita el API del motor levantado (``uvicorn engine.api.main:app --port
-8000`` desde la raiz del repo) y la configuracion de ``quipucamayoc/.env``.
+8003`` desde la raiz del repo) y la configuracion de ``quipucamayoc/.env``.
 """
 
 from __future__ import annotations

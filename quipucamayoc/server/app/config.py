@@ -35,7 +35,7 @@ estos en orden: los mas nuevos son tambien los mas demandados."""
 class Settings:
     # 127.0.0.1 y no localhost: en Windows, localhost prueba primero IPv6 (::1),
     # uvicorn escucha solo en IPv4 y cada peticion pierde ~0.8 s esperando.
-    quipudb_api_url: str = "http://127.0.0.1:8000"
+    quipudb_api_url: str = "http://127.0.0.1:8003"
     quipudb_timeout_s: float = 30.0
     gemini_model: str = DEFAULT_MODEL
     gemini_fallback_models: tuple[str, ...] = DEFAULT_FALLBACK_MODELS
