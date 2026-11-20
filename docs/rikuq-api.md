@@ -70,6 +70,60 @@ Nunca acepta una ruta arbitraria del navegador. Rechaza rutas absolutas,
 escapes `..`, enlaces simbolicos fuera de `rikuq/datos` y formatos no
 permitidos. Si la foto no esta en esta maquina devuelve 404.
 
+## Registrar, listar y eliminar fotos (#342)
+
+Es lo unico que escribe en la base desde la interfaz; `/identificar` sigue
+sin guardar nada. El motor no tiene `UPDATE` ni `MAX` sin `GROUP BY`: el
+siguiente id sale de `SELECT id ... ORDER BY id DESC LIMIT 1` y el conteo
+`personas.fotos` se reescribe con `DELETE` + `INSERT` de la fila. Registrar y
+eliminar se serializan con un lock para que dos peticiones no tomen el mismo id.
+
+### POST /rostros?nombre=...&consentimiento=true
+
+La foto va como en `/identificar` (campo `imagen`, hasta 8 MiB). Sin
+`consentimiento=true` responde 422 `consentimiento_requerido` sin leer ni
+guardar nada. El nombre se normaliza como las carpetas de LFW: los espacios
+pasan a `_` ("Ana Quispe" queda `Ana_Quispe`), hasta 50 caracteres, solo
+letras (con tildes y ñ), apostrofo, guion y punto. Si ya hay una persona con
+ese nombre, sin distinguir mayusculas, la foto se suma a ella; si no, se crea
+con `origen = 'subida'`. Si las tablas no existen, las crea con sus indices.
+
+La foto tiene que tener **un solo rostro y fiable**. El archivo se guarda en
+`rikuq/datos/subidas/<id>-<sufijo>.<ext>`, con la extension segun sus
+primeros bytes, y el vector entra al HNSW con el `INSERT`. Si el motor
+rechaza el `INSERT`, el archivo se borra.
+
+```bash
+curl -F 'imagen=@ana.jpg;type=image/jpeg' \
+  'http://127.0.0.1:8002/rostros?nombre=Ana%20Quispe&consentimiento=true'
+```
+
+Respuesta 201: `id` (del rostro), `persona_id`, `persona`, `persona_nueva`,
+`fotos` (cuantas tiene ahora) y `foto` (`/rostros/{id}/foto`). Errores 422:
+`consentimiento_requerido`, `nombre_invalido`, `sin_rostro`,
+`varios_rostros`, `rostro_pequeno`; 415 `imagen_invalida`; los de motor y
+modelos son los mismos de `/identificar`.
+
+### GET /rostros/subidos
+
+Las fotos registradas asi, de la mas nueva a la mas vieja:
+`[{id, persona_id, persona, foto}]`. Se reconocen por su ruta (`subidas/...`);
+el motor no tiene `LIKE`, asi que se leen `id, persona_id, ruta` de `rostros`,
+sin el vector, y se filtra en el servidor. Sin tablas devuelve `[]`.
+
+### GET /rostros/{id}/foto
+
+La imagen de un rostro, con las mismas protecciones de ruta que
+`/personas/{id}/foto`.
+
+### DELETE /rostros/{id}
+
+Solo para fotos subidas: una del dataset responde 403 `no_permitido` (se
+rehacen con `python -m app.carga.dataset`). Borra la fila (y su vector del
+HNSW), el archivo y la persona si se queda sin fotos; si no, descuenta
+`fotos`. Respuesta: `id`, `persona_id`, `persona`, `persona_eliminada`. Una
+foto que no existe responde 404 `no_existe`.
+
 Las respuestas de identificacion y fotos llevan Cache-Control: no-store.
 Uso academico local: no hay autenticacion, asi que no exponer el servidor a
 Internet o una red compartida con fotos biometricas.
