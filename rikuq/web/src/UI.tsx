@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-export type IconName = "image" | "camera" | "scan" | "shield" | "arrow" | "close" | "check" | "refresh" | "clock";
+export type IconName = "image" | "camera" | "scan" | "shield" | "arrow" | "close" | "check" | "refresh" | "clock" | "plus" | "trash" | "users";
 
 const paths: Record<IconName, ReactNode> = {
   image: <><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="m21 15-5-5L5 21" /></>,
@@ -12,6 +12,9 @@ const paths: Record<IconName, ReactNode> = {
   check: <path d="m5 12 4 4L19 6" />,
   refresh: <><path d="M20 7v5h-5M4 17v-5h5" /><path d="M6 6a8 8 0 0 1 13 3M5 15a8 8 0 0 0 13 3" /></>,
   clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+  plus: <path d="M12 5v14M5 12h14" />,
+  trash: <><path d="M4 7h16M10 11v6m4-6v6" /><path d="m6 7 1 13h10l1-13M9 7V4h6v3" /></>,
+  users: <><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0" /><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6.5 6.5 0 0 1 3.5 6" /></>,
 };
 
 export function Icon({ name, className = "" }: { name: IconName; className?: string }) {

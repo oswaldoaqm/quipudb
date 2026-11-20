@@ -198,6 +198,18 @@ fotos, porque borra las tablas.
 4. En **Cámara en vivo**, pulsa **Encender cámara** y acepta el permiso del
    navegador. No se solicita audio. **Apagar cámara**, cambiar de pestaña o
    retirar el consentimiento cierra la captura.
+5. En **Registrar**, escribe el nombre, elige una foto con **un solo rostro**
+   de frente y confirma que la persona aceptó guardarla. Pulsa **Registrar en
+   la base**: la foto queda en `rikuq/datos/subidas/` y su vector en QuipuDB,
+   y se puede identificar enseguida. Si el nombre ya existe (sin distinguir
+   mayúsculas), la foto se suma a esa persona.
+6. En **Fotos registradas** están las fotos guardadas así. **Eliminar** pide
+   confirmación y las quita de la base, del índice HNSW y del disco; la
+   persona desaparece con su última foto. Las fotos del dataset no aparecen
+   ni se borran desde aquí.
+
+Las rutas del servidor para esto están en
+[docs/rikuq-api.md](../docs/rikuq-api.md#registrar-listar-y-eliminar-fotos-342).
 
 El permiso empieza desmarcado en cada sesión. La interfaz explica por qué
 una acción está deshabilitada; puedes **Cambiar imagen**, **Quitar imagen**

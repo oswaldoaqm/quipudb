@@ -164,6 +164,28 @@ summary { cursor: pointer; }
 .app-footer > span:first-child span { color: var(--action); margin: 0 6px; }
 .app-footer p { line-height: 1.7; margin: 0; text-align: left; }
 .intro-copy, .empty-result > p, .stage-empty p:not(.stage-title), .input-tip p { color: #3c4555; }
+/* Registrar y Fotos registradas (#342) */
+.field { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.field label { font-size: 14px; font-weight: 500; }
+.text-input { min-height: 48px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); padding: 10px 14px; font-size: 15px; color: var(--ink); }
+.text-input:focus-visible { outline-offset: 0; border-color: var(--action); }
+.text-input[aria-invalid=true] { border-color: #bd394c; }
+.field-help { font-size: 13px; color: var(--p-muted); line-height: 1.6; }
+.check { display: flex; align-items: flex-start; gap: 12px; margin-top: 16px; padding: 12px 16px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); font-size: 13px; line-height: 1.7; color: #3c4555; cursor: pointer; }
+.check input { width: 20px; height: 20px; margin: 2px 0 0; accent-color: var(--action); flex-shrink: 0; }
+.danger { background: #bd394c; color: white; }
+.danger:hover { background: #9c2b3c; }
+.gallery-panel .result-heading h2 { margin: 6px 0 0; font-size: 18px; }
+.sr-status:empty { display: none; }
+.sr-status { margin: 12px 0 0; padding: 12px; border-radius: var(--r-sm); background: #e5f3ed; color: var(--success); font-size: 13px; }
+.gallery { list-style: none; margin: 20px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 16px; }
+.photo-card { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; background: var(--surface); }
+.photo-card img { width: 100%; aspect-ratio: 1; object-fit: cover; background: var(--p-bg); display: block; }
+.photo-body { display: flex; flex-direction: column; gap: 4px; padding: 12px 12px 0; min-width: 0; }
+.photo-body strong { font-weight: 500; font-size: 14px; overflow-wrap: anywhere; }
+.photo-body span { font: 400 12px/1.5 var(--font-mono); color: var(--p-muted); }
+.photo-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; margin-top: auto; }
+.photo-actions > .button { flex: 1 1 auto; }
 @media (max-width: 1080px) {
   .header-inner, .workspace { width: calc(100% - 48px); }
   .brand-description, .brand-divider, .session-note { display: none; }
@@ -206,7 +228,8 @@ summary { cursor: pointer; }
   .consent label span span { font-size: 13px; }
   .workspace-toolbar { margin-bottom: 20px; }
   .modes { display: flex; width: 100%; }
-  .modes button { flex: 1; padding: 0 8px; font-size: 13px; }
+  .modes { flex-wrap: wrap; }
+  .modes button { flex: 1 1 45%; padding: 0 8px; font-size: 13px; }
   .modes .icon { width: 18px; height: 18px; }
   .panel-heading h2 { font-size: 16px; }
   .section-label, .format-tag, .camera-indicator { font-size: 13px; }
