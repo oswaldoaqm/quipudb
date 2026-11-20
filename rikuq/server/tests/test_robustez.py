@@ -16,8 +16,16 @@ import numpy as np
 import pytest
 
 from app.consulta.identificar import UMBRAL_POR_DEFECTO
-from app.rostros.deteccion import alinear, crear_detector, detectar
+from app.rostros.deteccion import (
+    alinear,
+    crear_detector,
+    detectar,
+    detectar_orientado,
+    girar,
+    puntos_al_original,
+)
 from app.rostros.embedding import crear_descriptor, describir, distancia
+from app.rostros.errores import EmptyObjectError
 from app.rostros.modelos import ARCFACE, YUNET
 
 LFW = Path(__file__).resolve().parents[2] / "datos" / "lfw"
@@ -56,6 +64,18 @@ def _se_mantiene(original: np.ndarray, maltratada: np.ndarray, pipeline) -> floa
     return distancia(_vector(original, pipeline), _vector(maltratada, pipeline))
 
 
+def _vector_orientado(imagen: np.ndarray, pipeline) -> np.ndarray:
+    """Como ``_vector``, pero probando giros antes de alinear."""
+
+    detector, descriptor = pipeline
+    hallazgo = detectar_orientado(imagen, detector)
+    return describir(alinear(hallazgo.imagen, hallazgo.rostros[0]), descriptor)
+
+
+def _se_mantiene_orientando(original: np.ndarray, maltratada: np.ndarray, pipeline) -> float:
+    return distancia(_vector(original, pipeline), _vector_orientado(maltratada, pipeline))
+
+
 # --- geometria ----------------------------------------------------------------
 
 
@@ -74,6 +94,89 @@ def test_la_cabeza_inclinada_se_sigue_reconociendo(foto, pipeline, grados) -> No
     girada = cv2.warpAffine(foto, matriz, (ancho, alto))
 
     assert _se_mantiene(foto, girada, pipeline) < UMBRAL_POR_DEFECTO
+
+
+@pytest.mark.parametrize("grados", [60, 90])
+def test_sin_orientar_un_giro_grande_pierde_a_la_persona(foto, pipeline, grados) -> None:
+    """El limite medido de detectar sin probar giros, y por que existe.
+
+    ``alinear`` corrige el giro, pero solo si los landmarks estan bien puestos,
+    y YuNet deja de ponerlos bien pasados unos 55 grados: confunde cual punto
+    es cada ojo. Medido sobre 40 identidades de LFW, a 60 grados se reconoce el
+    0%.
+
+    Se pierde de dos maneras distintas y aqui valen las dos, porque no son
+    igual de graves. A 90 grados muchas veces **no se detecta nada**, que es el
+    fallo seguro: el sistema dice que no hay cara. A 60 todavia se detecta, con
+    0.87 de confianza, y devuelve un vector inservible marcado como fiable:
+    ese es el fallo que miente.
+
+    Esta prueba fija el limite. Si alguna vez ``detectar`` pasa a ser
+    invariante al giro por su cuenta, aqui fallara: entonces se borra, no se
+    afloja.
+    """
+
+    try:
+        distancia_girada = _se_mantiene(foto, girar(foto, grados), pipeline)
+    except EmptyObjectError:
+        return  # no detecto nada: tampoco reconoce, y ademas avisa
+    assert distancia_girada > UMBRAL_POR_DEFECTO
+
+
+@pytest.mark.parametrize("grados", list(range(0, 360, 30)))
+def test_la_vuelta_completa_se_reconoce_al_orientar(foto, pipeline, grados) -> None:
+    """Lo que arregla ``detectar_orientado``: la vuelta entera, no 55 grados.
+
+    Probando las ocho orientaciones la cara nunca queda a mas de 22.5 grados
+    de la vertical, que es zona comoda para el alineado por landmarks.
+    """
+
+    assert _se_mantiene_orientando(foto, girar(foto, grados), pipeline) < UMBRAL_POR_DEFECTO
+
+
+def test_la_caja_vuelve_a_las_coordenadas_de_la_imagen_recibida(foto, pipeline) -> None:
+    """Quien consulta dibuja sobre su imagen, no sobre la que se giro dentro."""
+
+    detector, _ = pipeline
+    girada = girar(foto, 90)
+    alto, ancho = girada.shape[:2]
+
+    hallazgo = detectar_orientado(girada, detector)
+    x, y, lado_x, lado_y = hallazgo.cajas_originales[0]
+
+    assert hallazgo.grados != 0, "una foto de costado tiene que leerse girada"
+    assert 0 <= x < x + lado_x <= ancho
+    assert 0 <= y < y + lado_y <= alto
+
+
+def test_una_foto_derecha_no_se_gira_ni_mueve_su_caja(foto, pipeline) -> None:
+    """El caso comun no cambia: misma orientacion y misma caja que antes."""
+
+    detector, _ = pipeline
+    hallazgo = detectar_orientado(foto, detector)
+
+    assert hallazgo.grados == 0
+    assert hallazgo.cajas_originales[0] == detectar(foto, detector)[0].caja
+
+
+@pytest.mark.parametrize("grados", [0, 45, 90, 135, 180, 225, 270, 315])
+def test_deshacer_el_giro_devuelve_el_punto_a_su_sitio(grados) -> None:
+    """La inversa de coordenadas, sin modelos de por medio.
+
+    Se marca un punto, se gira la imagen, se busca donde quedo la marca y se
+    deshace: tiene que volver a donde estaba. Los multiplos de 90 son exactos;
+    las diagonales interpolan y dejan una fraccion de pixel.
+    """
+
+    alto, ancho, (cx, cy) = 300, 200, (55, 70)
+    imagen = np.zeros((alto, ancho, 3), np.uint8)
+    imagen[cy - 6 : cy + 7, cx - 6 : cx + 7] = 255
+
+    ys, xs = np.nonzero(girar(imagen, grados)[:, :, 0] > 127)
+    marca = np.array([[xs.mean(), ys.mean()]], dtype=np.float64)
+    vuelta = puntos_al_original(marca, (alto, ancho), grados)[0]
+
+    assert np.hypot(vuelta[0] - cx, vuelta[1] - cy) < 1.0
 
 
 # --- calidad de imagen --------------------------------------------------------

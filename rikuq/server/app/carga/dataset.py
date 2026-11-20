@@ -26,7 +26,7 @@ from app.config import Settings
 from app.dataset.lfw import DATOS, MANIFIESTO, Rostro, leer
 from app.motor import ClienteMotor, MotorError, literal, literal_vector
 from app.rostros.deteccion import crear_detector
-from app.rostros.embedding import crear_descriptor, vectores_de
+from app.rostros.embedding import crear_descriptor, vector_del_sujeto
 from app.rostros.errores import FeatureExtractionError
 
 # Cuantos INSERT se mandan en una sola llamada. El API acepta un lote separado
@@ -128,13 +128,17 @@ def cargar(
         vectores: list[tuple[str, list[float]]] = []
         for rostro in suyos:
             try:
-                sacados = vectores_de(rostro.archivo(datos), detector, descriptor)
+                # Una foto con dos caras no dice cual es la persona del
+                # manifiesto. Antes se tomaba la mas confiable y eso guardaba
+                # acompanantes bajo el nombre del sujeto: medido sobre 400
+                # identidades de LFW, el 15% no se reconocia a si misma, y
+                # quedandose con la centrada baja al 9.2%. El porque, en
+                # `DeteccionOrientada.sujeto`.
+                sacado = vector_del_sujeto(rostro.archivo(datos), detector, descriptor)
             except FeatureExtractionError as error:
                 sin_rostro.append((rostro.ruta, str(error)))
                 continue
-            # Una foto con dos caras no dice cual es la persona del manifiesto;
-            # se toma la mas confiable, que `detectar` deja primera.
-            vectores.append((rostro.ruta, list(sacados[0])))
+            vectores.append((rostro.ruta, list(sacado)))
 
         if not vectores:
             log(f"{nombre}: sin ningun rostro utilizable, no se carga")

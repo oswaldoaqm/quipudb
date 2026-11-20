@@ -38,6 +38,14 @@ export interface Identificacion extends Rostro {
   ms_total: number;
   /** Aditivo: un servidor anterior puede no informar el umbral. */
   umbral?: number;
+  /**
+   * Aditivos: un servidor anterior solo informaba `ms_total`, que incluía
+   * esperar a que el navegador subiera la imagen. Con la cámara en vivo eso
+   * domina el número y no es trabajo del servidor, así que ahora llegan
+   * separados.
+   */
+  ms_recepcion?: number;
+  ms_proceso?: number;
 }
 
 export class ApiError extends Error {

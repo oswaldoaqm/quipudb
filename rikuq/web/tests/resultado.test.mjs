@@ -241,3 +241,21 @@ test("un desconocido no muestra coincidencias aunque la respuesta las traiga", (
   const html = render(resultado({ persona: null, persona_id: null, distancia: 0.9, coincidencias: dos }));
   assert.doesNotMatch(html, /<img/);
 });
+
+test("los tiempos separan el proceso del servidor de la subida del navegador", () => {
+  // ms_total mezclaba las dos cosas: con la camara en vivo, lo que tarda el
+  // navegador en codificar el cuadro dominaba el numero y parecia lentitud
+  // del servidor.
+  const html = render(resultado({ ms_proceso: 155.5, ms_recepcion: 4798.6 }));
+  assert.match(html, /Servidor · proceso/);
+  assert.match(html, /155\.50/);
+  assert.match(html, /Recepción · subida/);
+  assert.match(html, /4798\.60/);
+});
+
+test("un servidor anterior sin los tiempos separados sigue mostrando su total", () => {
+  const html = render(resultado());
+  assert.match(html, /Servidor · proceso/);
+  assert.match(html, /10\.00/);
+  assert.doesNotMatch(html, /Recepción · subida/);
+});

@@ -24,7 +24,8 @@ el vector a QuipuDB mediante POST /query, nunca la imagen al endpoint de carga.
 curl -F 'imagen=@foto.jpg;type=image/jpeg' http://127.0.0.1:8002/identificar
 ```
 
-Respuesta: `persona`, `distancia`, `confianza`, `ms_motor`, `ms_total`.
+Respuesta: `persona`, `distancia`, `confianza`, `ms_motor`, `ms_recepcion`,
+`ms_proceso`, `ms_total`.
 Adicionalmente: `persona_id`, `foto`, `caja` (`[x,y,ancho,alto]` en pixeles de
 la imagen original), `ancho`, `alto`, `umbral` y `rostros`. Este ultimo contiene una
 identificacion y una caja por rostro. Los campos principales describen el
@@ -55,11 +56,25 @@ primer rostro, salvo `ms_motor`, que suma las busquedas vectoriales.
   Es la misma frontera de medicion que la columna ms_motor de #306; no es
   tiempo CPU puro ni el `time_ms` del plan. No se realiza un SELECT adicional
   solo para cronometrar.
-- `ms_total`: desde que el endpoint empieza a leer el cuerpo hasta terminar
-  deteccion, embedding e identificacion de todos los rostros. Incluye buscar
-  nombres, pero no la transferencia de la respuesta al navegador. El tiempo
-  percibido por el navegador puede ser mayor. No es intercambiable con las
+- `ms_recepcion`: lo que tarda en llegar el cuerpo de la peticion. **No es
+  trabajo del servidor**: lo manda el cliente. Con la camara en vivo suele ser
+  el tramo mas largo, porque el navegador codifica un JPEG de 1280x720 por
+  cuadro. Medido en una maquina del equipo con el procesador limitado por
+  bateria, el mismo servidor, en el mismo instante, respondia en 200 ms a un
+  archivo ya en disco y declaraba 4 954 ms a un cuadro de camara: la
+  diferencia era toda recepcion.
+- `ms_proceso`: deteccion, embedding e identificacion de todos los rostros,
+  ya con la imagen en memoria. Incluye buscar nombres y la ida y vuelta al
+  motor (`ms_motor`), pero no la transferencia de la respuesta al navegador.
+  **Es el numero que mide el reconocimiento**; no es intercambiable con las
   cifras historicas de #306, que consulta vectores precalculados.
+- `ms_total`: la suma de los dos, es decir lo que el endpoint tarda de
+  principio a fin. Se conserva para no romper a quien ya lo leia, pero para
+  juzgar el rendimiento sirve `ms_proceso`: `ms_total` mezcla el servidor con
+  la velocidad del cliente y no distingue cual de los dos empeoro.
+
+`ms_recepcion` y `ms_proceso` son aditivos: un servidor anterior solo informa
+`ms_total`, y la interfaz cae a ese valor cuando no llegan.
 
 Errores: 413 (tamano), 415 (tipo), 422 (`sin_rostro` o `imagen_invalida`),
 429 (otro cuadro en proceso), 503 (modelos o motor no disponibles), 502

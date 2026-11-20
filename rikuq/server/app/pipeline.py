@@ -46,7 +46,7 @@ class PipelineArcFace:
             import cv2
             import numpy as np
 
-            from app.rostros.deteccion import alinear, crear_detector, detectar
+            from app.rostros.deteccion import alinear, crear_detector, detectar_orientado
             from app.rostros.embedding import crear_descriptor, describir
             from app.rostros.modelos import ARCFACE, YUNET
         except ImportError as error:
@@ -76,16 +76,23 @@ class PipelineArcFace:
                 self._detector, self._descriptor = crear_detector(), crear_descriptor()
             except cv2.error as error:
                 raise ModeloNoDisponible("no se pudo cargar YuNet o ArcFace") from error
-        rostros = detectar(imagen, self._detector)
-        if len(rostros) > 8:
+        # Prueba varios giros: una foto de celular llega de costado y YuNet
+        # solo lee bien los landmarks con la cara derecha.
+        hallazgo = detectar_orientado(imagen, self._detector)
+        if len(hallazgo.rostros) > 8:
             raise FeatureExtractionError("se admiten como maximo 8 rostros por imagen")
         entradas = tuple(
+            # El vector sale del recorte de la imagen girada, que es donde el
+            # rostro se lee; la caja vuelve a la original, que es sobre la que
+            # dibuja quien consulta.
             RostroEntrada(
-                rostro.caja,
-                tuple(float(v) for v in describir(alinear(imagen, rostro), self._descriptor)),
+                caja,
+                tuple(
+                    float(v) for v in describir(alinear(hallazgo.imagen, rostro), self._descriptor)
+                ),
                 rostro.fiable,
             )
-            for rostro in rostros
+            for rostro, caja in zip(hallazgo.rostros, hallazgo.cajas_originales, strict=True)
         )
         if not entradas:
             raise EmptyObjectError("no hay ningun rostro en la imagen")

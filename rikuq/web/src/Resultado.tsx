@@ -58,8 +58,10 @@ export function Resultado({ resultado, analizando = false, vivo = false }: {
       })}
       <div className="timings"><h3><Icon name="clock" />Tiempos del análisis</h3>
         <dl className="metrics"><div><dt>Búsqueda · HTTP motor</dt><dd>{resultado.ms_motor.toFixed(2)} <small>ms</small></dd></div>
-          <div><dt>Servidor · total</dt><dd>{resultado.ms_total.toFixed(2)} <small>ms</small></dd></div></dl>
-        <p>El total incluye detectar y describir el rostro. El tiempo del motor incluye la ida y vuelta local.</p>
+          <div><dt>Servidor · proceso</dt><dd>{(resultado.ms_proceso ?? resultado.ms_total).toFixed(2)} <small>ms</small></dd></div>
+          {resultado.ms_recepcion !== undefined &&
+            <div><dt>Recepción · subida</dt><dd>{resultado.ms_recepcion.toFixed(2)} <small>ms</small></dd></div>}</dl>
+        <p>El proceso incluye detectar y describir el rostro, y la búsqueda en el motor. La recepción es lo que tarda el navegador en subir la imagen: con la cámara en vivo suele ser lo más lento, y no es trabajo del servidor.</p>
       </div>
     </>}
   </aside>;

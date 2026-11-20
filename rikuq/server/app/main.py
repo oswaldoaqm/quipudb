@@ -43,12 +43,23 @@ def create_app(
 
     @application.post("/identificar")
     async def identificar_imagen(request: Request):
+        # Las dos mitades se cronometran por separado a proposito. `ms_total`
+        # incluia la subida de la imagen, que no es trabajo del servidor: con
+        # la camara en vivo, el navegador tarda en codificar cada cuadro y ese
+        # rato se contaba como tiempo de reconocimiento. Medido en una maquina
+        # del equipo con el procesador limitado por bateria, el mismo servidor
+        # respondia en 200 ms a un archivo ya en disco y declaraba 4 954 ms a
+        # un cuadro de camara: la diferencia era toda recepcion.
         inicio = perf_counter()
         imagen = await leer_imagen(request)
+        recibida = perf_counter()
         resultado = await _ejecutar(servicio.reconocer, imagen)
         if isinstance(resultado, JSONResponse):
             return resultado
-        resultado["ms_total"] = (perf_counter() - inicio) * 1000
+        fin = perf_counter()
+        resultado["ms_recepcion"] = (recibida - inicio) * 1000
+        resultado["ms_proceso"] = (fin - recibida) * 1000
+        resultado["ms_total"] = (fin - inicio) * 1000
         return JSONResponse(resultado, headers={"Cache-Control": "no-store"})
 
     @application.post("/rostros")
