@@ -78,7 +78,7 @@ export default function Subida({ permiso }: { permiso: boolean }) {
       </button>{estado === "subiendo" && <button type="button" className="btn btn--secondary button secondary" onClick={() => cancelar()}>Cancelar análisis</button>}</div>
       <p id="upload-guidance" className="action-guidance">{!permiso ? "Confirma el permiso de arriba para analizar la imagen." : !archivo ? "Selecciona una imagen para activar el análisis." : estado === "subiendo" ? "Puedes cancelar la consulta o elegir otra imagen." : "Imagen lista. Pulsa Identificar rostro para comparar."}</p>
       {error && <div className="error" role="alert"><strong>{estado === "sin_rostro" ? "No encontramos un rostro" : "No se pudo analizar la imagen"}</strong><p>{error}</p></div>}
-      <div className="input-tip"><Icon name="shield" /><p>Elige una foto con el rostro visible y buena iluminación. La consulta no registra personas nuevas.</p></div>
+      <div className="input-tip"><Icon name="shield" /><p>Elige una foto con el rostro visible y buena iluminación. La consulta no registra personas nuevas; para eso está la pestaña Registrar.</p></div>
     </section>
     <Resultado resultado={resultado} analizando={estado === "subiendo"} />
   </div>;

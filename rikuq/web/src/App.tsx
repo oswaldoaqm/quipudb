@@ -2,12 +2,22 @@ import { useEffect, useState } from "react";
 import { health } from "./api.ts";
 import Subida from "./Subida.tsx";
 import Camara from "./Camara.tsx";
-import { Icon } from "./UI.tsx";
+import Registro from "./Registro.tsx";
+import Registradas from "./Registradas.tsx";
+import { Icon, type IconName } from "./UI.tsx";
+
+type Modo = "imagen" | "camara" | "registrar" | "registradas";
+const MODOS: { id: Modo; icono: IconName; texto: string }[] = [
+  { id: "imagen", icono: "image", texto: "Subir imagen" },
+  { id: "camara", icono: "camera", texto: "Cámara en vivo" },
+  { id: "registrar", icono: "plus", texto: "Registrar" },
+  { id: "registradas", icono: "users", texto: "Fotos registradas" },
+];
 
 export default function App() {
   const [connected, setConnected] = useState<boolean | null>(null);
   const [permiso, setPermiso] = useState(false);
-  const [modo, setModo] = useState<"imagen" | "camara">("imagen");
+  const [modo, setModo] = useState<Modo>("imagen");
   const [intento, setIntento] = useState(0);
   useEffect(() => {
     let active = true;
@@ -42,7 +52,7 @@ export default function App() {
         <details className="help-menu"><summary>Cómo funciona <span aria-hidden="true">↗</span></summary>
           <div className="help-content"><h2>De la imagen al resultado</h2>
             <ol><li>Rikuq detecta el rostro y extrae su vector.</li><li>QuipuDB busca referencias cercanas con HNSW.</li><li>El umbral decide una coincidencia o Desconocido.</li></ol>
-            <p>Subir una imagen consulta la base; no registra personas nuevas. La conexión del encabezado solo comprueba la API de Rikuq.</p>
+            <p>Subir una imagen o usar la cámara solo consulta la base. Para añadir a alguien está Registrar, y sus fotos se pueden retirar en Fotos registradas. La conexión del encabezado solo comprueba la API de Rikuq.</p>
           </div>
         </details>
       </section>
@@ -60,19 +70,23 @@ export default function App() {
           const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
           if (!keys.includes(e.key)) return;
           e.preventDefault();
-          const next = e.key === "Home" ? "imagen" : e.key === "End" ? "camara" : modo === "imagen" ? "camara" : "imagen";
+          const actual = MODOS.findIndex(m => m.id === modo);
+          const indice = e.key === "Home" ? 0 : e.key === "End" ? MODOS.length - 1
+            : (actual + (e.key === "ArrowRight" ? 1 : -1) + MODOS.length) % MODOS.length;
+          const next = MODOS[indice].id;
           setModo(next);
           e.currentTarget.querySelector<HTMLButtonElement>(`#tab-${next}`)?.focus();
         }}>
-          <button type="button" id="tab-imagen" role="tab" aria-selected={modo === "imagen"} aria-controls="recognition-panel" tabIndex={modo === "imagen" ? 0 : -1} onClick={() => setModo("imagen")}><Icon name="image" />Subir imagen</button>
-          <button type="button" id="tab-camara" role="tab" aria-selected={modo === "camara"} aria-controls="recognition-panel" tabIndex={modo === "camara" ? 0 : -1} onClick={() => setModo("camara")}><Icon name="camera" />Cámara en vivo</button>
+          {MODOS.map(m => <button key={m.id} type="button" id={`tab-${m.id}`} role="tab" aria-selected={modo === m.id} aria-controls="recognition-panel" tabIndex={modo === m.id ? 0 : -1} onClick={() => setModo(m.id)}><Icon name={m.icono} />{m.texto}</button>)}
         </div>
-        <span className="session-note"><Icon name="shield" />Imágenes de consulta en memoria</span>
+        <span className="session-note"><Icon name="shield" />{modo === "registrar" || modo === "registradas" ? "Solo Registrar guarda fotos" : "Imágenes de consulta en memoria"}</span>
       </div>
       <div id="recognition-panel" role="tabpanel" aria-labelledby={`tab-${modo}`}>
-        {modo === "imagen" ? <Subida permiso={permiso} /> : <Camara permiso={permiso} />}
+        {modo === "imagen" ? <Subida permiso={permiso} />
+          : modo === "camara" ? <Camara permiso={permiso} />
+            : modo === "registrar" ? <Registro permiso={permiso} /> : <Registradas />}
       </div>
-      <footer className="app-footer"><span>Rikuq <span aria-hidden="true">/</span> QuipuDB</span><p>Uso académico local. Las consultas no añaden personas ni guardan las imágenes.</p><span>YuNet · ArcFace · HNSW</span></footer>
+      <footer className="app-footer"><span>Rikuq <span aria-hidden="true">/</span> QuipuDB</span><p>Uso académico local. Las consultas no guardan imágenes; solo Registrar añade fotos a la base, y se pueden eliminar.</p><span>YuNet · ArcFace · HNSW</span></footer>
     </main>
   </div>;
 }

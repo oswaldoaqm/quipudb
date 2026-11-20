@@ -26,6 +26,8 @@ const { Resultado } = await server.ssrLoadModule("/src/Resultado.tsx");
 const { default: App } = await server.ssrLoadModule("/src/App.tsx");
 const { default: Subida } = await server.ssrLoadModule("/src/Subida.tsx");
 const { default: Camara } = await server.ssrLoadModule("/src/Camara.tsx");
+const { default: Registro } = await server.ssrLoadModule("/src/Registro.tsx");
+const { default: Registradas } = await server.ssrLoadModule("/src/Registradas.tsx");
 
 function resultado(cambios = {}) {
   const { umbral = 0.55, ...rostro } = cambios;
@@ -165,4 +167,35 @@ test("el nombre recibido se escapa como texto, no como codigo HTML", () => {
   const html = render(resultado({ persona: '<img src=x onerror="alert(1)">' }));
   assert.match(html, /&lt;img/);
   assert.doesNotMatch(html, /<img src=x/);
+});
+
+// --- Registrar y Fotos registradas (#342) ---------------------------------------
+
+test("las cuatro pestañas se pueden elegir y la primera sigue siendo la consulta", () => {
+  const html = renderToStaticMarkup(createElement(App));
+  for (const id of ["imagen", "camara", "registrar", "registradas"]) assert.match(html, new RegExp(`id="tab-${id}"`));
+  assert.match(html, /id="tab-registrar"[^>]*aria-selected="false"[^>]*tabindex="-1"/);
+  assert.match(html, /solo Registrar añade fotos a la base/);
+});
+
+test("registrar empieza deshabilitado y pide el permiso general", () => {
+  const html = renderToStaticMarkup(createElement(Registro, { permiso: false }));
+  assert.match(html, /Confirma el permiso de arriba para registrar fotos/);
+  assert.match(html, /<button[^>]*disabled=""[^>]*>[\s\S]*?Registrar en la base/);
+  assert.match(html, /<label[^>]*for="registro-nombre"/);
+  assert.match(html, /id="registro-consentimiento"/);
+  assert.doesNotMatch(html, /checked=""/);
+});
+
+test("con permiso la guia pide primero el nombre", () => {
+  const html = renderToStaticMarkup(createElement(Registro, { permiso: true }));
+  assert.match(html, /Escribe el nombre de la persona/);
+  assert.match(html, /<button[^>]*disabled=""[^>]*>[\s\S]*?Registrar en la base/);
+});
+
+test("fotos registradas carga sin pedir el permiso: retirar una foto siempre se puede", () => {
+  const html = renderToStaticMarkup(createElement(Registradas));
+  assert.match(html, /Fotos registradas desde la app/);
+  assert.match(html, /Cargando fotos/);
+  assert.match(html, /no se borran desde aquí/);
 });
