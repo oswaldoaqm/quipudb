@@ -192,3 +192,38 @@ def test_main_anota_la_imagen_rota_y_sigue(tmp_path: Path, capsys) -> None:
 
     assert main([str(rota)]) == 1
     assert "no es una imagen" in capsys.readouterr().err
+
+
+@sin_modelos
+@sin_dataset
+def test_el_vector_del_sujeto_sale_del_rostro_centrado() -> None:
+    """Para cargar un dataset hace falta un vector por archivo, el del sujeto.
+
+    Se monta una foto ancha con la misma cara dos veces, una centrada y otra
+    pegada al borde, y se comprueba que el vector coincide con el de la
+    centrada. `vectores_de` sigue devolviendolos todos, que es lo que quiere
+    quien consulta una foto cualquiera.
+    """
+
+    import cv2
+
+    from app.rostros.deteccion import alinear, detectar_orientado
+    from app.rostros.embedding import describir, distancia, vector_del_sujeto
+    from app.rostros.lectura import leer_color
+
+    cara = leer_color(next(iter(sorted(LFW.glob("*/*.jpg")))))
+    alto, ancho = cara.shape[:2]
+    lienzo = np.zeros((alto, ancho * 3, 3), dtype=np.uint8)
+    lienzo[:, :ancho] = cara  # al borde
+    lienzo[:, ancho : ancho * 2] = cara  # centrada
+    archivo = Path(__file__).with_name("_sujeto_tmp.png")
+    cv2.imwrite(str(archivo), lienzo)
+    try:
+        detector, descriptor = crear_detector(), crear_descriptor()
+        hallazgo = detectar_orientado(lienzo, detector)
+        assert len(hallazgo.rostros) >= 2, "la foto de prueba tiene que traer dos caras"
+
+        centrada = describir(alinear(hallazgo.imagen, hallazgo.sujeto), descriptor)
+        assert distancia(vector_del_sujeto(archivo, detector, descriptor), centrada) < 1e-6
+    finally:
+        archivo.unlink(missing_ok=True)
