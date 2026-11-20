@@ -67,12 +67,12 @@ incompleto.
 | `GET /fragments` | Cada tabla con sus fragmentos: nodo, rango de la clave, filas y si el nodo responde (#295). Un nodo caído no hace fallar la respuesta. |
 
 Los errores usan el `QueryErrorResponse` de siempre, así que el frontend los
-muestra sin cambios. El coordinador escucha en el puerto 8000 y acepta los
-mismos orígenes que la API local.
+muestra sin cambios. El coordinador escucha en el puerto 8010 y acepta el
+frontend en 5173 y en 5176 (`npm run dev:distribuido`); ver [Puertos](puertos.md).
 
 ## Levantar dos nodos y el coordinador
 
-Con los bindings compilados y un catálogo cuyos nodos apunten a 8001 y 8002,
+Con los bindings compilados y un catálogo cuyos nodos apunten a 8011 y 8012,
 como [`catalogo-nodos-locales-v1.json`](ejemplos/catalogo-nodos-locales-v1.json).
 Primero se preparan los directorios de los nodos, una sola vez, con
 `python -m scripts.preparar_nodo` (ver
@@ -81,16 +81,16 @@ en su terminal:
 
 ```bash
 python -m engine.distributed.node_server --catalog docs/ejemplos/catalogo-nodos-locales-v1.json \
-    --catalog-version 1 --node-id n1 --data-dir /tmp/quipudb-dist/n1 --port 8001
+    --catalog-version 1 --node-id n1 --data-dir /tmp/quipudb-dist/n1 --port 8011
 python -m engine.distributed.node_server --catalog docs/ejemplos/catalogo-nodos-locales-v1.json \
-    --catalog-version 1 --node-id n2 --data-dir /tmp/quipudb-dist/n2 --port 8002
+    --catalog-version 1 --node-id n2 --data-dir /tmp/quipudb-dist/n2 --port 8012
 python -m engine.distributed.coordinator --catalog docs/ejemplos/catalogo-nodos-locales-v1.json \
     --catalog-version 1
 ```
 
 ```bash
-curl http://localhost:8000/health
-curl http://localhost:8000/tables
+curl http://localhost:8010/health
+curl http://localhost:8010/tables
 ```
 
 El coordinador puede arrancar antes que los nodos: al arrancar informa en el

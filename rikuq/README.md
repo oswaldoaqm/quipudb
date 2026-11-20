@@ -31,9 +31,13 @@ Son **tres procesos**:
 
 | Proceso | Directorio | Puerto |
 |---|---|---:|
-| API del motor | raíz del repo | 8000 |
+| API del motor (propia de Rikuq) | raíz del repo | 8004 |
 | API de Rikuq | rikuq/server | 8002 |
 | Interfaz de Rikuq | rikuq/web | 5175 |
+
+El motor de Rikuq va en el 8004 para correr a la vez que el motor general
+(8000), Quipucamayoc y el distribuido; la tabla de todos los puertos está en
+[docs/puertos.md](../docs/puertos.md).
 
 ### 1. Motor: terminal desde la raíz
 
@@ -56,7 +60,7 @@ Linux/macOS:
 ```bash
 export PYTHONPATH="$PWD/build-py/bindings:$PWD"
 export QUIPUDB_CATALOG=datos/rikuq/catalogo.txt
-python -m uvicorn engine.api.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn engine.api.main:app --host 127.0.0.1 --port 8004
 ```
 
 PowerShell, también desde la raíz:
@@ -64,7 +68,7 @@ PowerShell, también desde la raíz:
 ```powershell
 $env:PYTHONPATH = "$PWD\build-py\bindings;$PWD"
 $env:QUIPUDB_CATALOG = "datos/rikuq/catalogo.txt"
-python -m uvicorn engine.api.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn engine.api.main:app --host 127.0.0.1 --port 8004
 ```
 
 El catálogo separado evita mezclar la demo con otras bases del equipo. No
@@ -130,7 +134,7 @@ los puertos de los otros frontends quedan libres.
 
 | Variable | Predeterminado | Uso |
 |---|---|---|
-| QUIPUDB_URL | http://127.0.0.1:8000 | API del motor |
+| QUIPUDB_URL | http://127.0.0.1:8004 | API del motor |
 | QUIPUDB_API_URL | alias anterior | Se usa si QUIPUDB_URL está vacía |
 | QUIPUDB_TIMEOUT_S | 60 | Timeout HTTP hacia el motor |
 | RIKUQ_WEB_ORIGINS | localhost:5175 y 127.0.0.1:5175, con http:// | Orígenes CORS separados por comas |
@@ -160,12 +164,12 @@ La fuente de verdad es el catálogo abierto por la API del motor. Con el
 motor encendido, estas consultas de solo lectura enumeran personas y rutas:
 
 ```bash
-curl -sS http://127.0.0.1:8000/query \
+curl -sS http://127.0.0.1:8004/query \
   -H 'Content-Type: application/json' \
   -d '{"sql":"SELECT id, nombre, fotos FROM personas ORDER BY nombre;"}' \
   | python3 -m json.tool
 
-curl -sS http://127.0.0.1:8000/query \
+curl -sS http://127.0.0.1:8004/query \
   -H 'Content-Type: application/json' \
   -d '{"sql":"SELECT persona_id, ruta FROM rostros ORDER BY persona_id LIMIT 20;"}' \
   | python3 -m json.tool

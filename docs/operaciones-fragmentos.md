@@ -196,23 +196,23 @@ PY
 ```
 
 Usar una raíz nueva; para un reinicio **no repetir la preparación**. El catálogo
-de ejemplo usa n1 en 8001 y n2 en 8002. Arrancar cada comando en una terminal:
+de ejemplo usa n1 en 8011 y n2 en 8012. Arrancar cada comando en una terminal:
 
 ```bash
-PYTHONPATH=build-py/bindings .venv/bin/python -m engine.distributed.node_server --catalog docs/ejemplos/catalogo-nodos-locales-v1.json --catalog-version 1 --node-id n1 --data-dir /tmp/quipudb-277-demo/n1 --port 8001
+PYTHONPATH=build-py/bindings .venv/bin/python -m engine.distributed.node_server --catalog docs/ejemplos/catalogo-nodos-locales-v1.json --catalog-version 1 --node-id n1 --data-dir /tmp/quipudb-277-demo/n1 --port 8011
 ```
 
 ```bash
-PYTHONPATH=build-py/bindings .venv/bin/python -m engine.distributed.node_server --catalog docs/ejemplos/catalogo-nodos-locales-v1.json --catalog-version 1 --node-id n2 --data-dir /tmp/quipudb-277-demo/n2 --port 8002
+PYTHONPATH=build-py/bindings .venv/bin/python -m engine.distributed.node_server --catalog docs/ejemplos/catalogo-nodos-locales-v1.json --catalog-version 1 --node-id n2 --data-dir /tmp/quipudb-277-demo/n2 --port 8012
 ```
 
 En una tercera terminal:
 
 ```bash
-curl -sS http://127.0.0.1:8001/internal/v1/health
-curl -sS -H 'Content-Type: application/json' --data-binary @docs/ejemplos/nodo-insert-v1.json http://127.0.0.1:8001/internal/v1/fragments/items_f0/execute
-curl -sS -H 'Content-Type: application/json' --data-binary @docs/ejemplos/nodo-scan-v1.json http://127.0.0.1:8001/internal/v1/fragments/items_f0/scan
-curl -sS -H 'Content-Type: application/json' --data-binary @docs/ejemplos/nodo-scan-v1.json http://127.0.0.1:8002/internal/v1/fragments/items_f1/scan
+curl -sS http://127.0.0.1:8011/internal/v1/health
+curl -sS -H 'Content-Type: application/json' --data-binary @docs/ejemplos/nodo-insert-v1.json http://127.0.0.1:8011/internal/v1/fragments/items_f0/execute
+curl -sS -H 'Content-Type: application/json' --data-binary @docs/ejemplos/nodo-scan-v1.json http://127.0.0.1:8011/internal/v1/fragments/items_f0/scan
+curl -sS -H 'Content-Type: application/json' --data-binary @docs/ejemplos/nodo-scan-v1.json http://127.0.0.1:8012/internal/v1/fragments/items_f1/scan
 ```
 
 El primer scan contiene `[42, "Quipu"]`, el segundo está vacío. Enviar la
@@ -221,7 +221,7 @@ detener ambos servidores con Ctrl+C, volver a arrancarlos con los mismos comando
 y repetir los scans antes de borrar:
 
 ```bash
-curl -sS -H 'Content-Type: application/json' --data-binary @docs/ejemplos/nodo-delete-v1.json http://127.0.0.1:8001/internal/v1/fragments/items_f0/execute
+curl -sS -H 'Content-Type: application/json' --data-binary @docs/ejemplos/nodo-delete-v1.json http://127.0.0.1:8011/internal/v1/fragments/items_f0/execute
 ```
 
 Para multimedia single, `--media-root` indica el directorio local y

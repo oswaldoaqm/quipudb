@@ -277,6 +277,7 @@ habla con la API en `VITE_API_URL` (por defecto `http://localhost:8000`).
 | Script | Qué hace |
 |---|---|
 | `npm run dev` | Servidor de desarrollo con recarga en caliente |
+| `npm run dev:distribuido` | Lo mismo en el 5176, contra el coordinador distribuido del 8010 |
 | `npm run build` | Verifica tipos y compila a `frontend/dist/` |
 | `npm run typecheck` | Solo la verificación de tipos |
 | `npm run test:spatial` | Pruebas de la visualización espacial |
@@ -714,14 +715,19 @@ upgrade compartido→exclusivo se resuelven por timeout y reintento.
 ### Modo distribuido
 
 Dos nodos de datos con la tabla `items` partida por rango de `id` (n1 hasta
-9999, n2 desde 10000) y un coordinador en el puerto 8000 que enruta cada
+9999, n2 desde 10000) y un coordinador en el puerto 8010 que enruta cada
 consulta y combina los resultados. El frontend se conecta al coordinador sin
-cambios.
+cambiar código, con `npm run dev:distribuido` (http://localhost:5176).
 
 ```bash
 python -m scripts.demo_distribuida --root /tmp/quipudb-demo                  # local
 docker compose -f docker-compose.distribuido.yml up -d --build               # en Docker
+cd frontend && npm run dev:distribuido                                       # interfaz
 ```
+
+El coordinador (8010) y sus nodos (8011, 8012) no comparten puertos con el
+motor general (8000) ni con Quipucamayoc y Rikuq: todo se puede levantar a la
+vez. La tabla completa está en [`docs/puertos.md`](docs/puertos.md).
 
 Las tablas fragmentadas también se crean por SQL desde el editor, con
 `CREATE TABLE ... PARTITION BY RANGE (id) (PARTITION ... VALUES LESS THAN (n) ON n1, ...)`
@@ -812,6 +818,7 @@ real y las imágenes de demostración autorizadas siguen pendientes en #312.
 | [`benchmarks/README.md`](benchmarks/README.md) | Datasets, protocolos y reproducción de las corridas |
 | [`docs/ingesta-multimedia.md`](docs/ingesta-multimedia.md) | Ingesta de carpetas de imágenes/audio, trabajos REST y ejemplo reproducible |
 | [`docs/consultas-multimedia.md`](docs/consultas-multimedia.md) | SIMILAR_TO, creación SQL de IVF/HNSW, métricas y vocabularios |
+| [`docs/puertos.md`](docs/puertos.md) | Puerto de cada proceso, para levantar el motor, el distribuido y las dos aplicaciones a la vez |
 | [`docs/integracion-distribuida.md`](docs/integracion-distribuida.md) | Modo distribuido: arquitectura, cómo levantarlo, pruebas integradas y evidencias |
 | [`docs/ddl-distribuido.md`](docs/ddl-distribuido.md) | CREATE TABLE fragmentado, CREATE INDEX y DROP TABLE por SQL en el coordinador |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Ramas, commits y pull requests |

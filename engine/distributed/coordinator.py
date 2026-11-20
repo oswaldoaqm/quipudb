@@ -23,8 +23,8 @@ Uso, con los nodos ya levantados (``engine.distributed.node_server``)::
     python -m engine.distributed.coordinator --catalog catalogo.json --catalog-version 1 \\
         --data-dir datos/coordinador
 
-Escucha en el puerto 8000, el mismo de la API local, para que el frontend se
-conecte al coordinador sin cambiar su configuración.
+Escucha en el puerto 8010, no en el 8000 de la API local, para que los dos
+corran a la vez; el frontend se le conecta con ``npm run dev:distribuido``.
 """
 
 from __future__ import annotations
@@ -67,8 +67,13 @@ from engine.parser.errors import SQLError
 
 _LOGGER = logging.getLogger(__name__)
 
-ORIGENES = ("http://localhost:5173", "http://127.0.0.1:5173")
-"""Los mismos orígenes del frontend que acepta la API local."""
+ORIGENES = (
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5176",
+    "http://127.0.0.1:5176",
+)
+"""El frontend en su puerto de siempre y en el de ``npm run dev:distribuido``."""
 
 
 @dataclass(frozen=True)
@@ -542,7 +547,7 @@ def main() -> None:
     parser.add_argument("--catalog", type=Path, required=True)
     parser.add_argument("--catalog-version", type=int, required=True)
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, default=8010)
     parser.add_argument(
         "--timeout",
         type=float,

@@ -8,18 +8,18 @@ levantarlo, qué se probó y lo que salió.
 
 ```mermaid
 flowchart TB
-    F["Frontend · localhost:5173"]
+    F["Frontend · localhost:5176"]
 
-    subgraph C["Coordinador · :8000"]
+    subgraph C["Coordinador · :8010"]
         direction LR
         R["router.py<br/>parser y binder del motor,<br/>owner_for_key"] --> K["NodeClient<br/>uno por nodo"] --> M["merge.py<br/>valida, ordena,<br/>proyecta, LIMIT"]
     end
 
-    subgraph N1["Nodo n1 · :8001"]
+    subgraph N1["Nodo n1 · :8011"]
         S1["FragmentService<br/>motor QuipuDB"] --> D1[("items_f0<br/>id &lt; 10000")]
     end
 
-    subgraph N2["Nodo n2 · :8002"]
+    subgraph N2["Nodo n2 · :8012"]
         S2["FragmentService<br/>motor QuipuDB"] --> D2[("items_f1<br/>id ≥ 10000")]
     end
 
@@ -68,8 +68,8 @@ Con los bindings compilados (`build-py/bindings` o donde los tengas):
 PYTHONPATH=build-py/bindings:. python -m scripts.demo_distribuida --root /tmp/quipudb-demo
 ```
 
-Prepara los directorios de n1 y n2 la primera vez, levanta n1 en 8001, n2 en
-8002 y el coordinador en 8000, corre el recorrido de la sección de evidencias
+Prepara los directorios de n1 y n2 la primera vez, levanta n1 en 8011, n2 en
+8012 y el coordinador en 8010, corre el recorrido de la sección de evidencias
 y al final apaga n2 para mostrar qué deja de funcionar. Los logs quedan en la
 carpeta de `--root`.
 
@@ -87,9 +87,9 @@ python -m scripts.preparar_nodo --catalog docs/ejemplos/catalogo-nodos-locales-v
 
 ```bash
 docker compose -f docker-compose.distribuido.yml up -d --build
-curl http://localhost:8000/health
-python -m scripts.demo_distribuida --url http://localhost:8000 \
-    --nodo n1=http://localhost:8001 --nodo n2=http://localhost:8002
+curl http://localhost:8010/health
+python -m scripts.demo_distribuida --url http://localhost:8010 \
+    --nodo n1=http://localhost:8011 --nodo n2=http://localhost:8012
 ```
 
 [`docker-compose.distribuido.yml`](../docker-compose.distribuido.yml) usa la
@@ -97,18 +97,20 @@ misma imagen del `Dockerfile` para los tres servicios. Cada nodo tiene su
 volumen y prepara su directorio al primer arranque con `preparar_nodo`. Usa
 [`catalogo-distribuido-v1.json`](ejemplos/catalogo-distribuido-v1.json), cuyos
 nodos son `http://n1:8000` y `http://n2:8000`: los nombres de los servicios en
-la red de Docker. Es un archivo aparte de `docker-compose.yml` porque los dos
-publican el puerto 8000.
+la red de Docker; afuera se publican en 8010 (coordinador), 8011 y 8012. Es un
+archivo aparte de `docker-compose.yml` y los dos pueden estar levantados a la
+vez: el motor de ese compose sigue en el 8000 (ver [Puertos](puertos.md)).
 
 Con `docker compose -f docker-compose.distribuido.yml stop n2` se puede repetir
 la caída de un nodo. `down -v` borra los volúmenes y los datos.
 
 ### Con el frontend
 
-El frontend no cambia. En `frontend/.env`, `VITE_USE_MOCK=false` y
-`VITE_API_URL=http://localhost:8000`; con el coordinador en ese puerto,
-`npm run dev`. El panel de archivos muestra las tablas lógicas con el conteo
-sumado de los dos nodos.
+El código del frontend no cambia. `npm run dev:distribuido` lo levanta en
+<http://localhost:5176> con [`frontend/.env.distribuido`](../frontend/.env.distribuido),
+que apunta al coordinador en el 8010; `npm run dev` sigue en el 5173 contra el
+motor del 8000 y los dos pueden estar abiertos a la vez. El panel de archivos
+muestra las tablas lógicas con el conteo sumado de los dos nodos.
 
 ![Consulta combinada en el frontend](informe/capturas/distribuido/frontend-combinada.png)
 
@@ -137,7 +139,7 @@ llegan a ningún nodo; las que un nodo rechaza, como una clave duplicada, se
 informan en su línea con el nodo y el fragmento, y la carga sigue.
 
 ```bash
-curl -F "file=@items.csv" http://localhost:8000/tables/items/load
+curl -F "file=@items.csv" http://localhost:8010/tables/items/load
 ```
 
 Es una petición por fila: en la prueba integrada, 1 000 filas repartidas entre

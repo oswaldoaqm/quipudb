@@ -13,8 +13,8 @@ from engine.distributed.protocol import FragmentRequest
 def test_ejemplos_de_documentacion(node_services):
     directory = Path(__file__).resolve().parents[2] / "docs/ejemplos"
     catalog = load_catalog(directory / "catalogo-nodos-locales-v1.json")
-    assert catalog.node("n1").base_url == "http://127.0.0.1:8001"
-    assert catalog.node("n2").base_url == "http://127.0.0.1:8002"
+    assert catalog.node("n1").base_url == "http://127.0.0.1:8011"
+    assert catalog.node("n2").base_url == "http://127.0.0.1:8012"
     with TestClient(create_node_app(node_services["n1"])) as client:
         for operation, endpoint in [("insert", "execute"), ("scan", "scan"), ("delete", "execute")]:
             data = json.loads((directory / f"nodo-{operation}-v1.json").read_text())

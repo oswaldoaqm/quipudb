@@ -139,12 +139,12 @@ Con el clúster levantado como indica
 frontend o con curl:
 
 ```bash
-q() { curl -s localhost:8000/query -H 'Content-Type: application/json' -d "{\"sql\":\"$1\"}"; echo; }
+q() { curl -s localhost:8010/query -H 'Content-Type: application/json' -d "{\"sql\":\"$1\"}"; echo; }
 q "CREATE TABLE ventas (id INT PRIMARY KEY, monto DOUBLE) PARTITION BY RANGE (id) (PARTITION ventas_f0 VALUES LESS THAN (5000) ON n1, PARTITION ventas_f1 VALUES LESS THAN (MAXVALUE) ON n2)"
 q "INSERT INTO ventas VALUES (4999, 80.0)"
 q "INSERT INTO ventas VALUES (5000, 15.0)"
 q "SELECT * FROM ventas ORDER BY id"
-curl -s localhost:8000/fragments
+curl -s localhost:8010/fragments
 q "DROP TABLE ventas"
 ```
 

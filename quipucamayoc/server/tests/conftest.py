@@ -2,7 +2,7 @@
 
 Dos formas, en este orden:
 
-1. ``QUIPUCAMAYOC_TEST_MOTOR_URL=http://127.0.0.1:8000``: un motor ya
+1. ``QUIPUCAMAYOC_TEST_MOTOR_URL=http://127.0.0.1:8003``: un motor ya
    levantado. Las tablas de la prueba llevan un prefijo unico y se borran al
    final, asi que no tocan el corpus.
 2. Si el modulo nativo se puede importar (``PYTHONPATH=build-py/bindings``),

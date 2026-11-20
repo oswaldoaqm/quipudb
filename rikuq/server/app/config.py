@@ -13,7 +13,7 @@ from typing import Self
 # 127.0.0.1 y no localhost: en Windows, localhost prueba primero IPv6 (::1),
 # uvicorn escucha solo en IPv4 y cada peticion pierde ~0.8 s esperando. Es el
 # mismo motivo por el que Quipucamayoc usa la IP.
-URL_POR_DEFECTO = "http://127.0.0.1:8000"
+URL_POR_DEFECTO = "http://127.0.0.1:8004"
 
 # Cargar 4324 rostros son miles de INSERT; el motor puede tardar en responder
 # mientras reconstruye un indice.
