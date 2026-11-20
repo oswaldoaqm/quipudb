@@ -1,5 +1,6 @@
 """Servidor independiente de Rikuq: uvicorn app.main:app --port 8002."""
 
+from collections.abc import Callable
 from pathlib import Path
 from time import perf_counter
 
@@ -13,6 +14,7 @@ from app.config import Settings
 from app.entrada import leer_imagen
 from app.motor import MotorError, MotorNoDisponible
 from app.pipeline import ModeloNoDisponible, Pipeline, PipelineArcFace
+from app.registro import ErrorRegistro
 from app.rostros.errores import EmptyObjectError, FeatureExtractionError
 from app.servicio import DATOS, Servicio
 
@@ -30,7 +32,7 @@ def create_app(
     application.add_middleware(
         CORSMiddleware,
         allow_origins=list(settings.web_origins),
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "DELETE"],
         allow_headers=["Content-Type"],
     )
 
@@ -43,24 +45,53 @@ def create_app(
     async def identificar_imagen(request: Request):
         inicio = perf_counter()
         imagen = await leer_imagen(request)
-        try:
-            resultado = await run_in_threadpool(servicio.reconocer, imagen)
-        except EmptyObjectError as error:
-            return _error(422, "sin_rostro", str(error))
-        except FeatureExtractionError as error:
-            return _error(422, "imagen_invalida", str(error))
-        except ModeloNoDisponible as error:
-            return _error(503, "modelo_no_disponible", str(error))
-        except MotorNoDisponible:
-            return _error(
-                503, "motor_no_disponible", "levanta la API de QuipuDB en el puerto configurado"
-            )
-        except MotorError:
-            return _error(
-                502, "error_motor", "QuipuDB rechazo la consulta; revisa el esquema de Rikuq"
-            )
+        resultado = await _ejecutar(servicio.reconocer, imagen)
+        if isinstance(resultado, JSONResponse):
+            return resultado
         resultado["ms_total"] = (perf_counter() - inicio) * 1000
         return JSONResponse(resultado, headers={"Cache-Control": "no-store"})
+
+    @application.post("/rostros")
+    async def registrar_rostro(request: Request, nombre: str = "", consentimiento: bool = False):
+        # El permiso se pide en la interfaz, pero quien guarda la foto es este
+        # servidor: sin el no se escribe nada, venga de donde venga la peticion.
+        if not consentimiento:
+            return _error(
+                422,
+                "consentimiento_requerido",
+                "confirma que tienes permiso de la persona para registrar su foto",
+            )
+        imagen = await leer_imagen(request)
+        resultado = await _ejecutar(servicio.registrar_foto, nombre, imagen, datos)
+        if isinstance(resultado, JSONResponse):
+            return resultado
+        return JSONResponse(resultado, status_code=201, headers={"Cache-Control": "no-store"})
+
+    @application.get("/rostros/subidos")
+    async def rostros_subidos():
+        resultado = await _ejecutar(servicio.subidos)
+        if isinstance(resultado, JSONResponse):
+            return resultado
+        return JSONResponse(resultado, headers={"Cache-Control": "no-store"})
+
+    @application.delete("/rostros/{rostro_id}")
+    async def eliminar_rostro(rostro_id: int):
+        resultado = await _ejecutar(servicio.eliminar, rostro_id, datos)
+        if isinstance(resultado, JSONResponse):
+            return resultado
+        return JSONResponse(resultado, headers={"Cache-Control": "no-store"})
+
+    @application.get("/rostros/{rostro_id}/foto")
+    def foto_rostro(rostro_id: int):
+        try:
+            archivo = servicio.foto_rostro(rostro_id, datos)
+        except MotorNoDisponible:
+            return _error(503, "motor_no_disponible", "el motor no esta disponible")
+        except MotorError:
+            return _error(502, "error_motor", "no se pudo consultar la foto")
+        return FileResponse(
+            archivo, headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
+        )
 
     @application.get("/personas/{persona_id}/foto")
     def foto_persona(persona_id: int):
@@ -75,6 +106,27 @@ def create_app(
         )
 
     return application
+
+
+async def _ejecutar(funcion: Callable, *argumentos):
+    """Corre ``funcion`` fuera del bucle y traduce sus errores a respuestas."""
+
+    try:
+        return await run_in_threadpool(funcion, *argumentos)
+    except ErrorRegistro as error:
+        return _error(error.status, error.codigo, error.mensaje)
+    except EmptyObjectError as error:
+        return _error(422, "sin_rostro", str(error))
+    except FeatureExtractionError as error:
+        return _error(422, "imagen_invalida", str(error))
+    except ModeloNoDisponible as error:
+        return _error(503, "modelo_no_disponible", str(error))
+    except MotorNoDisponible:
+        return _error(
+            503, "motor_no_disponible", "levanta la API de QuipuDB en el puerto configurado"
+        )
+    except MotorError:
+        return _error(502, "error_motor", "QuipuDB rechazo la consulta; revisa el esquema de Rikuq")
 
 
 def _error(status: int, codigo: str, mensaje: str) -> JSONResponse:
