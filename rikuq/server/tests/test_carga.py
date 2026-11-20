@@ -58,14 +58,14 @@ class _PipelineFalso:
         if nombre in self.sin_rostro:
             raise EmptyObjectError(f"no hay ningun rostro en {nombre}")
         valor = (len(self.vistas) % 10) / 10
-        return (np.full(128, valor, dtype=np.float32),)
+        return np.full(128, valor, dtype=np.float32)
 
 
 @pytest.fixture
 def pipeline(monkeypatch: pytest.MonkeyPatch):
     def instalar(sin_rostro: set[str] | None = None) -> _PipelineFalso:
         falso = _PipelineFalso(sin_rostro)
-        monkeypatch.setattr("app.carga.dataset.vectores_de", falso)
+        monkeypatch.setattr("app.carga.dataset.vector_del_sujeto", falso)
         return falso
 
     return instalar

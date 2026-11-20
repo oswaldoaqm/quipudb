@@ -79,8 +79,8 @@ def motor_falso(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(ClienteMotor, "desde", desde)
     monkeypatch.setattr(
-        "app.carga.dataset.vectores_de",
-        lambda *_: (np.full(DIMENSIONES, 0.5, dtype=np.float32),),
+        "app.carga.dataset.vector_del_sujeto",
+        lambda *_: np.full(DIMENSIONES, 0.5, dtype=np.float32),
     )
     monkeypatch.setattr("app.carga.dataset.crear_detector", lambda *_, **__: object())
     monkeypatch.setattr("app.carga.dataset.crear_descriptor", lambda *_, **__: object())
@@ -138,8 +138,8 @@ def test_main_rehacer_borra_las_tablas_que_si_estan(
 
     monkeypatch.setattr(ClienteMotor, "desde", desde)
     monkeypatch.setattr(
-        "app.carga.dataset.vectores_de",
-        lambda *_: (np.full(DIMENSIONES, 0.5, dtype=np.float32),),
+        "app.carga.dataset.vector_del_sujeto",
+        lambda *_: np.full(DIMENSIONES, 0.5, dtype=np.float32),
     )
     monkeypatch.setattr("app.carga.dataset.crear_detector", lambda *_, **__: object())
     monkeypatch.setattr("app.carga.dataset.crear_descriptor", lambda *_, **__: object())
@@ -169,8 +169,8 @@ def test_main_no_recrea_un_esquema_que_ya_esta(
 
     monkeypatch.setattr(ClienteMotor, "desde", desde)
     monkeypatch.setattr(
-        "app.carga.dataset.vectores_de",
-        lambda *_: (np.full(DIMENSIONES, 0.5, dtype=np.float32),),
+        "app.carga.dataset.vector_del_sujeto",
+        lambda *_: np.full(DIMENSIONES, 0.5, dtype=np.float32),
     )
     monkeypatch.setattr("app.carga.dataset.crear_detector", lambda *_, **__: object())
     monkeypatch.setattr("app.carga.dataset.crear_descriptor", lambda *_, **__: object())
@@ -211,8 +211,8 @@ def test_ida_y_vuelta_contra_el_motor(
     assert Settings.del_entorno().quipudb_api_url == motor_aislado
 
     monkeypatch.setattr(
-        "app.carga.dataset.vectores_de",
-        lambda *_: (np.full(DIMENSIONES, 0.5, dtype=np.float32),),
+        "app.carga.dataset.vector_del_sujeto",
+        lambda *_: np.full(DIMENSIONES, 0.5, dtype=np.float32),
     )
     monkeypatch.setattr("app.carga.dataset.crear_detector", lambda *_, **__: object())
     monkeypatch.setattr("app.carga.dataset.crear_descriptor", lambda *_, **__: object())
@@ -237,8 +237,8 @@ def test_el_indice_hnsw_queda_en_el_catalogo(
 ) -> None:
     assert Settings.del_entorno().quipudb_api_url == motor_aislado
     monkeypatch.setattr(
-        "app.carga.dataset.vectores_de",
-        lambda *_: (np.full(DIMENSIONES, 0.5, dtype=np.float32),),
+        "app.carga.dataset.vector_del_sujeto",
+        lambda *_: np.full(DIMENSIONES, 0.5, dtype=np.float32),
     )
     monkeypatch.setattr("app.carga.dataset.crear_detector", lambda *_, **__: object())
     monkeypatch.setattr("app.carga.dataset.crear_descriptor", lambda *_, **__: object())
