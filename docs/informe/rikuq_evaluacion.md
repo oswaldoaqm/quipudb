@@ -61,7 +61,9 @@ intrusos.
 
 - Son de **LFW**, fotos de prensa bien iluminadas y frontales, y con un sesgo
   conocido hacia rostros de hombres blancos. La precision sobre las fotos del
-  equipo, tomadas con un celular, puede ser distinta.
+  equipo, tomadas con un celular, puede ser distinta. **Lo era**: probar con
+  fotos reales del equipo destapo tres fallos que estas cifras no veian, y
+  estan medidos en [rikuq_robustez.md](rikuq_robustez.md).
 - Son de **una maquina**, sin nadie mas consultando. No dicen como se comporta
   con varios usuarios a la vez.
 - La busqueda usa **HNSW**, que es aproximado: con Recall@10 de 0.99 puede
