@@ -66,7 +66,15 @@ CI tiene un job independiente con Ruff, pytest, npm test y build. La API se
 prueba con pipeline inyectable, sin modelos. Las pruebas reales de LFW/ONNX
 declaran sus recursos faltantes como omisiones; no cuentan como ejecutadas.
 
-Faltan la validación manual con navegador/cámara física, capturas y el video
-real con caso Desconocido de #312. No se sustituyen por imágenes o resultados
-simulados. Instrucciones y lista de comprobación en
-[rikuq/README.md](../../rikuq/README.md).
+La validación manual con navegador y cámara física **ya se hizo**, con fotos
+reales del equipo, y destapó tres fallos que las cifras de LFW no veían:
+caras giradas que no se reconocían, acompañantes guardados bajo el nombre del
+sujeto y un `ms_total` que medía la subida del navegador en vez del servidor.
+Los tres están corregidos y medidos antes y después en
+[rikuq_robustez.md](rikuq_robustez.md), que amplía el aviso de
+[rikuq_evaluacion.md](rikuq_evaluacion.md) sobre el límite de medir solo con
+fotos de prensa.
+
+Faltan las capturas y el video real con caso Desconocido de #312. No se
+sustituyen por imágenes o resultados simulados. Instrucciones y lista de
+comprobación en [rikuq/README.md](../../rikuq/README.md).
