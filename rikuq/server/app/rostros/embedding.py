@@ -40,7 +40,12 @@ import cv2
 import numpy as np
 
 from app.rostros.constantes import DIMENSIONES
-from app.rostros.deteccion import LADO_ALINEADO, alinear, crear_detector, detectar
+from app.rostros.deteccion import (
+    LADO_ALINEADO,
+    alinear,
+    crear_detector,
+    detectar_orientado,
+)
 from app.rostros.errores import EmptyObjectError
 from app.rostros.lectura import leer_color
 from app.rostros.modelos import ARCFACE, MODELOS, traer
@@ -101,11 +106,28 @@ def vectores_de(
     """Lee la imagen y devuelve un vector por cada rostro que haya."""
 
     archivo = Path(ruta)
-    imagen = leer_color(archivo)
+    hallazgo = detectar_orientado(leer_color(archivo), detector, ruta=archivo)
     return tuple(
-        describir(alinear(imagen, rostro), descriptor)
-        for rostro in detectar(imagen, detector, ruta=archivo)
+        describir(alinear(hallazgo.imagen, rostro), descriptor) for rostro in hallazgo.rostros
     )
+
+
+def vector_del_sujeto(
+    ruta: str | Path,
+    detector: cv2.FaceDetectorYN,
+    descriptor: cv2.dnn.Net,
+) -> np.ndarray:
+    """El vector de la persona que la foto retrata, y solo esa.
+
+    Para cargar un dataset, donde cada archivo viene con **un** nombre en el
+    manifiesto: si la foto trae acompanantes, hay que quedarse con el sujeto y
+    no con quien el detector vea mejor. La eleccion la explica
+    ``DeteccionOrientada.sujeto``.
+    """
+
+    archivo = Path(ruta)
+    hallazgo = detectar_orientado(leer_color(archivo), detector, ruta=archivo)
+    return describir(alinear(hallazgo.imagen, hallazgo.sujeto), descriptor)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -154,6 +176,7 @@ __all__ = [
     "describir",
     "distancia",
     "main",
+    "vector_del_sujeto",
     "vectores_de",
 ]
 
