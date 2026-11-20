@@ -127,8 +127,10 @@ npm ci
 npm run dev
 ```
 
-Abre <http://127.0.0.1:5175>. Vite envía /api al servidor local en 8002;
-los puertos de los otros frontends quedan libres.
+Abre <http://127.0.0.1:5175> (o <http://localhost:5175>: Vite escucha en
+la IP y el navegador la prueba si `localhost` no responde por IPv6). Vite
+envía /api al servidor local en 8002; los puertos de los otros frontends
+quedan libres.
 
 ## Variables
 
