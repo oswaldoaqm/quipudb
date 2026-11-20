@@ -11,7 +11,7 @@ Las decisiones de diseño están en el
 web (React, :5174)  ──►  server (FastAPI, :8001)  ──►  Gemini
                                    │
                                    ▼
-                     API de QuipuDB (engine/api, :8000)
+                     API de QuipuDB (engine/api, :8003)
 ```
 
 La aplicación solo habla con el motor por su API REST: el servidor no importa
@@ -22,10 +22,19 @@ La aplicación solo habla con el motor por su API REST: el servidor no importa
 Son tres procesos, cada uno en su terminal.
 
 **1. El motor**, desde la raíz del repositorio, con el módulo nativo compilado
-(ver el README principal):
+(ver el README principal). Quipucamayoc tiene su propio motor en el 8003, con
+su propio catálogo, para no chocar con el motor general del 8000 ni con el de
+Rikuq; la tabla de todos los puertos está en [docs/puertos.md](../docs/puertos.md):
 
 ```bash
-uvicorn engine.api.main:app --port 8000
+QUIPUDB_CATALOG=datos/quipucamayoc/catalogo.txt uvicorn engine.api.main:app --host 127.0.0.1 --port 8003
+```
+
+En PowerShell:
+
+```powershell
+$env:QUIPUDB_CATALOG = "datos/quipucamayoc/catalogo.txt"
+uvicorn engine.api.main:app --host 127.0.0.1 --port 8003
 ```
 
 **2. El servidor**, desde `quipucamayoc/server`:
@@ -109,7 +118,7 @@ variables:
 
 | Variable | Para qué |
 |---|---|
-| `QUIPUDB_API_URL` | URL del API del motor (`http://127.0.0.1:8000`; con `localhost`, Windows prueba IPv6 primero y cada petición tarda ~0,8 s más) |
+| `QUIPUDB_API_URL` | URL del API del motor (`http://127.0.0.1:8003`; con `localhost`, Windows prueba IPv6 primero y cada petición tarda ~0,8 s más) |
 | `QUIPUDB_TIMEOUT_S` | Segundos antes de dar al motor por caído |
 | `GEMINI_API_KEY` | Clave de Gemini. Solo la lee el servidor; nunca llega al navegador ni a los logs |
 | `GEMINI_MODEL` | Modelo que responde (`gemini-3.5-flash`). Los 3.7 y 3.8 estaban saturados (503) al medirlo; Google ya no da `gemini-2.5-flash` a cuentas nuevas |

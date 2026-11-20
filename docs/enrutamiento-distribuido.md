@@ -142,7 +142,7 @@ Con los dos nodos y el coordinador levantados como indica
 [Coordinador y comunicación entre nodos](coordinador-distribuido.md):
 
 ```bash
-q() { curl -s localhost:8000/query -H 'Content-Type: application/json' -d "{\"sql\":\"$1\"}"; echo; }
+q() { curl -s localhost:8010/query -H 'Content-Type: application/json' -d "{\"sql\":\"$1\"}"; echo; }
 q "INSERT INTO items VALUES (9999, 'frontera')"
 q "INSERT INTO items VALUES (10000, 'quipu')"
 q "SELECT nombre, id FROM items ORDER BY id DESC LIMIT 2"

@@ -1877,7 +1877,7 @@ quipucamayoc/web (React, :5174)
 quipucamayoc/server (FastAPI, :8001) ──► Gemini
    │  POST /query · GET /tables · POST /tables/{tabla}/load
    ▼
-engine/api (:8000) ──► core
+engine/api (:8003, catálogo propio) ──► core
 ```
 
 ### Las tablas
