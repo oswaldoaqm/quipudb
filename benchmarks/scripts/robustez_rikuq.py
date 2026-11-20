@@ -42,6 +42,7 @@ import csv
 import json
 import random
 import sys
+import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -241,8 +242,11 @@ def _describir_vector(imagen: np.ndarray, detector, descriptor, orientar: bool):
 
     try:
         if orientar:
+            # Las dos piezas del pipeline de hoy: probar giros y quedarse con
+            # el sujeto. `--sin-orientar` reproduce lo de antes, que no hacia
+            # ninguna de las dos y tomaba el rostro mas confiable tal cual.
             hallazgo = detectar_orientado(imagen, detector)
-            return describir(alinear(hallazgo.imagen, hallazgo.rostros[0]), descriptor)
+            return describir(alinear(hallazgo.imagen, hallazgo.sujeto), descriptor)
         rostros = detectar(imagen, detector)
     except EmptyObjectError:
         return None
@@ -257,6 +261,21 @@ def fotos_base(identidades: int) -> list[Path]:
     carpetas = sorted(p for p in LFW.iterdir() if p.is_dir() and any(p.glob("*.jpg")))
     random.Random(SEMILLA).shuffle(carpetas)
     return [min(carpeta.glob("*.jpg")) for carpeta in carpetas[:identidades]]
+
+
+def parejas(identidades: int) -> list[tuple[str, Path, Path]]:
+    """Dos fotos por identidad: una entra a la base y otra consulta.
+
+    Hacen falta dos distintas. Consultar con la misma foto que se cargo da
+    distancia cero y el experimento diria que todo funciona.
+    """
+
+    if not LFW.is_dir():
+        raise SystemExit(f"falta LFW en {LFW}: corre `python -m app.dataset.lfw descargar`")
+    carpetas = [p for p in sorted(LFW.iterdir()) if p.is_dir() and len(list(p.glob("*.jpg"))) >= 2]
+    random.Random(SEMILLA).shuffle(carpetas)
+    elegidas = carpetas[:identidades]
+    return [(p.name, *sorted(p.glob("*.jpg"))[:2]) for p in elegidas]
 
 
 def paso_medir(identidades: int, orientar: bool) -> Path:
@@ -371,6 +390,167 @@ def paso_tabla() -> int:
     return 0
 
 
+# --- dispersion ---------------------------------------------------------------
+
+
+def resumen_dispersion(propias: np.ndarray, impostor: np.ndarray, umbral: float) -> dict:
+    """Los numeros de la dispersion, separados de como se imprimen.
+
+    `fallos_en_el_peor_decil` es el que importa: si el error se repartiera
+    parejo, el decil mas dificil tendria una decima parte de los fallos.
+    """
+
+    orden = np.argsort(propias)
+    decil = max(1, len(propias) // 10)
+    peor, mejor = propias[orden[-decil:]], propias[orden[:decil]]
+    fallan = propias > umbral
+    return {
+        "identidades": len(propias),
+        "mediana": float(np.median(propias)),
+        "decil_9": float(np.percentile(propias, 90)),
+        "maximo": float(propias.max()),
+        "fallos": int(fallan.sum()),
+        "media_decil_facil": float(mejor.mean()),
+        "media_decil_dificil": float(peor.mean()),
+        "fallos_en_el_peor_decil": int((peor > umbral).sum()),
+        "impostor_mas_cercano": float(impostor.min()),
+        "expuestas": int((impostor < umbral).sum()),
+    }
+
+
+def paso_dispersion(identidades: int, orientar: bool) -> int:
+    """DIV-019: si el reconocimiento acierta parejo con todas las personas.
+
+    La pregunta original era comparar precision por tono de piel y por edad.
+    LFW no trae esas etiquetas, asi que agruparlas seria inventarselas. Lo que
+    si se puede medir sin etiquetar a nadie es la dispersion: si los fallos se
+    reparten o se concentran en unas pocas identidades.
+    """
+
+    _preparar_importaciones()
+    from app.consulta.identificar import UMBRAL_POR_DEFECTO
+    from app.rostros.deteccion import crear_detector
+    from app.rostros.embedding import crear_descriptor
+    from app.rostros.lectura import leer_color
+
+    detector, descriptor = crear_detector(), crear_descriptor()
+    nombres, base, consulta = [], [], []
+    for nombre, una, otra in parejas(identidades):
+        a = _describir_vector(leer_color(una), detector, descriptor, orientar)
+        b = _describir_vector(leer_color(otra), detector, descriptor, orientar)
+        if a is None or b is None:
+            continue
+        nombres.append(nombre)
+        base.append(a)
+        consulta.append(b)
+        if len(nombres) % 100 == 0:
+            print(f"  {len(nombres)} identidades...", flush=True)
+
+    base, consulta = np.array(base), np.array(consulta)
+    propias = 1.0 - np.einsum("ij,ij->i", base, consulta)
+    cruzadas = 1.0 - base @ base.T
+    np.fill_diagonal(cruzadas, np.inf)
+    datos = resumen_dispersion(propias, cruzadas.min(axis=1), UMBRAL_POR_DEFECTO)
+
+    print(f"\nidentidades: {datos['identidades']}")
+    print(
+        f"distancia propia: mediana {datos['mediana']:.3f}, "
+        f"decil 9 {datos['decil_9']:.3f}, maximo {datos['maximo']:.3f}"
+    )
+    print(
+        f"no se reconocen a si mismas: {datos['fallos']} "
+        f"({datos['fallos'] / datos['identidades'] * 100:.1f}%)"
+    )
+    print(
+        f"decil mas facil {datos['media_decil_facil']:.3f} contra "
+        f"decil mas dificil {datos['media_decil_dificil']:.3f} "
+        f"({datos['media_decil_dificil'] / datos['media_decil_facil']:.1f}x)"
+    )
+    print(
+        f"el peor decil concentra {datos['fallos_en_el_peor_decil']} de los "
+        f"{datos['fallos']} fallos"
+    )
+    print(
+        f"impostor mas cercano {datos['impostor_mas_cercano']:.3f}; "
+        f"identidades con un impostor dentro del umbral: {datos['expuestas']}"
+    )
+
+    RESULTADOS.mkdir(parents=True, exist_ok=True)
+    sello = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    sufijo = "orientado" if orientar else "sin_orientar"
+    destino = RESULTADOS / f"{sello}_rikuq_dispersion_{sufijo}.json"
+    destino.write_text(json.dumps(datos, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"\n{destino}")
+    return 0
+
+
+# --- escala ---------------------------------------------------------------------
+
+
+def paso_escala(identidades: int, motor: str, tamanos: tuple[int, ...]) -> int:
+    """REC-009: si HNSW aguanta cuando la base crece.
+
+    Necesita un motor **aparte**, con su propio catalogo, porque carga miles
+    de rostros y borrarlos despues no es cosa de un benchmark. Desde la raiz::
+
+        QUIPUDB_CATALOG=datos/escala/catalogo.txt python -m uvicorn \\
+            engine.api.main:app --host 127.0.0.1 --port 8005
+    """
+
+    _preparar_importaciones()
+    from app.carga.dataset import crear_esquema, insertar_persona, insertar_rostro
+    from app.consulta.identificar import identificar
+    from app.motor import ClienteMotor
+    from app.rostros.deteccion import crear_detector
+    from app.rostros.embedding import crear_descriptor
+    from app.rostros.lectura import leer_color
+
+    detector, descriptor = crear_detector(), crear_descriptor()
+    base, consulta = [], []
+    for nombre, una, otra in parejas(identidades):
+        a = _describir_vector(leer_color(una), detector, descriptor, True)
+        b = _describir_vector(leer_color(otra), detector, descriptor, True)
+        if a is None or b is None:
+            continue
+        base.append((nombre, a))
+        consulta.append((nombre, b))
+        if len(base) % 250 == 0:
+            print(f"  vectores de {len(base)} identidades...", flush=True)
+    print(f"identidades usables: {len(base)}\n", flush=True)
+
+    cliente = ClienteMotor(motor, 120)
+    crear_esquema(cliente)
+    print(f"{'rostros':>8} {'consultas':>10} {'precision':>10} {'ms p50':>8} {'p95':>8}")
+    print("-" * 48)
+    cargados = 0
+    for tamano in tamanos:
+        if tamano > len(base):
+            print(f"  (se omite {tamano}: solo hay {len(base)} identidades con dos fotos)")
+            continue
+        # Los tamanos son anidados: solo se agrega lo que falta.
+        for pid in range(cargados + 1, tamano + 1):
+            nombre, vector = base[pid - 1]
+            cliente.query(insertar_persona(pid, nombre, "lfw", 1))
+            cliente.query(insertar_rostro(pid, pid, f"base/{pid}.jpg", vector))
+        cargados = tamano
+
+        muestra = random.Random(SEMILLA).sample(range(tamano), min(120, tamano))
+        aciertos, tiempos = [], []
+        for i in muestra:
+            nombre, vector = consulta[i]
+            marca = time.perf_counter()
+            respuesta = identificar(cliente, vector)
+            tiempos.append((time.perf_counter() - marca) * 1000)
+            aciertos.append(respuesta.persona == nombre)
+        orden = sorted(tiempos)
+        print(
+            f"{tamano:8d} {len(muestra):10d} {sum(aciertos) / len(muestra) * 100:9.1f}% "
+            f"{orden[len(orden) // 2]:7.2f} {orden[int(len(orden) * 0.95) - 1]:8.2f}",
+            flush=True,
+        )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
     sub = parser.add_subparsers(dest="paso", required=True)
@@ -385,10 +565,29 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("tabla", help="imprime la ultima medicion como tabla markdown")
 
+    dispersion = sub.add_parser(
+        "dispersion", help="si los fallos se reparten o se concentran en pocas identidades"
+    )
+    dispersion.add_argument("--identidades", type=int, default=400)
+    dispersion.add_argument(
+        "--sin-orientar",
+        action="store_true",
+        help="el pipeline de antes: sin probar giros y con el rostro mas confiable",
+    )
+
+    escala = sub.add_parser("escala", help="precision y latencia cuando la base crece")
+    escala.add_argument("--identidades", type=int, default=1680)
+    escala.add_argument("--motor", default="http://127.0.0.1:8005")
+    escala.add_argument("--tamanos", type=int, nargs="+", default=[250, 1000])
+
     args = parser.parse_args(argv)
     if args.paso == "medir":
         paso_medir(args.identidades, orientar=not args.sin_orientar)
         return 0
+    if args.paso == "dispersion":
+        return paso_dispersion(args.identidades, orientar=not args.sin_orientar)
+    if args.paso == "escala":
+        return paso_escala(args.identidades, args.motor, tuple(args.tamanos))
     return paso_tabla()
 
 
