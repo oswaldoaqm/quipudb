@@ -97,3 +97,14 @@ podría moverse; el comando está para volver a correrlo. Y LFW son fotos de
 prensa, bien iluminadas y sesgadas hacia rostros de hombres blancos: las del
 equipo, tomadas con un celular en un salón, pueden necesitar un umbral
 distinto. Conviene rehacer la medición cuando estén cargadas.
+
+**Las fotos del barrido están derechas y de frente.** LFW las recorta así por
+construcción, de modo que el 0.55 está medido sobre el caso fácil de la
+geometría. Las degradaciones que una foto real sí trae —giro, movimiento,
+oclusión, poca resolución— mueven el vector lo suficiente para comerse el
+margen: con la cara girada 60° la distancia pasa de 0.17 a 0.84, y con un
+barrido de 25 px solo el 5% se sigue reconociendo. El umbral no cambia por
+eso, pero lo que se puede afirmar de él sí: vale **para fotos derechas y
+nítidas**, y fuera de ahí el límite lo pone la calidad de la imagen, no la
+curva. Está medido en
+[docs/informe/rikuq_robustez.md](informe/rikuq_robustez.md).
