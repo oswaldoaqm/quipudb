@@ -30,7 +30,15 @@ la imagen original), `ancho`, `alto`, `umbral` y `rostros`. Este ultimo contiene
 identificacion y una caja por rostro. Los campos principales describen el
 primer rostro, salvo `ms_motor`, que suma las busquedas vectoriales.
 
-- Desconocido: `persona`, `persona_id` y `foto` son null; confianza es cero.
+- `coincidencias` (#344, aditivo): las fotos de la persona identificada que
+  estan entre los 5 rostros mas cercanos (`VECINOS`) y dentro del umbral, de
+  la mas parecida a la menos: `[{rostro_id, foto, distancia}]`, con `foto` en
+  `/rostros/{id}/foto`. Sin esto, una persona con dos fotos registradas
+  mostraba una sola. `foto` sigue siendo `/personas/{id}/foto`, que toma
+  cualquier foto de la persona; la interfaz usa la primera coincidencia como
+  foto principal. Como se piden 5 vecinos, a lo sumo hay 5.
+- Desconocido: `persona`, `persona_id` y `foto` son null, `coincidencias` es
+  `[]`; confianza es cero.
 - Base vacia: distancia es null, no Infinity. No se inventa una identidad.
 - Confianza es el margen normalizado al umbral 0.55, **no una probabilidad**.
 - `umbral` informa el limite usado para identificar todos los rostros de la

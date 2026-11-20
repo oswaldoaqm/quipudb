@@ -18,6 +18,17 @@ export interface Rostro {
   ms_motor: number;
   /** Aviso opcional del servidor sobre rostros pequenos. */
   fiable?: boolean;
+  /**
+   * Las fotos de la persona identificada que tambien pasan el umbral, de la
+   * mas parecida a la menos (#344). Aditivo: un servidor anterior no lo envia.
+   */
+  coincidencias?: Coincidencia[];
+}
+
+export interface Coincidencia {
+  rostro_id: number;
+  foto: string;
+  distancia: number;
 }
 
 export interface Identificacion extends Rostro {

@@ -13,7 +13,7 @@ from fastapi import HTTPException
 
 from app import registro
 from app.config import Settings
-from app.consulta.identificar import UMBRAL_POR_DEFECTO, identificar
+from app.consulta.identificar import UMBRAL_POR_DEFECTO, Identificacion, identificar
 from app.motor import ClienteMotor
 from app.pipeline import Pipeline
 from app.rostros.errores import EmptyObjectError
@@ -56,6 +56,7 @@ class Servicio:
                             "caja": list(rostro.caja),
                             "fiable": rostro.fiable,
                             "ms_motor": respuesta.ms_motor,
+                            "coincidencias": coincidencias(respuesta),
                         }
                     )
             return {
@@ -105,6 +106,29 @@ class Servicio:
         if not filas:
             raise HTTPException(404, "no hay una foto de referencia para esta persona")
         return _archivo_seguro(str(filas[0]["ruta"]), raiz)
+
+
+def coincidencias(respuesta: Identificacion) -> list[dict]:
+    """Las fotos de la persona identificada que tambien pasan el umbral (#344).
+
+    ``identificar`` ya trae los ``VECINOS`` rostros mas cercanos; sin esto solo
+    se veia el mejor, y una persona con dos fotos registradas parecia tener
+    una. Salen de la mas parecida a la menos. Un desconocido no expone
+    ninguna, igual que no expone la foto de referencia.
+    """
+
+    if not respuesta.conocido:
+        return []
+    persona_id = respuesta.candidatos[0].persona_id
+    return [
+        {
+            "rostro_id": candidato.rostro_id,
+            "foto": f"/rostros/{candidato.rostro_id}/foto",
+            "distancia": candidato.distancia,
+        }
+        for candidato in respuesta.candidatos
+        if candidato.persona_id == persona_id and candidato.distancia <= UMBRAL_POR_DEFECTO
+    ]
 
 
 def _archivo_seguro(texto: str, raiz: Path) -> Path:
