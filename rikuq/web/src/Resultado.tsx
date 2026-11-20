@@ -29,11 +29,15 @@ export function Resultado({ resultado, analizando = false, vivo = false }: {
       <div className="result-legend"><span><i className="legend-dot positive" />Coincidencia aceptada</span><span><i className="legend-dot neutral" />Desconocido</span></div>
       <p className="empty-note">Si no hay una coincidencia dentro del umbral, el rostro se muestra como Desconocido.</p>
     </div> : <>
-      {resultado.rostros.map((r, i) => <article className="identity" key={i}>
-        {r.persona && r.foto && <Foto ruta={r.foto} nombre={r.persona} />}
+      {resultado.rostros.map((r, i) => {
+        // En vivo no: con tres cuadros por segundo las fotos se recargarian sin parar.
+        const fotos = !vivo && r.persona ? r.coincidencias ?? [] : [];
+        const principal = fotos[0]?.foto ?? r.foto;
+        return <article className="identity" key={i}>
+        {r.persona && principal && <Foto ruta={principal} nombre={r.persona} />}
         <div><span className={`badge ${r.persona ? "positive" : "neutral"}`}>{r.persona ? "Coincidencia" : "Sin coincidencia"}</span>
           <h2>{r.persona || "Desconocido"}</h2>
-          <p>{r.persona ? "Foto de referencia registrada" : r.distancia === null ? "No hay referencias disponibles para comparar." : "La referencia más cercana no pasa el umbral de aceptación."}</p>
+          <p>{r.persona ? fotos.length > 1 ? `${fotos.length} fotos de referencia coinciden` : "Foto de referencia registrada" : r.distancia === null ? "No hay referencias disponibles para comparar." : "La referencia más cercana no pasa el umbral de aceptación."}</p>
         </div>
         <dl className="metrics"><div><dt>Distancia coseno ↓</dt><dd>{r.distancia?.toFixed(4) ?? "Sin candidatos"}</dd></div>
           <div><dt>Margen al umbral</dt><dd>{r.persona ? `${(r.confianza * 100).toFixed(1)} %` : "No aplica"}</dd></div></dl>
@@ -42,7 +46,16 @@ export function Resultado({ resultado, analizando = false, vivo = false }: {
         <p className="metric-explanation">El margen mide la separación respecto al límite de aceptación. <strong>No es una probabilidad ni un porcentaje de acierto.</strong></p>
         {r.fiable === false && <p className="quality-warning">Rostro pequeño: acércate a la cámara o usa una imagen de mayor resolución para una comparación más fiable.</p>}
         {!r.persona && <p>{r.distancia === null ? "Sin candidatos para comparar." : "No hay una coincidencia aceptada; el margen no aplica."}</p>}
-      </article>)}
+        {fotos.length > 1 && <div className="matches">
+          <h3>Fotos de {r.persona} que coinciden ({fotos.length})</h3>
+          <ul>{fotos.map(c => <li key={c.rostro_id}>
+            <Foto ruta={c.foto} nombre={r.persona ?? ""} clase="match-photo" />
+            <span>Distancia {c.distancia.toFixed(4)}</span>
+          </li>)}</ul>
+          <p>Entre los rostros más parecidos de la base, las que están dentro del umbral, de la más parecida a la menos.</p>
+        </div>}
+      </article>;
+      })}
       <div className="timings"><h3><Icon name="clock" />Tiempos del análisis</h3>
         <dl className="metrics"><div><dt>Búsqueda · HTTP motor</dt><dd>{resultado.ms_motor.toFixed(2)} <small>ms</small></dd></div>
           <div><dt>Servidor · total</dt><dd>{resultado.ms_total.toFixed(2)} <small>ms</small></dd></div></dl>
@@ -52,9 +65,9 @@ export function Resultado({ resultado, analizando = false, vivo = false }: {
   </aside>;
 }
 
-function Foto({ ruta, nombre }: { ruta: string; nombre: string }) {
+function Foto({ ruta, nombre, clase = "reference" }: { ruta: string; nombre: string; clase?: string }) {
   const [fallo, setFallo] = useState(false);
   useEffect(() => { setFallo(false); }, [ruta]);
   return fallo ? <p>Foto de referencia no disponible en esta máquina.</p>
-    : <img className="reference" src={fotoUrl(ruta)} alt={`Foto registrada de ${nombre}`} width="80" height="96" onError={() => setFallo(true)} />;
+    : <img className={clase} src={fotoUrl(ruta)} alt={`Foto registrada de ${nombre}`} width="80" height="96" onError={() => setFallo(true)} />;
 }

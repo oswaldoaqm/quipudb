@@ -199,3 +199,45 @@ test("fotos registradas carga sin pedir el permiso: retirar una foto siempre se 
   assert.match(html, /Cargando fotos/);
   assert.match(html, /no se borran desde aquí/);
 });
+
+// --- Todas las fotos de la persona que coinciden (#344) ------------------------
+
+const dos = [
+  { rostro_id: 201, foto: "/rostros/201/foto", distancia: 0.3 },
+  { rostro_id: 202, foto: "/rostros/202/foto", distancia: 0.4 },
+];
+
+test("con dos fotos que coinciden se ven las dos y la mejor es la principal", () => {
+  const html = render(resultado({ persona: "Colin_Powell", foto: "/personas/10/foto", coincidencias: dos }));
+  assert.match(html, /Fotos de Colin_Powell que coinciden \(2\)/);
+  assert.match(html, /2 fotos de referencia coinciden/);
+  assert.match(html, /class="reference" src="\/api\/rostros\/201\/foto"/);
+  assert.match(html, /class="match-photo" src="\/api\/rostros\/201\/foto"/);
+  assert.match(html, /class="match-photo" src="\/api\/rostros\/202\/foto"/);
+  assert.match(html, /Distancia 0\.4000/);
+  assert.doesNotMatch(html, /personas\/10\/foto/);
+});
+
+test("con una sola coincidencia no repite la foto en una galeria", () => {
+  const html = render(resultado({ persona: "Colin_Powell", foto: "/personas/10/foto", coincidencias: dos.slice(0, 1) }));
+  assert.match(html, /class="reference" src="\/api\/rostros\/201\/foto"/);
+  assert.doesNotMatch(html, /que coinciden/);
+});
+
+test("un servidor anterior sin coincidencias sigue mostrando su foto de referencia", () => {
+  const html = render(resultado({ persona: "Colin_Powell", foto: "/personas/10/foto" }));
+  assert.match(html, /src="\/api\/personas\/10\/foto"/);
+  assert.match(html, /Foto de referencia registrada/);
+});
+
+test("la camara en vivo no muestra la galeria de coincidencias", () => {
+  const datos = resultado({ persona: "Colin_Powell", foto: "/personas/10/foto", coincidencias: dos });
+  const html = renderToStaticMarkup(createElement(Resultado, { resultado: datos, vivo: true }));
+  assert.doesNotMatch(html, /que coinciden/);
+  assert.doesNotMatch(html, /rostros\/202/);
+});
+
+test("un desconocido no muestra coincidencias aunque la respuesta las traiga", () => {
+  const html = render(resultado({ persona: null, persona_id: null, distancia: 0.9, coincidencias: dos }));
+  assert.doesNotMatch(html, /<img/);
+});
