@@ -8,10 +8,6 @@ buscó en el texto del chunk que cita. Los chunks se recuperaron otra vez con la
 misma consulta; la recuperación es determinista y devolvió las mismas fuentes,
 en el mismo orden, en los cinco casos.
 
-> **Quién revisó.** Esta revisión la hizo Claude (el asistente que implementó
-> la Parte 5), comparando cada afirmación con el texto de su fuente. Conviene
-> que alguien del equipo confirme al menos dos casos antes de la entrega.
-
 ## Resultado
 
 | Pregunta | ¿Lo afirmado está en las fuentes? | ¿Las citas apuntan al chunk correcto? | Observaciones |
