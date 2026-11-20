@@ -89,7 +89,10 @@ test("desconocido no muestra cero por ciento como si fuera una probabilidad", ()
   const html = render(resultado({ persona: null, persona_id: null, distancia: 0.9, confianza: 0 }));
   assert.match(html, /Desconocido/);
   assert.match(html, /No aplica/);
-  assert.doesNotMatch(html, /0\.0 %/);
+  // El margen, y solo el margen: el parecido de un desconocido si es un
+  // numero legitimo (aqui 10.0%), y antes de mostrarlo esta prueba lo
+  // prohibia sin querer, porque "10.0 %" contiene "0.0 %".
+  assert.doesNotMatch(html, /<dt>Margen al umbral<\/dt><dd>0\.0 %/);
 });
 
 test("una base sin candidatos distingue ausencia de comparacion", () => {
@@ -258,4 +261,25 @@ test("un servidor anterior sin los tiempos separados sigue mostrando su total", 
   assert.match(html, /Servidor · proceso/);
   assert.match(html, /10\.00/);
   assert.doesNotMatch(html, /Recepción · subida/);
+});
+
+test("el parecido es la similitud coseno y no el margen al umbral", () => {
+  // Son dos numeros distintos y el enunciado pide el primero: que tan
+  // parecida es la cara a la guardada. Con distancia 0.4141 el parecido es
+  // 58.6% y el margen 24.7%; confundirlos haria ver dudoso un acierto bueno.
+  const html = render(resultado({ distancia: 0.4141, confianza: (0.55 - 0.4141) / 0.55 }));
+  assert.match(html, /Parecido/);
+  assert.match(html, /58\.6 %/);
+  assert.match(html, /24\.7 %/);
+});
+
+test("un desconocido tiene parecido bajo pero el margen no aplica", () => {
+  const html = render(resultado({ persona: null, persona_id: null, distancia: 0.99 }));
+  assert.match(html, /1\.0 %/);
+  assert.match(html, /No aplica/);
+});
+
+test("sin candidatos no se inventa un parecido", () => {
+  const html = render(resultado({ persona: null, persona_id: null, distancia: null }));
+  assert.doesNotMatch(html, /% *<\/dd>/);
 });
