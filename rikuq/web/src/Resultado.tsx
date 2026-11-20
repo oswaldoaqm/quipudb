@@ -39,11 +39,12 @@ export function Resultado({ resultado, analizando = false, vivo = false }: {
           <h2>{r.persona || "Desconocido"}</h2>
           <p>{r.persona ? fotos.length > 1 ? `${fotos.length} fotos de referencia coinciden` : "Foto de referencia registrada" : r.distancia === null ? "No hay referencias disponibles para comparar." : "La referencia más cercana no pasa el umbral de aceptación."}</p>
         </div>
-        <dl className="metrics"><div><dt>Distancia coseno ↓</dt><dd>{r.distancia?.toFixed(4) ?? "Sin candidatos"}</dd></div>
+        <dl className="metrics"><div><dt>Parecido</dt><dd>{r.distancia === null ? "Sin candidatos" : `${((1 - r.distancia) * 100).toFixed(1)} %`}</dd></div>
+          <div><dt>Distancia coseno ↓</dt><dd>{r.distancia?.toFixed(4) ?? "Sin candidatos"}</dd></div>
           <div><dt>Margen al umbral</dt><dd>{r.persona ? `${(r.confianza * 100).toFixed(1)} %` : "No aplica"}</dd></div></dl>
         <p className="threshold-note">{umbral === null ? "Umbral de aceptación no informado por el servidor."
           : <>Umbral de aceptación: <strong>{umbral.toFixed(4)}</strong>. Menor distancia indica mayor parecido.</>}</p>
-        <p className="metric-explanation">El margen mide la separación respecto al límite de aceptación. <strong>No es una probabilidad ni un porcentaje de acierto.</strong></p>
+        <p className="metric-explanation">El <strong>parecido</strong> es la similitud coseno que devuelve el motor: cuánto se parecen las dos caras. Dos fotos distintas de la misma persona rondan el 59%; un desconocido no pasó del 31% en una medición sobre 400 personas, y lo habitual es el 1%. El <strong>margen</strong> mide la separación respecto al límite de aceptación. <strong>No es una probabilidad ni un porcentaje de acierto</strong>, y el parecido tampoco.</p>
         {r.fiable === false && <p className="quality-warning">Rostro pequeño: acércate a la cámara o usa una imagen de mayor resolución para una comparación más fiable.</p>}
         {!r.persona && <p>{r.distancia === null ? "Sin candidatos para comparar." : "No hay una coincidencia aceptada; el margen no aplica."}</p>}
         {fotos.length > 1 && <div className="matches">

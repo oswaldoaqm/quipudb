@@ -46,6 +46,18 @@ primer rostro, salvo `ms_motor`, que suma las busquedas vectoriales.
   respuesta. Es aditivo (#321): un cliente nuevo admite respuestas antiguas
   sin este campo y no supone un valor. `confianza` conserva su nombre y
   formula por compatibilidad; se presenta como **Margen al umbral**.
+- La interfaz muestra ademas el **Parecido**, que es `1 - distancia`: la
+  similitud coseno que devolvio `SIMILARITY_SCORE()` antes de que
+  `distancia_de` la invirtiera. No es un campo nuevo de la API, se deriva de
+  `distancia`. Responde a "que tan parecida es esta cara a la guardada", que
+  es otra pregunta que el margen: para distancia 0.4141 el parecido es 58.6%
+  y el margen 24.7%.
+
+  Un acierto correcto ronda el **59%** de parecido, porque dos fotos
+  distintas de la misma persona nunca coinciden del todo; el 100% solo sale
+  comparando una foto consigo misma. Medido sobre 400 identidades, el
+  desconocido mas parecido llego al 31% y la mediana de los desconocidos es
+  1%. Lo que separa no es la cercania al 100%, es la distancia a ese 31%.
 - Para distancia 0.4363 y umbral 0.55, el margen es
   `(0.55 - 0.4363) / 0.55 = 0.2067`, mostrado como 20.7 %. No expresa una
   probabilidad de acertar la identidad. En el limite una coincidencia puede
