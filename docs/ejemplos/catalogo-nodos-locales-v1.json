@@ -2,8 +2,8 @@
   "protocol_version": 1,
   "catalog_version": 1,
   "nodes": [
-    {"node_id": "n1", "base_url": "http://127.0.0.1:8001"},
-    {"node_id": "n2", "base_url": "http://127.0.0.1:8002"}
+    {"node_id": "n1", "base_url": "http://127.0.0.1:8011"},
+    {"node_id": "n2", "base_url": "http://127.0.0.1:8012"}
   ],
   "tables": [
     {

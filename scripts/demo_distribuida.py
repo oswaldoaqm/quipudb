@@ -4,14 +4,14 @@ Inserta en los dos nodos, busca por id, combina resultados, borra, muestra un
 error y, si levantó el clúster él mismo, apaga n2 para mostrar qué deja de
 funcionar. Imprime cada petición con su respuesta.
 
-Levantando todo en local (n1 en 8001, n2 en 8002, coordinador en 8000)::
+Levantando todo en local (n1 en 8011, n2 en 8012, coordinador en 8010)::
 
     python -m scripts.demo_distribuida --root /tmp/quipudb-demo
 
 Contra un clúster ya levantado, por ejemplo el de docker-compose.distribuido.yml::
 
-    python -m scripts.demo_distribuida --url http://localhost:8000 \\
-        --nodo n1=http://localhost:8001 --nodo n2=http://localhost:8002
+    python -m scripts.demo_distribuida --url http://localhost:8010 \\
+        --nodo n1=http://localhost:8011 --nodo n2=http://localhost:8012
 """
 
 from __future__ import annotations
@@ -185,7 +185,7 @@ def levantar(root: Path) -> dict[str, subprocess.Popen]:
     root.mkdir(parents=True, exist_ok=True)
     comun = ["--catalog", str(CATALOGO), "--catalog-version", "1"]
     procesos = {}
-    for nodo, puerto in (("n1", 8001), ("n2", 8002)):
+    for nodo, puerto in (("n1", 8011), ("n2", 8012)):
         datos = root / nodo
         subprocess.run(
             [sys.executable, "-m", "scripts.preparar_nodo", *comun, "--node-id", nodo,
@@ -206,7 +206,7 @@ def levantar(root: Path) -> dict[str, subprocess.Popen]:
     procesos["coordinador"] = lanzar(
         ["engine.distributed.coordinator", *comun, "--data-dir", str(root / "coordinador")], log
     )
-    esperar("http://127.0.0.1:8000/health", procesos["coordinador"], log)
+    esperar("http://127.0.0.1:8010/health", procesos["coordinador"], log)
     return procesos
 
 
@@ -229,7 +229,7 @@ def main() -> None:
     procesos = levantar(args.root)
     try:
         demo = Demo(
-            "http://127.0.0.1:8000", {"n1": "http://127.0.0.1:8001", "n2": "http://127.0.0.1:8002"}
+            "http://127.0.0.1:8010", {"n1": "http://127.0.0.1:8011", "n2": "http://127.0.0.1:8012"}
         )
         demo.recorrido()
         procesos["n2"].terminate()
