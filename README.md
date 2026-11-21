@@ -1,15 +1,17 @@
 # QuipuDB
 
 Motor de base de datos multimodal escrito desde cero: almacenamiento paginado,
-índices B+ y hash, R-Tree para datos espaciales, búsqueda de texto y búsqueda
-vectorial sobre imágenes y audio.
+índices B+ y hash, R-Tree para datos espaciales, búsqueda de texto con SPIMI,
+TF-IDF y BM25, búsqueda vectorial sobre imágenes y audio con IVF y HNSW, dos
+aplicaciones de IA que lo consumen por su API y un modo distribuido.
 
 El nombre viene del **quipu**, el sistema andino de cuerdas anudadas que los
 incas usaban para registrar y recuperar información: un motor de almacenamiento
 e indexación anterior en siglos al disco duro.
 
 > Proyecto Integrador del curso **Base de Datos 2**, Universidad de Ingeniería y
-> Tecnología (UTEC), ciclo 2026-2. En desarrollo activo.
+> Tecnología (UTEC), ciclo 2026-2. Las cinco partes del enunciado están
+> completas.
 
 ## Contenido
 
@@ -21,6 +23,7 @@ e indexación anterior en siglos al disco duro.
 - [Comparación experimental](#comparación-experimental)
 - [Aplicación: Quipucamayoc](#aplicación-quipucamayoc)
 - [Aplicación: Rikuq](#aplicación-rikuq)
+- [Modo distribuido](#modo-distribuido)
 - [Documentación](#documentación)
 - [Equipo](#equipo)
 
@@ -32,8 +35,9 @@ e indexación anterior en siglos al disco duro.
 | 2 | Base de datos espacial: R-Tree, consultas por radio, k-NN y polígono, métricas euclidiana y Haversine, mapa, SQL espacial y comparación contra PostGIS | **Completa** |
 | 3 | Búsqueda de texto: SPIMI, TF-IDF + coseno, BM25, `MATCH` y `SCORE()` en SQL y comparación contra GIN | **Completa** |
 | 4 | Búsqueda vectorial multimedia: SIFT/MFCC, bolsa de palabras, IVF, HNSW, `SIMILAR_TO` en SQL y experimentos | **Completa** |
-| 5 | [Quipucamayoc](quipucamayoc/README.md): RAG sobre 187 papers de arXiv (opción A), con QuipuDB y Gemini | **Completa**, con la búsqueda opcional por significado e híbrida (#251, #252) |
-| 5 (opción D) | [Rikuq](rikuq/README.md): reconocimiento facial con ArcFace, HNSW, subida y cámara | **En integración**: validación manual, capturas y video pendientes (#312) |
+| 5 (opción A) | [Quipucamayoc](quipucamayoc/README.md): RAG sobre 187 papers de arXiv con QuipuDB y Gemini; búsqueda por palabras, por significado o híbrida | **Completa** |
+| 5 (opción D) | [Rikuq](rikuq/README.md): reconocimiento facial con YuNet, ArcFace y HNSW; subida, cámara, registro de fotos, validación manual y pruebas de robustez | **Completa** |
+| Extra | [Modo distribuido](#modo-distribuido): fragmentación horizontal por rangos, coordinador y dos nodos por HTTP, DDL distribuido | **Completo** |
 
 ## Arquitectura del sistema
 
@@ -45,28 +49,35 @@ habla con la API.
 ```mermaid
 flowchart TB
     FE["frontend/<br/>React + TypeScript · Monaco · Leaflet"]
-    API["engine/api<br/>FastAPI: /query · /tables · /tables/{t}/load"]
+    APPS["quipucamayoc/ · rikuq/<br/>aplicaciones de la Parte 5"]
+    API["engine/api<br/>FastAPI: /query · /tables · carga CSV · ingesta multimedia · vocabularios"]
     subgraph ENG["engine/ · Python"]
         P["parser<br/>lexer · AST · semántica"] --> PL["planner<br/>reglas de acceso"] --> EX["executor<br/>operadores · DML · carga CSV"]
         TX["transactions<br/>undo log · LockManager"]
+        MM["multimedia<br/>SIFT · MFCC · K-Means · TF-IDF"]
     end
     B["bindings/ · pybind11 → quipudb_native"]
     subgraph CORE["core/ · C++20"]
         ST["storage<br/>Page · DiskManager · Heap · Secuencial"]
-        IX["index<br/>B+ · Hash extensible · R-Tree · métricas"]
+        IX["index<br/>B+ · Hash extensible · R-Tree<br/>índice invertido · IVF · HNSW"]
         XT["external<br/>sort · group · join"]
         CT["catalog<br/>Database · tipos · RecordCodec"]
     end
     D[("archivos de páginas<br/>4 KiB")]
     BM["benchmarks/"]
-    FE -- "HTTP + JSON" --> API --> ENG --> B --> CORE --> D
+    FE -- "HTTP + JSON" --> API
+    APPS -- "HTTP + JSON" --> API
+    API --> ENG --> B --> CORE --> D
     BM -. "sin SQL ni HTTP" .-> B
 ```
+
+El [modo distribuido](#modo-distribuido) pone un coordinador delante de varios
+motores como este, cada uno con sus fragmentos.
 
 | Capa | Responsabilidad |
 |---|---|
 | `core/storage` | Páginas de 4 KiB con cabecera de 8 bytes; `DiskManager` lee, escribe y asigna páginas (la 0 guarda metadatos). Heap File con lista libre LIFO y reutilización de slots; Archivo Secuencial con overflow por grupo, borrado lazy y reorganización al superar 30 % de desperdicio. |
-| `core/index` | Árbol B+ persistente (tabla agrupada y índice no agrupado), hash extensible con FNV-1a, R-Tree con split cuadrático, métricas euclidiana y Haversine, y la búsqueda espacial secuencial usada como línea base. |
+| `core/index` | Árbol B+ persistente (tabla agrupada y índice no agrupado), hash extensible con FNV-1a, R-Tree con split cuadrático, métricas euclidiana y Haversine; índice invertido con SPIMI, tokenizador y stemmers Snowball, rankings TF-IDF y BM25; IVF y HNSW con métricas euclidiana, coseno y producto punto; y las búsquedas secuenciales usadas como línea base. |
 | `core/external` | Ordenamiento externo con mezcla k-way, agrupación externa por hash con caída a sort, hash join externo e index nested loop. |
 | `core/catalog` | Tipos (`INT`, `DOUBLE`, `BOOL`, `DATE`, `VARCHAR(n)`, `POINT`, `VECTOR(dim)`), codificación de registros de ancho fijo, catálogo y apertura de tablas e índices. |
 | `bindings/` | Módulo `quipudb_native`: expone el núcleo a Python con las mismas excepciones. |
@@ -74,8 +85,11 @@ flowchart TB
 | `engine/planner` | Elige el acceso por reglas (clave primaria, índice secundario, R-Tree o recorrido) y construye el plan de ejecución. |
 | `engine/executor` | Ejecuta el plan, mantiene los índices en `INSERT`/`DELETE`, carga CSV y mide cada operador. |
 | `engine/transactions` | `BEGIN`/`END TRANSACTION`, bitácora de deshacer en memoria y locks de tabla compartidos/exclusivos con timeout. |
-| `engine/api` | API REST con FastAPI: un único `QueryProcessor` por proceso, con acceso serializado. |
+| `engine/multimedia` | Extracción SIFT y MFCC, K-Means, vocabularios y histogramas TF-IDF para `SIMILAR_TO` y la ingesta de carpetas. |
+| `engine/api` | API REST con FastAPI: un único `QueryProcessor` por proceso, con acceso serializado; carga CSV, ingesta multimedia, subidas y vocabularios. |
+| `engine/distributed` | Fragmentación por rangos, servicio de nodo, coordinador, enrutamiento, combinación de resultados y DDL distribuido. |
 | `frontend/` | Paneles de Archivos, Consultas, Resultados, Mapa y Plan de ejecución. |
+| `quipucamayoc/`, `rikuq/` | Aplicaciones de la Parte 5: cada una con su servidor FastAPI y su interfaz React, y solo hablan con el motor por HTTP. |
 
 **Contratos.** `TableFile` es una organización de registros (Heap, Secuencial, B+
 agrupado); `Index` asocia una clave con un RID (página, slot) y lo implementan el
@@ -110,11 +124,14 @@ Python, cada módulo tiene su `test_*.py` al lado).
 quipudb/
 ├── CMakeLists.txt              build del núcleo, sus pruebas y los bindings (opcionales)
 ├── requirements.txt            dependencias de la capa Python
+├── Dockerfile, docker-compose*.yml   motor en Docker y modo distribuido
 ├── core/                       C++20: lo único que toca disco
 │   ├── include/quipudb/        cabeceras públicas; cada una documenta su contrato
 │   │   ├── storage/            page, disk_manager, heap_file, sequential_file
 │   │   ├── index/              bplus_tree, bplus_clustered_table, bplus_unclustered_index,
-│   │   │                       extendible_hash(_index), rtree(_index), distance, spatial_scan
+│   │   │                       extendible_hash(_index), rtree(_index), distance, spatial_scan,
+│   │   │                       text_tokenizer, spimi, inverted_index, tfidf/bm25_ranking,
+│   │   │                       text_index, ivf(_index), hnsw(_index), vector_metric, vector_scan
 │   │   ├── external/           external_sort, external_group, external_join
 │   │   └── catalog/            types, record_codec, table, catalog, database
 │   ├── src/                    implementaciones, con la misma estructura
@@ -126,24 +143,33 @@ quipudb/
 │   ├── executor/               processor, operators, predicates, dml, external,
 │   │                           spatial, bulk_load, result, instrumentation
 │   ├── transactions/           transaction, locks, demo_concurrencia
-│   └── api/                    main (FastAPI), schemas, service
+│   ├── multimedia/             sift, mfcc, kmeans, features (histogramas), weights (TF-IDF)
+│   ├── distributed/            partitioning, fragments, node_server, coordinator, router,
+│   │                           merge, ddl, csv_load
+│   └── api/                    main (FastAPI), schemas, service, carga multimedia, vocabularios
 ├── frontend/                   React 19 + TypeScript + Vite
 │   └── src/
 │       ├── panels/             FilesPanel, QueryPanel, ResultsPanel, MapPanel, PlanPanel
 │       ├── api/                cliente HTTP y simulador en memoria (mock/)
 │       ├── components/ hooks/ lib/
-├── quipucamayoc/               Parte 5: aplicación RAG, solo usa el API REST del motor
+├── quipucamayoc/               Parte 5 (opción A): aplicación RAG, solo usa el API REST del motor
 │   ├── server/                 FastAPI: corpus (arXiv, PDF, chunks, carga), RAG y Gemini
 │   ├── web/                    React 19 + Vite: preguntar y biblioteca
 │   └── corpus/papers.tsv       la lista fija de papers del corpus
+├── rikuq/                      Parte 5 (opción D): reconocimiento facial, solo usa el API REST
+│   ├── server/                 FastAPI: YuNet, ArcFace, identificar, registrar fotos
+│   └── web/                    React 19 + Vite: subir imagen, cámara, registrar
+├── scripts/                    sembrar_demo, demo_distribuida, preparar_nodo
+├── tests/distributed/          pruebas integradas del modo distribuido con procesos reales
 ├── benchmarks/                 comparación experimental
-│   ├── scripts/                generadores de datasets, suites, PostGIS y gráficas
+│   ├── scripts/                generadores de datasets, suites, PostGIS, GIN, RAG, Rikuq y gráficas
 │   ├── datasets/ results/      CSV generados (no se versionan)
 │   └── *.md                    protocolos e informes de cada corrida
 └── docs/
     ├── arquitectura.md         diseño general
-    ├── adr/                    decisiones de arquitectura (ADR 0001–0005)
-    └── informe/                informe modular y gráficas oficiales
+    ├── adr/                    decisiones de arquitectura (ADR 0001–0011)
+    ├── informe/                informe modular, gráficas oficiales y capturas
+    └── *-distribuido.md, rikuq-*.md, consultas-multimedia.md, puertos.md, ...
 ```
 
 Convenciones:
@@ -170,7 +196,7 @@ Convenciones:
 | Python | 3.11 o superior | Capa Python, API y benchmarks |
 | Node.js | 20 o superior | Interfaz web |
 | Git | — | Clonar; GoogleTest y pybind11 se descargan solos con `FetchContent` |
-| Docker | Opcional | Solo para la comparación contra PostGIS |
+| Docker | Opcional | La API con numpy/OpenCV/soundfile en Linux, el modo distribuido y la comparación contra PostGIS |
 
 Probado en Ubuntu (CI), macOS sobre Apple Silicon y Windows 11 con MSYS2 UCRT64
 (g++ 14 y el Python 3.11 de MSYS2).
@@ -292,13 +318,26 @@ habla con la API en `VITE_API_URL` (por defecto `http://localhost:8000`).
   o `VITE_API_URL` no coincide con su puerto.
 - **`IoError ... declara N registros vivos y en las páginas hay M`**: el proceso
   terminó sin `flush` y el archivo quedó inconsistente; el motor no tiene
-  recuperación ante caídas todavía. Borra el directorio de datos y vuelve a cargar.
+  recuperación ante caídas (no hay WAL). Borra el directorio de datos y vuelve
+  a cargar.
+- **`USING HNSW` devuelve 0 filas después de reiniciar la API en Docker**: el
+  contenedor se detuvo de golpe y el grafo no se vació a disco. Recrea las
+  tablas de demostración con
+  `docker compose exec motor python scripts/sembrar_demo.py --rehacer`.
 
-### Quipucamayoc
+### Aplicaciones de la Parte 5
 
-La aplicación de la Parte 5 tiene su propio entorno y su propio README:
-[`quipucamayoc/README.md`](quipucamayoc/README.md) explica cómo levantar el
-servidor y la interfaz, configurar la clave de Gemini y cargar el corpus.
+Cada aplicación tiene su propio entorno, su propio README y su propio motor
+(otro catálogo y otro puerto), así que se pueden levantar a la vez que el motor
+general:
+
+| Aplicación | README | Servidor | Interfaz | Motor propio |
+|---|---|---:|---:|---:|
+| Quipucamayoc | [`quipucamayoc/README.md`](quipucamayoc/README.md): clave de Gemini, corpus y embeddings | 8001 | 5174 | 8003 |
+| Rikuq | [`rikuq/README.md`](rikuq/README.md): modelos YuNet y ArcFace, dataset y cámara | 8002 | 5175 | 8004 |
+
+La tabla completa de puertos, con el modo distribuido, está en
+[`docs/puertos.md`](docs/puertos.md).
 
 ## Uso
 
@@ -407,6 +446,12 @@ y usa external sorting; `GROUP BY` admite `COUNT(*)`, `SUM`, `MIN`, `MAX` y
 `AVG`, y usa external hashing con fallback seguro a sort. El plan explica la
 dirección, los runs, las pasadas, la estrategia y las particiones realmente
 utilizadas. `LIMIT n` acepta un entero no negativo y se aplica al final.
+
+`SELECT ... FROM a JOIN b ON a.x = b.y` admite un equijoin INNER por consulta.
+El executor elige entre hash join externo e index nested loop según páginas y
+costo de sondas, y el plan muestra la estrategia pedida y la usada. No se
+admiten `UPDATE`, `NULL`, subconsultas ni condiciones generales con
+`AND`/`OR`.
 
 `CREATE INDEX nombre ON tabla (columna) USING BPLUS` crea un B+ secundario no
 agrupado; `USING HASH` crea un hash extensible y `USING RTREE` un índice
@@ -554,6 +599,10 @@ de #179: para euclidiana **menor es mejor** (`ASC`), y para coseno/producto
 punto **mayor es mejor** (`DESC`). Por eso `DESC` con euclidiana invierte el
 ranking de cercanía dentro de los k vecinos. Solo se admite con SIMILAR_TO;
 `SCORE()` sigue siendo el puntaje de MATCH.
+
+Desde #251, `SIMILAR_TO(columna, VECTOR(0.12, -0.04, ...), k=10)` busca con un
+vector literal en lugar de un archivo. Es lo que usa Quipucamayoc para buscar
+los chunks por el embedding de la pregunta, y Rikuq para buscar rostros.
 
 La API requiere `QUIPUDB_MEDIA_VOCABULARIES='{"fotos":"fotos_demo.npz"}'`
 y los archivos dentro de `QUIPUDB_MEDIA_ROOT`. El
@@ -751,7 +800,31 @@ desde esos CSV.
 | #172 | TF-IDF + coseno vs. BM25: construcción, consultas, espacio y memoria de SPIMI | [`comparacion_tfidf_bm25.md`](benchmarks/comparacion_tfidf_bm25.md) |
 | #173 | Precision@10 y Recall@10 de TF-IDF y BM25 | [`relevancia_tfidf_bm25.md`](benchmarks/relevancia_tfidf_bm25.md) |
 | #174 | TF-IDF vs. BM25 vs. GIN de PostgreSQL | [`docs/informe/comparacion_texto.md`](docs/informe/comparacion_texto.md) |
-| #253 | RAG de Quipucamayoc: Hit@k y MRR de BM25 y TF-IDF, con y sin reescribir la pregunta, y latencia por etapa | [`docs/informe/rag_evaluacion.md`](docs/informe/rag_evaluacion.md) |
+| #191 | IVF vs. HNSW: construcción, Recall@10, latencia y memoria (1k, 10k, 100k imágenes y audios) | [`comparacion_ivf_hnsw.md`](benchmarks/comparacion_ivf_hnsw.md) |
+| #192 | Euclidiana vs. coseno con IVF y HNSW | [`comparacion_metricas.md`](benchmarks/comparacion_metricas.md) |
+| #193 | Informe y gráficas multimedia (#191 y #192) | [`docs/informe/comparacion_multimedia.md`](docs/informe/comparacion_multimedia.md) |
+| #194 | Galería de casos de éxito y error de IVF y HNSW | [`docs/informe/galeria_similitud/`](docs/informe/galeria_similitud/README.md) |
+| #253 | RAG de Quipucamayoc: Hit@k y MRR de BM25, TF-IDF, HNSW e híbrido, y latencia por etapa | [`docs/informe/rag_evaluacion.md`](docs/informe/rag_evaluacion.md) |
+| #306 | Rikuq: aciertos, intrusos y latencia sobre LFW | [`docs/informe/rikuq_evaluacion.md`](docs/informe/rikuq_evaluacion.md) |
+| #347 | Rikuq: robustez ante giros, iluminación, compresión, oclusiones y tamaño de la base | [`docs/informe/rikuq_robustez.md`](docs/informe/rikuq_robustez.md) |
+
+Resultados principales, a 100 000 elementos:
+
+- **Archivos:** el Heap inserta 1,6 veces más rápido; el Secuencial busca por
+  clave en ~4 ms por 1 000 búsquedas frente a 1,6 s del Heap sin índice.
+- **Índices:** el B+ agrupado es 10 veces más rápido que el no agrupado en
+  rangos y orden; el hash extensible gana carga y mantenimiento, pero su
+  directorio se duplica al crecer.
+- **Espacial:** el R-Tree responde consultas selectivas entre 8 y 150 veces más
+  rápido que el recorrido secuencial, y 2 a 3 veces más rápido que GiST porque
+  no vuelve a la tabla; GiST construye 3 a 12 veces más rápido.
+- **Texto:** con la misma semántica OR, el índice invertido responde 2 a 4 veces
+  más rápido que GIN y con mejor Recall@10, porque rankea sin salir del índice.
+- **Multimedia:** HNSW llega a Recall@10 ≥ 0,99 con 0,04–0,7 ms por consulta;
+  IVF construye 7 a 21 veces más rápido y ocupa un tercio menos.
+- **Aplicaciones:** el RAG híbrido pone el paper esperado entre los 3 primeros
+  en 30 de 30 preguntas; Rikuq acierta 93,8 % sin aceptar intrusos y busca en
+  el motor en 14,7 ms.
 
 ```bash
 python benchmarks/scripts/generar_datasets.py       # alumnos 1k/10k/100k
@@ -796,25 +869,36 @@ Detalles: [`quipucamayoc/README.md`](quipucamayoc/README.md), el
 
 ## Aplicación: Rikuq
 
-Reconocimiento facial de la Parte 5, opción D. Usa YuNet y ArcFace para
-generar embeddings de 512 componentes y consulta HNSW/coseno en QuipuDB
-exclusivamente por HTTP. La interfaz permite subir una imagen o usar cámara
-en vivo, y muestra identidad o Desconocido, cajas, distancia y tiempos
-separados. No ejecuta modelos en el navegador ni guarda cuadros de consulta.
+Reconocimiento facial de la Parte 5, opción D. Integra datos relacionales
+(`personas`) y vectoriales (`rostros`). Usa YuNet y ArcFace para generar
+embeddings de 512 componentes y consulta HNSW/coseno en QuipuDB
+exclusivamente por HTTP, con `SIMILAR_TO(embedding, VECTOR(...), k)`. Un umbral
+de distancia de 0,55, calibrado sobre LFW, decide entre una identidad y
+Desconocido. La interfaz permite subir una imagen, usar la cámara en vivo,
+registrar fotos nuevas y eliminarlas, y muestra identidad o Desconocido,
+cajas, distancia, margen al umbral y tiempos separados. No ejecuta modelos en
+el navegador ni guarda cuadros de consulta.
 
-Instalación y estado: [rikuq/README.md](rikuq/README.md). Decisiones:
+Sobre LFW acierta 30 de 32 consultas (93,8 %), sin confundir a nadie y sin
+aceptar a ninguno de 351 intrusos; la búsqueda en el motor tarda 14,7 ms de
+mediana y no crece al pasar de 250 a 1 000 rostros. La validación manual con
+fotos del equipo destapó caras giradas que no se reconocían y acompañantes
+guardados como el sujeto; los dos están corregidos y medidos en
+[rikuq_robustez.md](docs/informe/rikuq_robustez.md).
+
+Instalación y uso: [rikuq/README.md](rikuq/README.md). Decisiones:
 [ADR 0011](docs/adr/0011-aplicacion-rikuq.md). Informe:
-[aplicacion_rikuq.md](docs/informe/aplicacion_rikuq.md). La captura de video
-real y las imágenes de demostración autorizadas siguen pendientes en #312.
+[aplicacion_rikuq.md](docs/informe/aplicacion_rikuq.md).
 
 ## Documentación
 
 | Documento | Contenido |
 |---|---|
 | [`docs/arquitectura.md`](docs/arquitectura.md) | Diseño general del motor |
-| [`docs/adr/`](docs/adr/) | Decisiones: núcleo (0001), plan de ejecución (0002), SQL (0003), transacciones (0004), locks (0005), índice invertido y rankings (0006), multimedia (0007–0009), aplicación RAG (0010) |
-| [`quipucamayoc/README.md`](quipucamayoc/README.md) | La aplicación de la Parte 5: instalación, configuración de Gemini y contrato de `/ask` |
-| [`docs/informe/`](docs/informe/) | Informe modular: dominio, archivos e índices, SQL, transacciones, interfaz, búsqueda de texto y experimentos |
+| [`docs/adr/`](docs/adr/) | Decisiones: núcleo (0001), plan de ejecución (0002), SQL (0003), transacciones (0004), locks (0005), índice invertido y rankings (0006), multimedia (0007–0009), aplicación RAG (0010), aplicación Rikuq (0011) |
+| [`quipucamayoc/README.md`](quipucamayoc/README.md) | Aplicación RAG de la Parte 5: instalación, configuración de Gemini y contrato de `/ask` |
+| [`rikuq/README.md`](rikuq/README.md) | Aplicación de reconocimiento facial de la Parte 5: instalación, modelos, dataset y uso |
+| [`docs/informe/`](docs/informe/) | Informe modular de las cinco partes: dominio, archivos e índices, SQL, transacciones, interfaz, espacial, texto, multimedia, aplicaciones y experimentos, con sus gráficas y capturas |
 | [`benchmarks/README.md`](benchmarks/README.md) | Datasets, protocolos y reproducción de las corridas |
 | [`docs/ingesta-multimedia.md`](docs/ingesta-multimedia.md) | Ingesta de carpetas de imágenes/audio, trabajos REST y ejemplo reproducible |
 | [`docs/consultas-multimedia.md`](docs/consultas-multimedia.md) | SIMILAR_TO, creación SQL de IVF/HNSW, métricas y vocabularios |
@@ -825,13 +909,13 @@ real y las imágenes de demostración autorizadas siguen pendientes en #312.
 
 ## Equipo
 
-| Integrante | Parte 1 | Parte 2 |
-|---|---|---|
-| Oswaldo Alejandro Quispe Monzon | Gestión de archivos e indexación (2.1.1, 2.1.2) | Estructura del R-Tree; API REST y carga CSV |
-| Sebastian Cangalaya Martinez | Procesamiento de consultas SQL (2.1.3) | SQL espacial (2.2.3); R-Tree en el catálogo y el planner |
-| Juan David Velo Poma | Transacciones y concurrencia (2.1.4) | Comparación experimental espacial (2.2.4) |
-| Danna Gala | Interfaz de usuario (2.1.5) | Métricas y consultas del R-Tree (2.2.1) |
-| Mauricio Teran | Comparación experimental (2.1.6) | Visualización en mapa (2.2.2) |
+| Integrante | Parte 1 | Parte 2 | Partes 3–5 y extra |
+|---|---|---|---|
+| Oswaldo Alejandro Quispe Monzon | Gestión de archivos e indexación (2.1.1, 2.1.2) | Estructura del R-Tree; API REST y carga CSV | Fragmentación y nodos del modo distribuido; integración del repositorio |
+| Sebastian Cangalaya Martinez | Procesamiento de consultas SQL (2.1.3) | SQL espacial (2.2.3); R-Tree en el catálogo y el planner | Ingesta multimedia por la API; aportes a Rikuq |
+| Juan David Velo Poma | Transacciones y concurrencia (2.1.4) | Comparación experimental espacial (2.2.4) | Búsqueda de texto completa (Parte 3); Quipucamayoc |
+| Danna Gala | Interfaz de usuario (2.1.5) | Métricas y consultas del R-Tree (2.2.1) | Extracción SIFT/MFCC, IVF y HNSW (Parte 4); Rikuq |
+| Mauricio Teran | Comparación experimental (2.1.6) | Visualización en mapa (2.2.2) | Experimentos y galería de la Parte 4; coordinador y enrutamiento distribuido |
 
 ## Contribuir
 
